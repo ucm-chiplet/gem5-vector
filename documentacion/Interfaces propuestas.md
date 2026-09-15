@@ -201,6 +201,15 @@ configuración con ROB podrá conservarlas hasta el retiro.
   escalar sólo vale si `scalarResultValid` es verdadero y `fault` sólo debe
   existir en estados de fallo.
 
+En las peticiones al VRF y de memoria, `registerRef` designa un
+`VectorRegRef` en el baseline y un `PhysicalRegRef` cuando se habilita el
+renombramiento. Cada petición conserva esa referencia y su rango de bytes;
+no se añade una versión física ficticia al modo sin renombramiento.
+En memoria, `CommandKey` y `requestId` identifican la operación y la
+subpetición en ambos modos, mientras que la referencia de registro identifica
+dónde leer o escribir. La VLSU conserva la referencia original hasta resolver la
+respuesta, sin volver a consultar la RAT para una petición ya emitida.
+
 `requestId` aplica el mismo patrón dentro de memoria: `AraVLSU` lo crea para
 cada subpetición de un `CommandKey`, `VectorMemoryBackend` lo devuelve en la
 respuesta y la VLSU lo usa para asociarla aunque las respuestas lleguen en otro
@@ -461,7 +470,8 @@ secuencia de referencia.
 **Conexiones directas.** Recibe `ArithmeticTask` y los datos de configuración
 desde `AraSequencer`, además de capacidad y finalizaciones desde `AraLane`.
 Envía un `LaneTask` a cada lane implicada y devuelve la finalización agregada a
-`AraSequencer`.
+`AraSequencer`. Consulta `AddressMapper` para determinar la lane propietaria
+de cada fragmento.
 
 ### Recibe
 
@@ -479,8 +489,9 @@ LaneTask(commandId, taskId, laneId, opcode, sourceRegs,
 
 - `commandId` identifica el comando padre y `taskId` el fragmento concreto;
   juntos permiten asociar el writeback y la finalización a la tarea correcta.
-- `laneId` es la lane que ejecuta el fragmento; no se deduce de la referencia
-  de registro porque el reparto de elementos puede diferir del mapeo del VRF.
+- `laneId` es la lane que ejecuta el fragmento. `TaskDistributor` la obtiene
+  consultando `AddressMapper` con la referencia de registro y el rango
+  correspondiente, de modo que el reparto respete la propiedad local del VRF.
 - `opcode` selecciona la operación de la unidad, y `sourceRegs` contiene los
   grupos arquitectónicos de todos sus operandos.
 - `destinationReg` es el grupo arquitectónico en el que se escribirán los
@@ -495,8 +506,10 @@ LaneTask(commandId, taskId, laneId, opcode, sourceRegs,
   inactivos de tail agnostic.
 
 Envía asimismo confirmación de aceptación, finalización por lane y una
-finalización agregada al sequencer. Es el único módulo que aplica el mapeo
-`global_word -> lane_id + local_word`.
+finalización agregada al sequencer. Su responsabilidad es repartir las tareas
+y agregar sus finalizaciones. Utiliza el mapeo de `AddressMapper`, incluida
+la conversión `global_word -> lane_id + local_word`, sin duplicar sus
+fórmulas.
 
 ## AraLane
 
@@ -566,9 +579,10 @@ commandId, registerRef, byteOffset, size, byteEnable, requester
 
 ### AddressMapper
 
-**Conexiones directas.** Es un servicio consultado por `LaneRegisterFile` y,
-si hace falta, por `AraVLSU`; no recibe mensajes de la CPU. Devuelve el mapeo
-de lane, banco y fila al módulo que lo consultó.
+**Conexiones directas.** Es un servicio de cálculo compartido que consultan
+`TaskDistributor`, `LaneRegisterFile` y, cuando corresponda, `AraVLSU`.
+Devuelve el mapeo de lane, banco y fila al módulo que lo consultó; no recibe
+comandos de la CPU ni tareas de ejecución.
 
 Recibe `registerRef`, desplazamiento de byte, tamaño, número de lanes y
 bancos. Devuelve:
@@ -584,7 +598,12 @@ laneId, bankId, row, byteOffsetInWord, byteEnable
 - `byteEnable` es la máscara de bytes de esa palabra, ya recortada si el rango
   original empieza o termina en mitad de ella.
 
-Debe ser la única implementación del mapeo de datos entre lanes y bancos.
+Es la única implementación de la regla que transforma una posición del
+registro en lane, banco y fila. `TaskDistributor` usa esa regla para repartir
+el trabajo y `LaneRegisterFile` para localizar los bytes de cada acceso.
+Inicialmente se consulta como un servicio de cálculo sin cola ni latencia
+propia; no representa un recurso central que serialice las lanes. Las colas,
+el arbitraje y las latencias de acceso pertenecen al VRF y a sus bancos.
 
 ### Banco de VRF
 
@@ -664,8 +683,10 @@ VectorMemoryRequest(commandId, requestId, registerRef, elementIndex,
 - `commandId` identifica el comando padre y `requestId` identifica de forma
   única esta subpetición entre las peticiones pendientes de ese comando.
 - `registerRef` es el grupo de destino en una carga o el grupo fuente de los
-  datos en un store; `elementIndex` es el elemento vectorial al que
-  corresponde y permite calcular `vstart` si ocurre un fallo.
+  datos en un store: `VectorRegRef` en el baseline o `PhysicalRegRef`, con
+  su versión, en el modo con renombramiento. `elementIndex` es el elemento
+  vectorial al que corresponde y permite calcular `vstart` si ocurre un
+  fallo.
 - `laneId` es la lane propietaria del writeback de una carga. En un store puede
   conservarse como origen para trazabilidad y arbitraje.
 - `destinationByteRange` es el intervalo del grupo de destino donde se
@@ -687,9 +708,10 @@ LoadData(commandId, requestId, destinationReg, elementIndex,
 ```
 
 - `commandId` y `requestId` correlacionan los datos con la petición original.
-- `destinationReg` es el grupo arquitectónico de destino de la carga y
-  `destinationByteRange` delimita exactamente dónde se deben escribir los
-  bytes recibidos.
+- `destinationReg` conserva la referencia de destino de la petición:
+  arquitectónica en el baseline o física, con su versión, en el modo con
+  renombramiento. `destinationByteRange` delimita exactamente dónde se deben
+  escribir los bytes recibidos.
 - `elementIndex` conserva la posición arquitectónica para actualizar
   readiness, diagnosticar fallos y completar tareas fragmentadas.
 - `laneId` selecciona el propietario del writeback y `data` contiene los bytes

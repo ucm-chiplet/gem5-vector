@@ -295,6 +295,14 @@ lane_id     = global_word % num_lanes
 local_word  = global_word / num_lanes
 ```
 
+Esta regla se implementa una sola vez en `AddressMapper`.
+`TaskDistributor` consulta ese servicio para repartir el trabajo;
+`LaneRegisterFile` lo consulta para localizar los bytes en lane, banco y
+fila. `AraVLSU` también puede consultarlo cuando necesite determinar la
+lane propietaria. Inicialmente es un servicio de cálculo compartido sin
+cola ni latencia propia; las latencias de acceso se modelan en el VRF y sus
+bancos.
+
 El número de lanes debe cambiar el paralelismo real y no únicamente la cantidad
 de elementos calculados en una llamada al datapath.
 
@@ -349,7 +357,7 @@ Cada request de memoria debe conservar:
 
 ```text
 command_id
-physical_version
+register_ref
 destination_byte_range
 element_index
 lane_id
@@ -358,14 +366,23 @@ is_load / is_store
 fault_and_order_metadata
 ```
 
+`register_ref` identifica el grupo de registros: `VectorRegRef`
+arquitectónico en el baseline o `PhysicalRegRef`, con su versión, cuando se
+habilita el renombramiento. El modo sin renombramiento no exige
+`physical_version`. La petición conserva además su rango de bytes y su
+identidad de comando y subpetición (`CommandKey` y `requestId` en las
+interfaces propuestas).
+
 Al recibir una respuesta, la VLSU la distribuye a la lane propietaria y conserva
-la identidad de la operación, del elemento y de la versión física. La política
+la identidad de la operación, del elemento y la referencia original del
+registro, incluida su versión sólo en el modo con renombramiento. La política
 exacta para hacer visible la disponibilidad del dato y habilitar chaining se
 definirá en una fase posterior.
 
 En el baseline FIFO, los stores se mantienen en orden. Los loads pueden tener
 varias requests en vuelo, pero cada respuesta debe conservar su identidad para
-no publicar bytes en una versión física o lane incorrecta.
+no publicar bytes en un grupo de registros o lane incorrectos ni, con
+renombramiento, en una versión física distinta.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
