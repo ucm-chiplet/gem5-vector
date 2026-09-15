@@ -537,6 +537,11 @@ interconexión y `ReadinessTable` son conexiones opcionales de ampliaciones.
 La lane mantiene colas diferenciadas para tareas, solicitudes de operando,
 operandos recibidos, operaciones en curso y writebacks pendientes.
 
+Las colas de operandos se sitúan entre la salida del VRF y las unidades
+funcionales. Las colas de resultados o writeback retienen los datos producidos
+hasta que se concede la escritura. Ambas pertenecen al camino de ejecución
+de la lane; no son colas internas de los bancos del VRF.
+
 ### ALU, MUL y FPU de la lane
 
 **Conexiones directas.** Reciben `ExecutionBundle` exclusivamente de su
@@ -602,8 +607,9 @@ Es la única implementación de la regla que transforma una posición del
 registro en lane, banco y fila. `TaskDistributor` usa esa regla para repartir
 el trabajo y `LaneRegisterFile` para localizar los bytes de cada acceso.
 Inicialmente se consulta como un servicio de cálculo sin cola ni latencia
-propia; no representa un recurso central que serialice las lanes. Las colas,
-el arbitraje y las latencias de acceso pertenecen al VRF y a sus bancos.
+propia; no representa un recurso central que serialice las lanes. El LRF
+gestiona el arbitraje de acceso y los bancos tienen su latencia. Las colas de
+operandos y writeback se sitúan en la lane, fuera de los bancos.
 
 ### Banco de VRF
 
@@ -615,6 +621,18 @@ Recibe lecturas/escrituras ya mapeadas y una clase de solicitante. Devuelve
 grant, datos tras su latencia, confirmación de escritura o retry. Una política
 inicial puede arbitrar round-robin entre lecturas de operandos, writeback de
 lanes, VLSU y SLDU/MASKU.
+
+El banco no incorpora una FIFO de peticiones. El arbitraje del LRF selecciona
+los accesos que pueden usar sus puertos; una petición no concedida permanece
+pendiente en el solicitante y se reintenta. Las lecturas concedidas alimentan
+las colas de operandos, cuya capacidad debe comprobarse antes de emitirlas.
+Los resultados esperan en las colas de writeback hasta obtener acceso al
+banco. Los registros que temporizan una respuesta no equivalen a una FIFO
+de peticiones por banco.
+
+Esta separación sigue la organización del
+[VRF de Ara](https://pulp-platform.github.io/ara/modules/lane/vrf.html):
+bancos, arbitraje de acceso y colas de operandos/resultados diferenciados.
 
 ## VectorInterconnect
 

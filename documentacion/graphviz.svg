@@ -231,7 +231,7 @@
 <path fill="#ffe6b9" stroke="#355c7d" stroke-width="1.4" d="M2196.73,-466.78C2196.73,-466.78 2017.06,-466.78 2017.06,-466.78 2011.06,-466.78 2005.06,-460.78 2005.06,-454.78 2005.06,-454.78 2005.06,-409.75 2005.06,-409.75 2005.06,-403.75 2011.06,-397.75 2017.06,-397.75 2017.06,-397.75 2196.73,-397.75 2196.73,-397.75 2202.73,-397.75 2208.73,-403.75 2208.73,-409.75 2208.73,-409.75 2208.73,-454.78 2208.73,-454.78 2208.73,-460.78 2202.73,-466.78 2196.73,-466.78"/>
 <text text-anchor="middle" x="2106.89" y="-446.74" font-family="DejaVu Sans" font-size="12.00" fill="#17202a">Bancos locales del VRF</text>
 <text text-anchor="middle" x="2106.89" y="-429.49" font-family="DejaVu Sans" font-size="12.00" fill="#17202a">Bancos / puertos configurables</text>
-<text text-anchor="middle" x="2106.89" y="-412.24" font-family="DejaVu Sans" font-size="12.00" fill="#17202a">Cola y latencia por banco</text>
+<text text-anchor="middle" x="2106.89" y="-412.24" font-family="DejaVu Sans" font-size="12.00" fill="#17202a">Latencia por banco; sin FIFO</text>
 </g>
 <!-- lrf&#45;&gt;banks -->
 <g id="edge9" class="edge">

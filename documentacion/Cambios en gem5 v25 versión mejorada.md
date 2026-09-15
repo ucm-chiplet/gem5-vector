@@ -326,12 +326,21 @@ La arquitectura objetivo requiere:
 - una slice local del VRF por lane;
 - bancos y puertos configurables;
 - arbitraje entre lectura de operandos, writeback y VLSU;
-- latencia y cola por banco;
+- latencia por banco y arbitraje de acceso, sin FIFO de peticiones por banco;
+- colas de operandos entre el VRF y las unidades funcionales, y colas de
+  writeback para retener resultados hasta obtener acceso al banco;
 - distribución de datos de cargas hacia la lane propietaria;
 - interconexión entre lanes para slides, gathers y reducciones.
 
 El modelo inicial puede utilizar una interconexión ideal. Ring, crossbar o la
 topología exacta de AraXL se añadirán cuando se confirme la referencia hardware.
+
+Las colas de operandos y writeback pertenecen al camino de ejecución de cada
+lane. Si un acceso pierde el arbitraje, el solicitante lo mantiene pendiente
+hasta obtener concesión; el banco no encola la petición. Antes de emitir una
+lectura se comprueba que su cola de operandos pueda recibir la respuesta.
+Esta organización sigue el
+[VRF de Ara](https://pulp-platform.github.io/ara/modules/lane/vrf.html).
 
 ### Archivos implicados y reutilización
 

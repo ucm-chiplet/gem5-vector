@@ -110,7 +110,7 @@ digraph AraLikeGem5 {
             banks [
                 label=
                     "Bancos locales del VRF\nBancos / puertos " +
-                    "configurables\nCola y latencia por banco"
+                    "configurables\nLatencia por banco; sin FIFO"
                 ,
                 fillcolor="#FFE6B9"
             ];
