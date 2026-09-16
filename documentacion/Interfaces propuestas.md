@@ -71,6 +71,8 @@ conflictos de bancos, utilización de unidades ni solapamiento entre comandos.
   espera en la FIFO hasta recibir la finalización del anterior.
 - La aceptación de un comando (`accepted`) y su finalización (`completed`) son
   eventos diferentes.
+- La falta temporal de capacidad (`stall`) y el rechazo permanente de un
+  comando (`rejected`) son resultados diferentes. Sólo `stall` se reintenta.
 - Las interfaces temporizadas usan backpressure explícito (`ready/valid`, o
   `retry` en la frontera con la memoria de gem5).
 
@@ -108,6 +110,38 @@ struct VectorRegRef
     uint8_t regCount;
 };
 
+enum class VectorLmul : int8_t
+{
+    Mf8 = -3,
+    Mf4 = -2,
+    Mf2 = -1,
+    M1 = 0,
+    M2 = 1,
+    M4 = 2,
+    M8 = 3,
+    Invalid = 127,
+};
+
+struct VectorConfig
+{
+    uint32_t vl;
+    uint32_t vstart;
+    uint16_t sewBits;
+    VectorLmul lmul;
+    bool masked;
+    bool tailAgnostic;
+    bool maskAgnostic;
+};
+
+enum class CompletionStatus : uint8_t
+{
+    Success,
+    MemoryFault,
+    IllegalInstruction,
+    InternalError,
+    Cancelled,
+};
+
 // Reservado para la ampliación futura con renombramiento.
 struct PhysicalRegRef
 {
@@ -132,34 +166,46 @@ struct UnitTask
     ByteRange destination;
 };
 
+struct ScalarResult
+{
+    RegIndex destination;
+    RegVal value;
+};
+
+struct FaultInfo
+{
+    Fault fault;
+    std::optional<Addr> address;
+    std::optional<uint32_t> elementIndex;
+};
+
 struct VectorCompletion
 {
     CommandKey command;
     CompletionStatus status;
-    bool scalarResultValid;
-    RegIndex scalarDestination;
-    RegVal scalarResult;
+    std::optional<ScalarResult> scalarResult;
     uint32_t finalVstart;
     std::optional<FaultInfo> fault;
 };
 ```
 
-`CompletionStatus` debería distinguir, al menos, `success`, `memory_fault`,
-`illegal_instruction` e `internal_error`.
+`CompletionStatus` distingue éxito, fault de memoria, instrucción ilegal,
+error interno y cancelación.
 
 ### Semántica e invariantes
 
 Estos tipos no son sólo contenedores de datos: fijan la identidad, la
 propiedad y el alcance de cada operación entre módulos. Deben viajar por valor
 o mediante referencias inmutables; ningún consumidor debe modificar un objeto
-que otro módulo pueda observar. El frontend crea las identidades, el backend
-las propaga y el sequencer las descarta al finalizar el comando. Una futura
-configuración con ROB podrá conservarlas hasta el retiro.
+que otro módulo pueda observar. `CpuVectorInterface` crea las identidades, el
+backend las propaga y el sequencer las descarta al finalizar el comando. Una
+futura configuración con ROB podrá conservarlas hasta el retiro.
 
 - `CommandKey` vive en `VectorCommand`, `UnitTask`, peticiones de memoria y
-  `VectorCompletion`. `CpuVectorInterface` lo crea al construir el comando;
-  `CommandQueue`, `AraSequencer`, las unidades y el backend de memoria lo
-  propagan hasta que `VectorCompletion` vuelve a `MinorCPU`. Su función es
+  `VectorCompletion`. `CpuVectorInterface` asigna la identidad y MinorCPU la
+  incorpora al construir el comando. `CommandQueue`, `AraSequencer`, las
+  unidades y el backend de memoria la propagan hasta que `VectorCompletion`
+  vuelve a `MinorCPU`. Su función es
   correlacionar todos esos mensajes con una única instrucción. `commandId` es
   su número de secuencia y sólo debe ser único dentro de un contexto;
   `contextId` identifica el hilo o contexto de gem5 que la posee. La pareja
@@ -198,8 +244,10 @@ configuración con ROB podrá conservarlas hasta el retiro.
   crea una vez agregadas todas las tareas y la envía por `CpuVectorInterface` a
   `MinorCPU::Execute/Commit`. Existe para cerrar el comando, liberar el estado
   en vuelo y transportar resultado escalar, `vstart` o excepción. El resultado
-  escalar sólo vale si `scalarResultValid` es verdadero y `fault` sólo debe
-  existir en estados de fallo.
+  escalar sólo existe cuando `scalarResult` contiene un valor y `fault` sólo
+  debe existir en estados de fallo. `Success` no contiene `fault`; un estado de
+  fallo contiene un objeto `Fault` válido. En un `MemoryFault`, `address` y
+  `elementIndex` identifican, cuando estén disponibles, el acceso causante.
 
 En las peticiones al VRF y de memoria, `registerRef` designa un
 `VectorRegRef` en el baseline y un `PhysicalRegRef` cuando se habilita el
@@ -287,8 +335,8 @@ dependencias escalares y lee de `MinorCPU` la base de memoria o el escalar de
 
 ### Recibe desde la VPU a través de `CpuVectorInterface`
 
-- `grant` o `stall` para la consulta de admisión.
-- `accepted(commandId)` cuando `CommandQueue` ya posee el comando.
+- `grant`, `stall` o `rejected` para la consulta de admisión.
+- `accepted(CommandKey)` cuando `CommandQueue` ya posee el comando.
 - `completed(VectorCompletion)` cuando `AraSequencer` ha terminado todas las
   tareas o ha producido un fault.
 
@@ -301,8 +349,8 @@ dependencias escalares y lee de `MinorCPU` la base de memoria o el escalar de
 
 ### Envía a la VPU mediante `CpuVectorInterface`
 
-- `requestGrant(info)`, para preguntar si `CommandQueue` puede aceptar el
-  comando.
+- `requestGrant(command)`, para preguntar si `CommandQueue` puede aceptar el
+  comando. La consulta es inmutable y no transfiere su propiedad a la VPU.
 - `dispatch(grantToken, VectorCommand)`, con la macro RVV y el estado capturado
   por la CPU. `CpuVectorInterface` lo reenvía al frontend VPU.
 
@@ -321,9 +369,12 @@ Las transiciones significan lo siguiente:
    conserva la macro en `inFlightInsts`. Mientras falte un registro escalar o
    la instrucción anterior de Minor, no se lee el operando ni se contacta con
    la VPU.
-2. `WAIT_GRANT`: las dependencias escalares están listas. Execute construye el
-   `VectorCommand` y envía `requestGrant` a `CpuVectorInterface`. Un `stall` no
-   cambia este estado y se vuelve a intentar en un ciclo posterior.
+2. `WAIT_GRANT`: las dependencias escalares están listas. Execute extrae la
+   semántica y los operandos, obtiene un `CommandKey` de
+   `CpuVectorInterface`, construye el `VectorCommand` y envía `requestGrant`.
+   Un `stall` no cambia este estado y se vuelve a intentar en un ciclo
+   posterior. Un `rejected` es permanente y se convierte en una instrucción
+   ilegal; no se reintenta.
 3. `DISPATCHED`: la interfaz CPU ha recibido `grant` y Execute ha enviado
    `dispatch(grantToken, command)`. La instrucción espera confirmación de que
    el comando fue almacenado en la FIFO de la VPU.
@@ -342,7 +393,10 @@ la CPU continúe con instrucciones dependientes.
 
 ## CpuVectorInterface
 
-Esta interfaz encapsula la frontera CPU--VPU y construye `VectorCommand`.
+Esta interfaz encapsula la frontera CPU--VPU. `MinorCPU` decodifica la
+instrucción y extrae su semántica y operandos; `CpuVectorInterface` asigna la
+identidad, valida el descriptor y lo transporta sin recibir `StaticInst` ni
+`DynInst`.
 
 **Conexiones directas.** Su extremo CPU es `MinorCPU::Execute/Commit` y su
 extremo VPU es el control de admisión y `CommandQueue`. No se conecta a lanes,
@@ -350,62 +404,230 @@ VRF ni memoria.
 
 ### Recibe desde MinorCPU
 
-- Una consulta de admisión.
+- Una consulta de admisión con un `VectorCommand` inmutable.
 - Un `VectorCommand` para despacho.
 - Eventos de reset o drain.
 
 ### Envía a MinorCPU
 
-- `grant` o `stall`.
-- `accepted(commandId)`.
+- `grant`, `stall` o `rejected`.
+- `accepted(CommandKey)`.
 - `completed(VectorCompletion)`.
 
 ### Envía al frontend VPU
 
-- Solicitud de admisión.
+- Solicitud de admisión con acceso inmutable al comando.
 - Comando validado y su información de contexto.
 
 La API recomendada es:
 
 ```cpp
-GrantResult requestGrant(const VectorCommandAdmissionInfo &info);
+enum class GrantStatus : uint8_t
+{
+    Granted,
+    Stall,
+    Rejected,
+};
+
+enum class RejectionReason : uint8_t
+{
+    InvalidIdentity,
+    InvalidVectorConfig,
+    InvalidRegisterGroup,
+    InvalidPayload,
+    UnsupportedOperation,
+    UnsupportedConfiguration,
+    DuplicateCommand,
+};
+
+struct GrantToken
+{
+    uint64_t reservationId;
+    CommandKey command;
+};
+
+struct GrantResult
+{
+    GrantStatus status;
+    std::optional<GrantToken> token;
+    std::optional<RejectionReason> rejectionReason;
+};
+
+CommandKey allocateCommandKey(ContextID contextId);
+GrantResult requestGrant(const VectorCommand &command);
 void dispatch(GrantToken token, const VectorCommand &command);
 
 void accepted(CommandKey command);
 void completed(const VectorCompletion &completion);
 ```
 
+`allocateCommandKey` mantiene un contador monotónico por contexto. La identidad
+completa es siempre `(contextId, commandId)` y los identificadores consumidos
+no se reutilizan aunque el comando resulte rechazado.
+
+`GrantResult` distingue `Granted`, `Stall` y `Rejected`. `Stall` indica falta
+temporal de capacidad y permite reintentar; `Rejected` indica un descriptor
+inválido o no soportado y no debe reintentarse. Cuando el resultado es
+`Granted`, contiene un `GrantToken` opaco creado por la VPU. Sólo
+`Rejected` contiene `rejectionReason`; `Granted` contiene un token y `Stall`
+no contiene ninguno de los dos.
+
 El `GrantToken` reserva la capacidad concedida entre `requestGrant` y
 `dispatch`, evitando una carrera entre consultar la capacidad y almacenar el
-comando.
+comando. Contiene el `CommandKey` asociado y un identificador de reserva, sólo
+puede consumirse una vez y no puede utilizarse para otro comando.
+
+La interfaz se divide en dos extremos C++ no propietarios: un
+`VpuCommandEndpoint`, que recibe `requestGrant` y `dispatch`, y un
+`CpuCompletionEndpoint`, que recibe `accepted` y `completed`.
 
 ## VectorCommand
 
-El descriptor es inmutable después de `accepted`. En el baseline sus registros
-se mantienen como referencias arquitectónicas; una implementación futura puede
-traducirlas a versiones físicas dentro de la VPU.
+El descriptor se considera inmutable desde la llamada a `requestGrant`. El
+`dispatch` asociado debe presentar el mismo comando que se utilizó al conceder
+el token. Después de `accepted`, la VPU conserva su propia copia. En el baseline
+los registros se mantienen como referencias arquitectónicas; una
+implementación futura puede traducirlas a versiones físicas dentro de la VPU.
 
 ### Contenido
 
-```text
-Identidad: commandId, contextId, pc
-Operación: opcode, unidad, forma vv/vx/vi e inmediato
-Registros: vd, vs1, vs2, vs3 y destino escalar opcional
-Operandos: valores escalares ya leídos por la CPU
-RVV: vl, vstart, SEW, LMUL, máscara, tail/mask agnostic
-Memoria: base virtual, patrón, stride, registro índice, EEW y segmentación
-Contexto: requestor, privilegio y metadatos de traducción necesarios
+`VectorCommand` no contiene un opcode por cada mnemónico RVV. La instrucción se
+normaliza en una operación semántica y un payload tipado. Así, `vadd.vv` y
+`vadd.vx` comparten `ArithmeticOperation::Add`; se distinguen por el tipo de su
+segundo operando. De la misma forma, `vle32.v` y `vse32.v` comparten el
+descriptor de memoria y se distinguen mediante `MemoryDirection`.
+
+```cpp
+enum class ArithmeticOperation : uint8_t
+{
+    Invalid,
+    Add,
+};
+
+enum class ElementWidthMode : uint8_t
+{
+    SameWidth,
+    Widening,
+    Narrowing,
+};
+
+enum class ElementSignedness : uint8_t
+{
+    NotApplicable,
+    Signed,
+    Unsigned,
+};
+
+using ArithmeticOperand =
+    std::variant<VectorRegRef, RegVal, int64_t>;
+
+struct ArithmeticCommand
+{
+    ArithmeticOperation operation;
+    ElementWidthMode widthMode;
+    ElementSignedness signedness;
+    VectorRegRef destination;
+    VectorRegRef vectorSource;
+    ArithmeticOperand secondOperand;
+};
 ```
 
-Para memoria, el descriptor debe expresar `unit-stride`, `strided` e `indexed`,
-además de si el acceso es ordered, unordered o fault-only-first.
+La alternativa activa de `ArithmeticOperand` representa respectivamente una
+forma vector--vector, vector--escalar o vector--inmediato. No se almacena además
+una forma `vv`, `vx` o `vi`, porque sería información duplicada susceptible de
+contradecir el tipo real del operando.
+
+El direccionamiento de memoria sigue la misma regla:
+
+```cpp
+enum class MemoryDirection : uint8_t
+{
+    Invalid,
+    Load,
+    Store,
+};
+
+enum class MemoryOrdering : uint8_t
+{
+    NotApplicable,
+    Ordered,
+    Unordered,
+};
+
+struct UnitStrideAddress
+{};
+
+struct StridedAddress
+{
+    RegVal stride;
+};
+
+struct IndexedAddress
+{
+    VectorRegRef index;
+    MemoryOrdering ordering;
+};
+
+using MemoryAddressing = std::variant<
+    UnitStrideAddress,
+    StridedAddress,
+    IndexedAddress>;
+
+struct MemoryCommand
+{
+    MemoryDirection direction;
+    VectorRegRef dataReg;
+    Addr base;
+    MemoryAddressing addressing;
+    uint16_t elementWidthBits;
+    uint8_t fieldCount;
+    bool faultOnlyFirst;
+};
+```
+
+`dataReg` es el grupo de destino de una carga o el grupo fuente de un store.
+La alternativa activa de `MemoryAddressing` determina el patrón y evita
+combinaciones inconsistentes entre un modo, un stride y un registro índice.
+
+El descriptor que cruza la frontera queda formado por:
+
+```cpp
+using VectorCommandPayload =
+    std::variant<ArithmeticCommand, MemoryCommand>;
+
+struct VectorCommand
+{
+    CommandKey command;
+    Addr pc;
+    VectorConfig config;
+    VectorCommandPayload payload;
+    RequestorID requestorId;
+};
+```
+
+`ContextID` forma parte de `CommandKey`; `requestorId` identifica al
+solicitante de memoria. El soporte inicial en modo SE no necesita transportar
+privilegio, virtualización, ASID ni VMID. Esos metadatos se incorporarán al
+contrato cuando se defina su semántica de traducción.
+
+La unidad receptora se deriva del payload: un `ArithmeticCommand` se dirige a
+las lanes y un `MemoryCommand` a la VLSU. No se almacena un campo `unit` en
+`VectorCommand`, porque duplicaría información y podría contradecir el payload.
+
+La frontera proporciona validación estructural y validación del subconjunto
+implementado. La primera rechaza descriptores incoherentes; la segunda produce
+`rejected` para una operación bien formada que la VPU aún no soporte.
 
 En el baseline sólo se generan los siguientes subconjuntos:
 
-- `vle32.v`: `vd`, base virtual, `unit-stride`, EEW de 32 bits y estado RVV.
-- `vadd.vv`: `vd`, `vs1`, `vs2`, opcode de suma y estado RVV.
-- `vadd.vx`: `vd`, `vs2`, valor escalar de `rs1`, opcode y estado RVV.
-- `vse32.v`: `vs3`, base virtual, `unit-stride`, EEW de 32 bits y estado RVV.
+- `vle32.v`: `MemoryCommand` de carga, `dataReg=vd`, base virtual,
+  `UnitStrideAddress`, EEW de 32 bits y estado RVV.
+- `vadd.vv`: `ArithmeticCommand` de suma, `destination=vd`, `vectorSource=vs2`
+  y un `VectorRegRef` para `vs1` como segundo operando.
+- `vadd.vx`: `ArithmeticCommand` de suma, `destination=vd`, `vectorSource=vs2`
+  y el valor escalar de `rs1` como segundo operando.
+- `vse32.v`: `MemoryCommand` de store, `dataReg=vs3`, base virtual,
+  `UnitStrideAddress`, EEW de 32 bits y estado RVV.
 
 Los campos para otros patrones y operaciones se reservan, pero el frontend
 debe rechazarlos mientras no exista una ruta funcional completa.
@@ -419,18 +641,124 @@ debe rechazarlos mientras no exista una ruta funcional completa.
 
 ### Recibe
 
-- `requestGrant` y `dispatch(grantToken, VectorCommand)`.
+- `requestGrant(VectorCommand)` y
+  `dispatch(grantToken, VectorCommand)`.
 - Espacio liberado en la FIFO.
 - Disponibilidad del sequencer y de las unidades del backend.
 
 ### Envía
 
-- `grant` o `stall`.
+- `grant`, `stall` o `rejected`.
 - `accepted` sólo después de almacenar el comando en la FIFO.
 - El comando de cabeza hacia `AraSequencer`.
 - Señales de `empty`, `full` y ocupación.
 
-En el baseline, el grant sólo comprueba que la FIFO pueda aceptar el comando.
+### Secuencia de admisión
+
+La validación se reparte sin duplicar la decodificación. `CpuVectorInterface`
+comprueba la estructura del descriptor y el extremo VPU comprueba las
+capacidades configuradas, las identidades activas y el espacio reservable de
+`CommandQueue`. Ambos devuelven sus errores mediante el mismo `GrantResult`;
+ninguno interpreta bits de la instrucción original.
+
+`requestGrant` no modifica la FIFO. El control de admisión procesa la consulta
+en este orden:
+
+1. `CpuVectorInterface` valida la estructura interna del `VectorCommand`.
+2. El extremo VPU comprueba que la configuración y la operación están
+   soportadas.
+3. Comprueba que el `CommandKey` no tenga otra reserva ni un comando ya
+   aceptado.
+4. Calcula la capacidad disponible contando tanto entradas ocupadas como
+   reservas concedidas todavía no consumidas.
+5. Si existe capacidad, crea una reserva, genera un `GrantToken` y devuelve
+   `Granted`.
+
+De forma resumida:
+
+```text
+descriptor mal formado              -> Rejected(reason)
+descriptor válido pero no soportado -> Rejected(reason)
+CommandKey ya conocido              -> Rejected(DuplicateCommand)
+sin entrada libre reservable        -> Stall
+comando válido y entrada reservable -> Granted(token)
+```
+
+Un resultado `Rejected` es definitivo para ese descriptor. Un resultado
+`Stall` no crea estado ni token; MinorCPU conserva exactamente el mismo
+comando y puede repetir la consulta en otro ciclo.
+
+### Validación estructural
+
+La validación estructural comprueba invariantes que no dependen de la
+capacidad instantánea de la VPU:
+
+- `CommandKey` tiene un `contextId` y un `commandId` válidos, y
+  `requestorId != Request::invldRequestorId`.
+- `VectorConfig` contiene un LMUL válido y un SEW de al menos 8 bits que es
+  potencia de dos. Un `vstart >= vl` es válido y representa un rango de
+  ejecución vacío.
+- Todo `VectorRegRef` tiene `regCount != 0`, está contenido en `v0..v31` y
+  respeta la alineación del grupo que representa.
+- Un `ArithmeticCommand` tiene una operación válida, referencias válidas para
+  destino y fuente vectorial, y una alternativa reconocida en
+  `ArithmeticOperand`. Si el segundo operando es vectorial, su grupo también
+  se valida.
+- Un `MemoryCommand` tiene dirección de carga o store, `dataReg` válido, EEW
+  no nulo, `fieldCount` entre 1 y 8 y una alternativa reconocida en
+  `MemoryAddressing`. `faultOnlyFirst` sólo es estructuralmente válido para una
+  carga.
+- El tamaño de los grupos coincide con LMUL en aritmética y con EMUL en
+  memoria. EMUL se deriva de LMUL, EEW y SEW; el grupo resultante debe caber en
+  los 32 registros arquitectónicos.
+
+Un fallo de estas reglas devuelve `Rejected` con `InvalidIdentity`,
+`InvalidVectorConfig`, `InvalidRegisterGroup` o `InvalidPayload`, según
+corresponda. Esta comprobación no consulta la ocupación de la FIFO.
+
+### Comprobación del soporte implementado
+
+Un descriptor puede ser estructuralmente correcto según RVV y no estar
+implementado por la configuración actual. Para el baseline, la comprobación de
+soporte acepta únicamente:
+
+- SEW de 32 bits, el conjunto de LMUL habilitado por la configuración de la
+  VPU y `vl` no superior al `VLMAX` que resulta de VLEN, SEW y LMUL.
+- Comandos no enmascarados.
+- `ArithmeticOperation::Add` con `ElementWidthMode::SameWidth`,
+  `ElementSignedness::NotApplicable` y segundo operando `VectorRegRef` o
+  `RegVal`.
+- Cargas y stores con `UnitStrideAddress`, EEW de 32 bits,
+  `fieldCount == 1` y `faultOnlyFirst == false`.
+
+Una operación no implementada devuelve `UnsupportedOperation`; una combinación
+de SEW, LMUL, máscara o modo de memoria no implementada devuelve
+`UnsupportedConfiguration`. Ninguno de estos rechazos reserva espacio.
+
+### Reserva y consumo del token
+
+La capacidad reservable se calcula como:
+
+```text
+available = queueDepth - queuedCommands - outstandingReservations
+```
+
+Cuando `available` es cero se devuelve `Stall`. Cuando es mayor que cero, la
+VPU crea una entrada de reserva que conserva el `CommandKey` y una copia de
+validación del descriptor. Esta copia no equivale a `accepted`: el comando aún
+no está en la FIFO y no puede ejecutarse.
+
+`dispatch` busca la reserva mediante `reservationId`, comprueba que el token no
+haya sido consumido y compara el `CommandKey` y el descriptor con la copia
+validada. Si coinciden, consume la reserva y almacena el comando en la FIFO de
+forma atómica; sólo entonces emite `accepted(CommandKey)`. Como la entrada ya
+estaba reservada, `dispatch` no puede responder con `Stall`.
+
+Un token inexistente, consumido dos veces o utilizado con otro comando es un
+error del protocolo entre CPU y VPU. No produce `Rejected`, porque ese estado
+sólo es una respuesta a `requestGrant`; la implementación debe detectarlo con
+una aserción o un error fatal de simulación.
+
 Aunque la FIFO pueda almacenar varias órdenes, el sequencer no inicia una
 nueva hasta completar la anterior. Si se activa en el futuro el
 renombramiento, la admisión comprobará además RAT, free-list y ROB.
@@ -852,7 +1180,7 @@ Decode clasifica la macro RVV
   -> vsetvli: MinorCPU actualiza vl/vtype y el destino escalar
   -> vle32.v/vadd.vv/vadd.vx/vse32.v: Execute valida dependencias
      y lee bases u operandos escalares
-  -> CpuVectorInterface crea VectorCommand
+  -> CpuVectorInterface asigna CommandKey y valida VectorCommand
   -> Commit obtiene grant y hace dispatch
   -> admisión almacena el comando y emite accepted
   -> AraSequencer genera ArithmeticTask o MemoryTask

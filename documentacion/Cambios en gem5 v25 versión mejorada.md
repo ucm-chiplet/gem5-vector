@@ -101,13 +101,17 @@ El protocolo mínimo será:
 
 ```text
 MinorCPU -> VPU: requestGrant(command)
-VPU      -> CPU: grant / stall
-MinorCPU -> VPU: dispatch(command)
-VPU      -> CPU: accepted(command_id)
-VPU      -> CPU: completed(command_id, status, scalar_result)
+VPU      -> CPU: grant(token) / stall / rejected
+MinorCPU -> VPU: dispatch(token, command)
+VPU      -> CPU: accepted(CommandKey)
+VPU      -> CPU: completed(VectorCompletion)
 ```
 
-Se deben distinguir dos eventos:
+Se deben distinguir los resultados de admisión y los eventos de ciclo de vida:
+
+- `grant`: la VPU reserva capacidad y devuelve un `GrantToken`.
+- `stall`: no hay capacidad temporalmente y MinorCPU puede reintentar.
+- `rejected`: el descriptor es inválido o no está soportado; no se reintenta.
 
 - `accepted`: la VPU ha almacenado la orden en su cola.
 - `completed`: la ejecución vectorial ha terminado.
@@ -115,49 +119,137 @@ Se deben distinguir dos eventos:
 No se debe usar un único callback para ambos casos, ya que Vitruvius mezcla
 aceptación y finalización en algunos caminos.
 
+El token contiene el `CommandKey` asociado y un identificador opaco de
+reserva. Sólo puede consumirse una vez y únicamente con el comando para el que
+se concedió. De este modo, la capacidad reservada por `requestGrant` no puede
+desaparecer antes de `dispatch`.
+
 Las instrucciones `vsetvl`/ `vsetvli` se procesan en el lado CPU para
 actualizar el estado RVV 1.0 de gem5. La VPU recibe después el valor efectivo
-de `vl`, `vtype`, `SEW`, `LMUL`, máscara y resto de metadatos.
+de `vl`, `vstart`, `SEW`, `LMUL`, máscara y políticas de tail y mask. Recibe
+estos campos ya normalizados y no vuelve a decodificar `vtype`.
 
 ### Archivos implicados y reutilización
 
 | Archivo                                                               | Acción                                                               | Vitruvius necesario                                      |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
 | `gem5_VPU/src/cpu/minor/execute.cc`                                   | 🟨 Modificar: emitir `requestGrant` y `dispatch` al llegar a commit. | Sí, como patrón de integración.                          |
-| `gem5_VPU/src/cpu/vector_backend/cpu_vector_interface.hh/.cc`         | 🟦 Crear: interfaz con `accepted` y `completed` separados.           | No existe; debe crearse.                                 |
+| `gem5_VPU/src/cpu/vector_engine/interface/cpu_vector_interface.hh/.cc` | 🟦 Crear: identidad, admisión, despacho y callbacks separados.       | No existe; debe crearse.                                 |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_engine_interface.hh/.cc` | 🟩 Rescatar y adaptar el patrón `requestGrant`/`sendCommand`.        | Sí, como referencia; no se porta su tipo de instrucción. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_engine.cc`               | 🟩 Rescatar como referencia para la concesión de recursos.           | Opcional; sólo referencia.                               |
 
 ## 4. Descriptor para comunicación entre CPU y VPU
 
-No se pasarán punteros a las clases RVV 0.7.1 de Vitruvius. Se creará un
-descriptor propio basado en RVV 1.0:
+No se pasarán punteros a las clases RVV 0.7.1 de Vitruvius. MinorCPU extrae la
+semántica y los operandos de RVV 1.0, solicita a `CpuVectorInterface` un
+`CommandKey` y construye un descriptor propio. La interfaz lo valida y lo
+transporta sin volver a decodificar la instrucción.
+
+El descriptor no contiene un `VectorOpcode` por cada mnemónico. Se compone a
+partir de operaciones semánticas y payloads tipados:
 
 ```cpp
-struct VectorCommand
+enum class ArithmeticOperation : uint8_t
 {
-    uint64_t id;
-    Addr pc;
-    VectorOpcode opcode;
-    VectorUnitClass unit;
+    Invalid,
+    Add,
+};
 
-    uint8_t vd, vs1, vs2, vs3;
-    RegVal scalar_operand;
+enum class ElementWidthMode : uint8_t
+{
+    SameWidth,
+    Widening,
+    Narrowing,
+};
 
-    uint32_t vl;
-    uint32_t vstart;
-    uint16_t sew_bits;
-    Lmul lmul;
+enum class ElementSignedness : uint8_t
+{
+    NotApplicable,
+    Signed,
+    Unsigned,
+};
 
-    bool masked;
-    bool tail_agnostic;
-    bool mask_agnostic;
+using ArithmeticOperand =
+    std::variant<VectorRegRef, RegVal, int64_t>;
 
-    MemoryAddressMode memory_mode;
-    Addr base;
+struct ArithmeticCommand
+{
+    ArithmeticOperation operation;
+    ElementWidthMode widthMode;
+    ElementSignedness signedness;
+    VectorRegRef destination;
+    VectorRegRef vectorSource;
+    ArithmeticOperand secondOperand;
+};
+
+enum class MemoryDirection : uint8_t
+{
+    Invalid,
+    Load,
+    Store,
+};
+
+enum class MemoryOrdering : uint8_t
+{
+    NotApplicable,
+    Ordered,
+    Unordered,
+};
+
+struct UnitStrideAddress
+{};
+
+struct StridedAddress
+{
     RegVal stride;
 };
+
+struct IndexedAddress
+{
+    VectorRegRef index;
+    MemoryOrdering ordering;
+};
+
+using MemoryAddressing = std::variant<
+    UnitStrideAddress,
+    StridedAddress,
+    IndexedAddress>;
+
+struct MemoryCommand
+{
+    MemoryDirection direction;
+    VectorRegRef dataReg;
+    Addr base;
+    MemoryAddressing addressing;
+    uint16_t elementWidthBits;
+    uint8_t fieldCount;
+    bool faultOnlyFirst;
+};
+
+using VectorCommandPayload =
+    std::variant<ArithmeticCommand, MemoryCommand>;
+
+struct VectorCommand
+{
+    CommandKey command;
+    Addr pc;
+    VectorConfig config;
+    VectorCommandPayload payload;
+    RequestorID requestorId;
+};
 ```
+
+`vadd.vv` y `vadd.vx` comparten `ArithmeticOperation::Add`; la alternativa de
+`ArithmeticOperand` indica si el segundo operando es un registro vectorial, un
+valor escalar o un inmediato. `vle32.v` y `vse32.v` utilizan
+`MemoryCommand`, con dirección `Load` o `Store`, EEW de 32 bits y
+`UnitStrideAddress`.
+
+La unidad receptora se deriva del payload y no se almacena como un campo
+duplicado. `VectorConfig` contiene los valores efectivos de `vl`, `vstart`,
+SEW, LMUL, máscara y políticas tail/mask agnostic ya calculados por la CPU.
+`CommandKey` conserva `commandId` y `contextId`, y `requestorId` identifica al
+solicitante de memoria en modo SE.
 
 `VectorCommand` será la única interfaz entre MinorCPU y la VPU. Las clases
 internas de la VPU no deben depender de `StaticInst` ni volver a decodificar la
@@ -167,8 +259,12 @@ instrucción.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/vector_command.hh` | 🟦 Crear: definición estable del descriptor. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/cpu_vector_interface.cc` | 🟦 Crear: extracción de datos RVV 1.0 hacia `VectorCommand`. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/common/command_key.hh` | 🟦 Crear: identidad completa del comando. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/common/vector_reg_ref.hh` | 🟦 Crear: referencias a grupos arquitectónicos. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/common/vector_types.hh` | 🟦 Crear: configuración y vocabulario semántico compartido. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/interface/vector_command.hh` | 🟦 Crear: descriptor tipado e inmutable durante el despacho. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/interface/vector_completion.hh` | 🟦 Crear: estado, resultado escalar, `vstart` y fault. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/interface/cpu_vector_interface.hh/.cc` | 🟦 Crear: asignación de identidad, validación y transporte. | No existe; debe crearse. |
 | `gem5_VPU/src/arch/riscv/insts/vector.hh` y formatos RVV de gem5 v25 | ⬜ Consultar para extraer semántica, operandos y estado RVV 1.0. | No; gem5 v25 es la autoridad. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_dyn_inst.hh` | 🟩 Rescatar sólo como referencia para distinguir estado estático y dinámico. | Opcional; no reutilizable directamente. |
 
