@@ -10,6 +10,106 @@ System-level, PyUnit, and TestLib assets live under `tests/`; C++ unit tests
 are usually colocated with their source under `src/`. Utility scripts are in
 `util/`, and vendored third-party or integration code is under `ext/`.
 
+Sí: ajustaría la sección para que todos los documentos sean la referencia y para exigir propuesta/aprobación previa. Markdown revisado: encabezados, listas y bloques están correctamente separados.
+
+
+## Trabajo en la VPU Ara-like
+
+La VPU vive en `src/cpu/vector_engine/`. Es un coprocesador vectorial
+Ara-like conectado a `MinorCPU` para ejecutar instrucciones RVV mediante
+offload.
+
+La referencia funcional, arquitectónica y de diseño de la VPU son todos los
+archivos de `documentacion/`. Antes de trabajar en la VPU, revisa los
+documentos relacionados con el cambio. En especial, usa
+`documentacion/Interfaces propuestas.md` para entender las responsabilidades
+de cada interfaz y módulo.
+
+### Propuesta y aprobación antes de modificar
+
+Antes de crear, borrar o modificar cualquier archivo relacionado con la VPU,
+presenta una propuesta completa y revisable al usuario. No hagas cambios hasta
+recibir una aprobación explícita.
+
+La propuesta debe indicar, como mínimo:
+
+- El objetivo concreto y el comportamiento que se quiere conseguir.
+- Los archivos y directorios que se crearían o modificarían.
+- Los módulos afectados y sus responsabilidades.
+- Las interfaces, datos y señales que cruzan entre módulos.
+- Las decisiones de diseño relevantes y las alternativas descartadas.
+- Qué queda fuera de alcance en esta iteración.
+- Cómo se comprobaría el cambio, si procede.
+
+Si la propuesta cambia durante la implementación, detente, explica el motivo y
+pide una nueva aprobación antes de ampliar el alcance.
+
+### Alcance del baseline
+
+La primera versión debe ser pequeña, comprensible y funcional. El objetivo
+inicial es ejecutar, en modo SE, `vsetvli`, `vle32.v`, `vadd.vv`, `vadd.vx` y
+`vse32.v`, con enteros de 32 bits y accesos unit-stride.
+
+En esta fase se prioriza la corrección funcional. El rendimiento, el
+solapamiento de instrucciones, el modelado detallado de ciclos, el chaining y
+la microarquitectura avanzada quedan fuera de alcance salvo aprobación expresa.
+
+Mantén estas decisiones de diseño:
+
+- `MinorCPU` decodifica la instrucción. La VPU recibe un `VectorCommand` y no
+  debe volver a decodificar opcodes ni depender de `StaticInst` o `DynInst`.
+
+- `vsetvli` se ejecuta en la CPU y actualiza el estado RVV. Las instrucciones
+  vectoriales soportadas se envían a la VPU.
+
+- El frontend admite comandos en orden y, en el baseline, sólo puede haber una
+  instrucción vectorial activa.
+
+- La aceptación de un comando y su finalización son eventos distintos.
+
+- La identidad debe viajar de extremo a extremo: `CommandKey` para comandos,
+  `taskId` para trabajo interno y `requestId` para peticiones de memoria.
+
+- El baseline usa referencias arquitectónicas a registros (`VectorRegRef`).
+  No introduzcas renombramiento físico, ROB ni estructuras de disponibilidad
+  activas sin una propuesta y aprobación específicas.
+
+### Organización del código
+
+La estructura prevista es:
+
+    src/cpu/vector_engine/
+    ├── interface/      # frontera MinorCPU ↔ VPU
+    ├── frontend/       # cola, secuenciador y reparto de tareas
+    ├── common/         # tipos compartidos e invariantes
+    ├── vpu/
+    │   ├── lanes/      # lanes y ALU
+    │   ├── register_file/
+    │   ├── vlsu/       # cargas, stores e interfaz de memoria
+    │   └── interconnect/
+    └── future/         # extensiones aún no activas
+
+Los directorios de `future/` reservan extensiones como renombramiento, ROB,
+issue queues, SLDU y MASKU. No añadas lógica activa en ellos hasta que el
+baseline funcional esté terminado y el usuario lo apruebe.
+
+No copies automáticamente el diseño de Vitruvius. Puede servir como inspiración
+para organizar el código, pero las decisiones funcionales deben seguir los
+documentos de este proyecto y RVV 1.0.
+
+### Pruebas y validación
+
+No implementes pruebas por iniciativa propia si el usuario no las ha pedido.
+Las pruebas del proyecto serán definidas por el equipo humano.
+
+Aun así, si un cambio carece de una forma clara de validarse, incluye en la
+propuesta una sugerencia breve de prueba o benchmark. Debe ser una propuesta,
+no una implementación, salvo que el usuario autorice crearla.
+
+Al finalizar un cambio aprobado, informa de qué se modificó, qué no se llegó a
+modificar y qué comprobaciones se realizaron.
+
+
 ## Dependency Policy
 
 The project policy for dependency-support updates is to cover Ubuntu LTS
