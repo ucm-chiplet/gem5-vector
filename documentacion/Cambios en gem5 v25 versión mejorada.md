@@ -18,6 +18,25 @@ Vitruvius se reutilizará como referencia para la interfaz CPU–VPU, el control
 de créditos y las estructuras de versiones físicas, pero no se portará
 literalmente.
 
+### Contratos del baseline y estado del plan
+
+[[Interfaces propuestas]] es la referencia detallada de campos, invariantes,
+propiedad de mensajes y condiciones de finalización. Este documento conserva
+el plan de integración y sus responsabilidades, sin duplicar las estructuras
+internas completas.
+
+El baseline mantiene una instrucción activa, referencias arquitectónicas y
+una petición lógica de memoria de un elemento de 32 bits en curso. Una carga
+termina después de su writeback; un store, después de su confirmación. No se
+inicia el elemento siguiente antes de cerrar el actual. Drain deja terminar
+el trabajo admitido; el reset con trabajo activo queda fuera del primer hito.
+
+Las tablas de archivos describen destinos del plan, no certifican que estén
+implementados. Ya existen cabeceras básicas en `common/` e `interface/`, pero
+los módulos del frontend y backend aún son armazones vacíos. Las nuevas
+estructuras de tareas, fragmentos, VRF y memoria son contratos documentales
+pendientes de implementación. Esta revisión no modifica el código.
+
 ### Raíces de código del plan
 
 Para distinguir de forma explícita el origen y el destino del código, el
@@ -134,7 +153,7 @@ estos campos ya normalizados y no vuelve a decodificar `vtype`.
 | Archivo                                                               | Acción                                                               | Vitruvius necesario                                      |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
 | `gem5_VPU/src/cpu/minor/execute.cc`                                   | 🟨 Modificar: emitir `requestGrant` y `dispatch` al llegar a commit. | Sí, como patrón de integración.                          |
-| `gem5_VPU/src/cpu/vector_engine/interface/cpu_vector_interface.hh/.cc` | 🟦 Crear: identidad, admisión, despacho y callbacks separados.       | No existe; debe crearse.                                 |
+| `gem5_VPU/src/cpu/vector_engine/interface/cpu_vector_interface.hh/.cc` | 🟦 Crear: identidad, admisión, despacho y callbacks separados.       | No; desarrollo propio.                                 |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_engine_interface.hh/.cc` | 🟩 Rescatar y adaptar el patrón `requestGrant`/`sendCommand`.        | Sí, como referencia; no se porta su tipo de instrucción. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_engine.cc`               | 🟩 Rescatar como referencia para la concesión de recursos.           | Opcional; sólo referencia.                               |
 
@@ -259,12 +278,12 @@ instrucción.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_engine/common/command_key.hh` | 🟦 Crear: identidad completa del comando. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_engine/common/vector_reg_ref.hh` | 🟦 Crear: referencias a grupos arquitectónicos. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_engine/common/vector_types.hh` | 🟦 Crear: configuración y vocabulario semántico compartido. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_engine/interface/vector_command.hh` | 🟦 Crear: descriptor tipado e inmutable durante el despacho. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_engine/interface/vector_completion.hh` | 🟦 Crear: estado, resultado escalar, `vstart` y fault. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_engine/interface/cpu_vector_interface.hh/.cc` | 🟦 Crear: asignación de identidad, validación y transporte. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/common/command_key.hh` | 🟦 Crear: identidad completa del comando. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/common/vector_reg_ref.hh` | 🟦 Crear: referencias a grupos arquitectónicos. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/common/vector_types.hh` | 🟦 Crear: configuración y vocabulario semántico compartido. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/interface/vector_command.hh` | 🟦 Crear: descriptor tipado e inmutable durante el despacho. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/interface/vector_completion.hh` | 🟦 Crear: estado, resultado escalar, `vstart` y fault. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/interface/cpu_vector_interface.hh/.cc` | 🟦 Crear: asignación de identidad, validación y transporte. | No; desarrollo propio. |
 | `gem5_VPU/src/arch/riscv/insts/vector.hh` y formatos RVV de gem5 v25 | ⬜ Consultar para extraer semántica, operandos y estado RVV 1.0. | No; gem5 v25 es la autoridad. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_dyn_inst.hh` | 🟩 Rescatar sólo como referencia para distinguir estado estático y dinámico. | Opcional; no reutilizable directamente. |
 
@@ -298,7 +317,20 @@ Al dividir un comando, `AraSequencer` asigna un `TaskId` único dentro de su
 un descriptor común `UnitTask` con ese `TaskKey`, la clase de unidad y el
 intervalo lógico de elementos. Los rangos de bytes no pertenecen al descriptor
 común: `ArithmeticTask` define su rango de destino y `MemoryTask` un
-`dataRange`, que es destino para loads y fuente para stores.
+`dataRange`, que es destino para loads y fuente para stores. Ambas conservan
+configuración y payload; `MemoryTask` conserva además `pc` y `requestorId`.
+
+El baseline genera una tarea por comando no vacío. `TaskDistributor` divide
+la tarea aritmética en fragmentos contiguos de una palabra como máximo,
+identificados por `LaneFragmentKey = (TaskKey, LaneFragmentId)`. El segundo
+operando conserva su alternativa vectorial o escalar; no se pierde el valor
+de `vadd.vx` al construir un `LaneTask`.
+
+Las lanes devuelven `LaneCompletion` después del writeback. El distribuidor
+agrega los fragmentos y devuelve `UnitCompletion`; la VLSU devuelve ese mismo
+tipo al cerrar su tarea. El sequencer produce un único `VectorCompletion`.
+Un rango vacío no genera tareas ni accesos y completa con `finalVstart=0`.
+Reservas, tareas y fragmentos pendientes son estado de control, no un ROB.
 
 La cola única debe ser parametrizable en profundidad, pero inicialmente tendrá
 política FIFO estricta. No se implementará issue OoO entre instrucciones en esta
@@ -316,12 +348,15 @@ política OoO de las colas separadas de Vitruvius.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/frontend/ara_sequencer.hh/.cc` | 🟦 Crear: scheduler de cola única FIFO y distribución hacia unidades Ara. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/frontend/command_queue.hh/.cc` | 🟦 Crear: FIFO de `VectorCommand`. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/frontend/ara_sequencer.hh/.cc` | 🟦 Crear: scheduler de cola única FIFO y distribución hacia unidades Ara. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/frontend/command_queue.hh/.cc` | 🟦 Crear: FIFO de `VectorCommand`. | No; desarrollo propio. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vector_engine.cc` | 🟩 Rescatar como referencia para el patrón de `dispatch`. | Útil como referencia. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/issue_queues/inst_queue.hh/.cc` | 🟩 Rescatar sólo accounting, capacidad y trazas. | No reutilizar directamente: tiene dos colas y `OoO_queues`. |
 
 ## 6. Renombramiento configurable
+
+Esta sección describe una ampliación posterior. Las estructuras se reservan
+bajo `future/` y permanecen inactivas durante el baseline.
 
 El renombramiento será independiente de la política de issue:
 
@@ -367,8 +402,8 @@ posterior; no debe introducirse al mismo tiempo que la primera VPU Ara-like.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/frontend/rename.hh/.cc` | 🟦 Crear o reescribir: RAT, free-list y soporte ON/OFF para RVV 1.0. | Sí, como modelo conceptual. |
-| `gem5_VPU/src/cpu/vector_backend/frontend/reorder_buffer.hh/.cc` | 🟦 Crear o reescribir: retire ordenado de versiones físicas. | Sí, como modelo conceptual. |
+| `gem5_VPU/src/cpu/vector_engine/future/rename.hh/.cc` | 🟦 Crear o reescribir: RAT, free-list y soporte ON/OFF para RVV 1.0. | Sí, como modelo conceptual. |
+| `gem5_VPU/src/cpu/vector_engine/future/reorder_buffer.hh/.cc` | 🟦 Crear o reescribir: retire ordenado de versiones físicas. | Sí, como modelo conceptual. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/rename/vector_rename.hh/.cc` | 🟩 Rescatar como referencia para RAT/FRL. | No reutilizable directamente: no cubre correctamente LMUL/EMUL RVV 1.0. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/rob/reorder_buffer.hh/.cc` | 🟩 Rescatar como referencia para liberar `old_dst` en orden. | Adaptable conceptualmente; debe reescribirse. |
 
@@ -390,21 +425,30 @@ AraLane
 └── interfaz de interconexión
 ```
 
-Cada lane procesa solamente las palabras que le corresponden:
+Cada lane procesa solamente las palabras que le corresponden. El mapeo
+incluye el registro arquitectónico, además del desplazamiento relativo:
 
 ```text
-global_word = byte_offset / lane_word_bytes
-lane_id     = global_word % num_lanes
-local_word  = global_word / num_lanes
+absolute_byte = first_reg * vlen_bytes + byte_offset
+global_word   = absolute_byte / lane_word_bytes
+lane_id       = global_word % num_lanes
+local_word    = global_word / num_lanes
+bank_id       = local_word % banks_per_lane
+row           = local_word / banks_per_lane
 ```
 
+`VrfGeometry` comparte VLEN, anchura de palabra, número de lanes y bancos.
+Las restricciones de geometría y `MappedVrfFragment` se definen en
+[[Interfaces propuestas]]. Un rango puede producir varios fragmentos; el
+reparto no representa elementos dispersos como un único intervalo contiguo.
+
 Esta regla se implementa una sola vez en `AddressMapper`.
-`TaskDistributor` consulta ese servicio para repartir el trabajo;
-`LaneRegisterFile` lo consulta para localizar los bytes en lane, banco y
-fila. `AraVLSU` también puede consultarlo cuando necesite determinar la
-lane propietaria. Inicialmente es un servicio de cálculo compartido sin
-cola ni latencia propia; las latencias de acceso se modelan en el VRF y sus
-bancos.
+`TaskDistributor` consulta el servicio para repartir el trabajo;
+`LaneRegisterFile` y `AraVLSU` lo consultan para localizar los bytes. No tiene
+cola ni latencia propia; no es un recurso central que serialice las lanes.
+Cada lane convierte sus operandos a un `ExecutionBundle` de valores de 32 bits
+y recibe un `ExecutionResult` antes del writeback. No se fijan en esta fase
+las latencias o el throughput de la ALU.
 
 El número de lanes debe cambiar el paralelismo real y no únicamente la cantidad
 de elementos calculados en una llamada al datapath.
@@ -413,8 +457,8 @@ de elementos calculados en una llamada al datapath.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/lanes/ara_lane.hh/.cc` | 🟦 Crear: lane física, colas locales, arbitraje y progreso independiente. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/lanes/task_distributor.hh/.cc` | 🟦 Crear: reparto de palabras o tareas a lanes. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/vpu/lanes/ara_lane.hh/.cc` | 🟦 Crear: lane física, colas locales, arbitraje y progreso independiente. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/frontend/task_distributor.hh/.cc` | 🟦 Crear: reparto de palabras o tareas a lanes. | No; desarrollo propio. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/multilane_wrapper/vector_lane.hh/.cc` | 🟩 Rescatar sólo readers, writers y ciclo de vida de una operación. | No reutilizar directamente: modela un clúster agregado. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/multilane_wrapper/datapath.hh/.cc` | 🟩 Rescatar sólo operaciones y latencias de referencia. | No reutilizar directamente: no son pipelines ni lanes físicas independientes. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/multilane_wrapper/func_unit.hh` | 🟩 Rescatar como inventario de operaciones. | Opcional; validar contra RVV 1.0. |
@@ -449,58 +493,64 @@ Esta organización sigue el
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/vrf/lane_register_file.hh/.cc` | 🟦 Crear: slice local de VRF por lane. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/vrf/address_mapper.hh/.cc` y `bank.hh/.cc` | 🟦 Crear: mapeo de palabra a lane/banco y arbitraje temporizado. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/noc/vector_interconnect.hh/.cc` | 🟦 Crear: interconexión ideal inicialmente y topologías posteriores. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/vpu/register_file/lane_register_file.hh/.cc` | 🟦 Crear: slice local de VRF por lane. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/vpu/register_file/address_mapper.hh/.cc` y `vector_reg_bank.hh/.cc` | 🟦 Crear: mapeo de palabra a lane/banco y arbitraje temporizado. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/vpu/interconnect/vector_interconnect.hh/.cc` | 🟦 Crear: interconexión ideal inicialmente y topologías posteriores. | No; desarrollo propio. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/register_file/vector_reg.hh/.cc` | 🟩 Rescatar sólo almacenamiento funcional y puertos actuales. | No reutilizar como timing final: es central y multiport. |
 
 ### Reutilización de la memoria de Vitruvius
 
-La nueva VLSU reutilizará de Vitruvius la clasificación de patrones de acceso
-(`unit-stride`, `strided` e `indexed`), el patrón de requests temporizadas y los
-casos de prueba de la VMU.
+La nueva VLSU consultará Vitruvius como referencia para patrones de acceso y
+requests temporizadas. Sólo unit-stride está activo en el baseline. Los casos
+de prueba de la VMU pueden servir como referencia al equipo humano; este plan
+no autoriza su portado automático.
 
 No se reutilizarán directamente `VectorMemUnit`, `MemUnitReadTiming` ni
 `MemUnitWriteTiming`, porque dependen de RVV 0.7.1 y de un VRF central. Se
 usarán como referencia de diseño para crear una `AraVLSU` conectada a los
 puertos de memoria de gem5 v25.
 
-Cada request de memoria debe conservar:
+Cada `VectorMemoryRequest` conserva:
 
 ```text
-task_key
-request_id
-register_ref
-destination_byte_range
-element_index
-lane_id
-address
-is_load / is_store
-fault_and_order_metadata
+taskKey + requestId
+registerRef + dataRange + elementIndex + laneId
+virtualAddress + size + direction
+storeData + byteEnable
+pc + requestorId
 ```
 
-`register_ref` identifica el grupo de registros: `VectorRegRef`
-arquitectónico en el baseline o `PhysicalRegRef`, con su versión, cuando se
-habilita el renombramiento. El modo sin renombramiento no exige
-`physical_version`. La petición conserva además su rango de bytes y su
-identidad de tarea y subpetición (`TaskKey` y `requestId` en las interfaces
-propuestas). Esa pareja podrá formalizarse más adelante como `RequestKey`.
+`direction` es `MemoryDirection`, sin booleanos independientes.
+`registerRef` es arquitectónico; `dataRange` es destino en cargas y fuente en
+stores. La clave completa incluye el contexto de `TaskKey`. `RequestId` no
+se reutiliza dentro de una tarea. Una ampliación podrá formalizar `RequestKey`,
+pero no es necesario introducirlo ahora.
 
-Al recibir una respuesta, la VLSU la distribuye a la lane propietaria y conserva
-la identidad de la operación, del elemento y la referencia original del
-registro, incluida su versión sólo en el modo con renombramiento. La política
-exacta para hacer visible la disponibilidad del dato y habilitar chaining se
-definirá en una fase posterior.
+La VLSU mantiene el elemento activo hasta el `WriteAck` del VRF en una carga
+o `StoreAck` de memoria en un store. Su acceso al VRF se identifica mediante
+`VrfAccessKey`, distinto de la identidad de memoria, y se dirige al LRF de la
+lane propietaria. `LoadData` conserva la referencia y el rango originales
+mientras espera escritura.
 
-En el baseline FIFO, los stores se mantienen en orden. Los loads pueden tener
-varias requests en vuelo, pero cada respuesta debe conservar su identidad para
-no publicar bytes en un grupo de registros o lane incorrectos ni, con
-renombramiento, en una versión física distinta.
+`VectorMemoryBackend` mantiene los metadatos de contexto para traducción y
+paquetes. Si el acceso requiere fragmentos físicos, conserva internamente sus
+desplazamientos y respuestas, sin crear peticiones lógicas nuevas. Se encarga
+de `recvReqRetry` después de aceptar la petición de la VLSU. Devuelve una
+única `VectorMemoryResponse`: datos completos de carga, confirmación de store
+o fault. No se publica una carga parcial en el VRF.
+
+En el baseline no hay varias peticiones lógicas en vuelo. Los elementos se
+procesan en orden y un fault cierra la petición actual sin emitir el siguiente.
+La dirección y el índice causantes llegan al sequencer, que devuelve
+`MemoryFault` y `finalVstart` correspondiente. Los errores internos de
+identidad o protocolo se diagnostican como errores del simulador. Drain no
+cancela accesos admitidos. Cargas solapadas, cancelación activa y chaining
+requieren una ampliación posterior del estado de seguimiento.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/memory/ara_vlsu.hh/.cc` | 🟦 Crear: VLSU con requests identificadas y distribución por lane. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/memory/vector_memory_backend.hh` | 🟦 Crear: frontera entre VLSU y memoria gem5. | No existe; debe crearse. |
+| `gem5_VPU/src/cpu/vector_engine/vpu/vlsu/ara_vlsu.hh/.cc` | 🟦 Crear: VLSU con requests identificadas y distribución por lane. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/vpu/vlsu/vector_memory_backend.hh` | 🟦 Crear: frontera entre VLSU y memoria gem5. | No; desarrollo propio. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vmu/vector_mem_unit.hh/.cc` | 🟩 Rescatar patrones unit-stride, strided e indexed. | Sí, como referencia funcional y de pruebas; no como código directo. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vmu/read_timing_unit.hh/.cc` y `write_timing_unit.hh/.cc` | 🟩 Rescatar requests temporizadas y callbacks. | Adaptables conceptualmente; modernizar y desacoplar del VRF central. |
 
@@ -565,28 +615,37 @@ bytes.
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
-| `gem5_VPU/src/cpu/vector_backend/frontend/readiness_table.hh/.cc` | 🟦 Crear: readiness por bytes para versiones físicas y por bits para máscaras. | No existe; debe crearse. |
-| `gem5_VPU/src/cpu/vector_backend/lanes/task_distributor.hh/.cc` y `ara_lane.hh/.cc` | 🟨 Modificar después: consultas y despertadores de disponibilidad granular. | No en las primeras fases. |
+| `gem5_VPU/src/cpu/vector_engine/future/readiness_table.hh/.cc` | 🟦 Crear: readiness por bytes para versiones físicas y por bits para máscaras. | No; desarrollo propio. |
+| `gem5_VPU/src/cpu/vector_engine/frontend/task_distributor.hh/.cc` y `ara_lane.hh/.cc` | 🟨 Modificar después: consultas y despertadores de disponibilidad granular. | No en las primeras fases. |
 | `gem5_Vitruvius/src/cpu/vector_engine/vpu/register_file/vector_reg_valid_bit.hh/.cc` | 🟩 Rescatar sólo para entender el límite del valid bit por registro. | No reutilizar directamente: su granularidad es insuficiente. |
 
 ## 10. Orden de implementación
 
-1. Añadir el flag `vectorOffloadEnabled` a MinorCPU.
-2. Evitar que Minor descomponga RVV en microoperaciones cuando el offload esté activo.
-3. Crear `VectorCommand`.
-4. Implementar `requestGrant`, `dispatch`, `accepted` y `completed`.
-5. Definir `TaskKey`, `ElementRange` y el sobre común `UnitTask`.
-6. Crear `AraSequencer` y una única FIFO de comandos.
-7. Implementar un backend funcional simple sin renombramiento ni chaining.
-8. Añadir lanes físicas y distribución por palabras.
-9. Añadir VRF distribuido y bancarizado.
-10. Añadir VLSU, SLDU, MASKU e interconexión.
-11. Añadir el modo opcional `enable_vector_renaming`.
-12. Añadir la tabla de readiness por bytes como preparación para el chaining.
-13. Implementar chaining granular después de validar el modelo de lanes, VRF y
-    colas de operandos.
-14. Evaluar bypass, OoO o políticas de issue alternativas sólo después de
-    validar el baseline FIFO.
+La primera etapa es documental; las siguientes requieren sus propuestas de
+código y aprobación correspondientes. No se implementan pruebas por defecto.
+
+1. Cerrar los contratos de tareas especializadas, fragmentos, finalizaciones,
+   accesos al VRF, geometría y mensajes de memoria en [[Interfaces propuestas]].
+2. Completar validación de los tipos básicos existentes y definir los tipos
+   pendientes, sin activar renombramiento, ROB ni readiness.
+3. Implementar identidad, reservas, FIFO y protocolo
+   `requestGrant`/`dispatch`/`accepted`/`completed`, incluido drain.
+4. Integrar clasificación y estado de offload en MinorCPU, manteniendo
+   `vsetvli` en CPU y la ruta nativa cuando se deshabilite el coprocesador.
+5. Implementar `AraSequencer`, una tarea por comando no vacío y terminación
+   inmediata de rangos vacíos.
+6. Implementar geometría compartida, `AddressMapper`, VRF por lane y accesos
+   identificados con lectura, escritura, confirmación y retry.
+7. Implementar `TaskDistributor`, fragmentos contiguos, ALU de 32 bits y
+   agregación de `LaneCompletion` después de los writebacks.
+8. Implementar VLSU y backend de memoria con un elemento en curso, acceso
+   directo al LRF, traducción, fragmentación física, retry y faults.
+9. Validar el baseline SE con la secuencia y las pruebas definidas por el
+   equipo humano; no evaluar rendimiento a partir del modelo funcional.
+10. Tras terminar el baseline y con aprobación específica, ampliar el modelo
+    temporal, el solapamiento de memoria, SLDU, MASKU e interconexión.
+11. Incorporar renombramiento, ROB, readiness o chaining únicamente como
+    ampliaciones aprobadas. Evaluar OoO o bypass en fases posteriores.
 
 ## 11. Código de Vitruvius reutilizable
 

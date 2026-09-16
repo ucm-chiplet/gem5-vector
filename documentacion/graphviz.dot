@@ -31,11 +31,12 @@ digraph AraLikeGem5 {
         execute [label=
             "Execute / Commit\nDependencias escalares e " +
             "inFlightInsts\nvsetvli: configura RVV en " +
-            "CPU\nDespacho en Commit; retiro en completed"
+            "CPU\nConstruye VectorCommand RVV 1.0\n" +
+            "Despacho en Commit; retiro en completed"
         ,
                  fillcolor="#D7EAFB"];
         cpu_if [label=
-            "CpuVectorInterface\nConstruye VectorCommand RVV 1.0"
+            "CpuVectorInterface\nAsigna CommandKey\nValida y transporta"
         , fillcolor="#C9E4FA"];
         { rank=same; decode; execute; cpu_if; }
 
@@ -45,8 +46,8 @@ digraph AraLikeGem5 {
         execute -> cpu_if [
             dir=both, color="#0B4F8A", constraint=false,
             label=
-                "requestGrant / dispatch\ngrant o stall / accepted / " +
-                "completed"
+                "requestGrant / dispatch\ngrant, stall o rejected\n" +
+                "accepted / completed"
         ];
     }
 
@@ -58,7 +59,8 @@ digraph AraLikeGem5 {
 
         queue [label=
             "Admisión / CommandQueue\nFIFO única, profundidad " +
-            "configurable\naccepted tras almacenar el comando"
+            "configurable\nReservas con token y copia del comando\n" +
+            "accepted tras almacenar el comando"
         ,
                fillcolor="#D6F0E2"];
         sequencer [label=
@@ -66,7 +68,10 @@ digraph AraLikeGem5 {
             "activa\nAgrega tareas antes de completed"
         ,
                    fillcolor="#C6EAD6"];
-        distributor [label="TaskDistributor\nReparto y agregación",
+        distributor [label=
+            "TaskDistributor\nFragmentos contiguos por palabra\n" +
+            "Asigna LaneFragmentId y agrega finalizaciones"
+        ,
                      fillcolor="#D6F0E2"];
         { rank=same; queue; sequencer; distributor; }
         distributor -> sequencer -> queue [style=invis, weight=100];
@@ -117,7 +122,7 @@ digraph AraLikeGem5 {
 
             lane -> alu [
                 dir=both, color="#A66300",
-                label="ExecutionBundle\nExecutionResult"
+                label="ExecutionBundle + LaneFragmentKey\nExecutionResult"
             ];
             lrf -> banks [
                 dir=both, color="#A66300",
@@ -135,14 +140,14 @@ digraph AraLikeGem5 {
         lrf -> mapper [
             dir=both, color="#A66300",
             label=
-                "Registro / desplazamiento / tamaño\nlane / banco / " +
-                "fila / byteEnable"
+                "Registro / rango / geometría\n" +
+                "MappedVrfFragment[]: lane / banco / fila / máscara"
         ];
 
         vlsu [label=
             "AraVLSU\nvle32.v / vse32.v unit-stride\nCorrelación " +
-            "por TaskKey y requestId\nCompleta tras writeback / " +
-            "ack de stores"
+            "por TaskKey y requestId\nUn elemento de 32 bits en curso\n" +
+            "Avanza tras WriteAck / StoreAck"
         ,
               fillcolor="#EAD8F3", color="#70458A"];
 
@@ -151,14 +156,14 @@ digraph AraLikeGem5 {
         lane -> lrf [
             dir=both, color="#A66300",
             label=
-                "Lectura de operandos / writeback\nReadResponse / " +
-                "WriteAck / retry"
+                "VrfReadRequest / VrfWriteRequest + VrfAccessKey\n" +
+                "ReadResponse / WriteAck / Retry"
         ];
         vlsu -> lrf [
             dir=both, color="#70458A",
             label=
-                "Escritura de cargas / lectura para " +
-                "stores\nReadResponse / WriteAck / retry"
+                "LoadData -> VrfWriteRequest / VrfReadRequest\n" +
+                "VrfAccessKey\nReadResponse / WriteAck / Retry"
         ];
     }
 
@@ -170,7 +175,8 @@ digraph AraLikeGem5 {
 
         mem_backend [label=
             "VectorMemoryBackend\nAdaptación a Request / " +
-            "Packet\nTraducción, faults y retry"
+            "Packet\nTraducción, fragmentación física y retry\n" +
+            "Una respuesta terminal por petición lógica"
         , fillcolor="#E1C9EE"];
         gem5_memory [label="TLB / puertos / memoria de gem5",
                      fillcolor="#EAD8F3"];
@@ -184,8 +190,8 @@ digraph AraLikeGem5 {
     cpu_if -> queue [
         dir=both, color="#0B4F8A", penwidth=2.2,
         label=
-            "requestGrant / dispatch(token, VectorCommand)\ngrant " +
-            "o stall / accepted"
+            "requestGrant / dispatch(token, VectorCommand)\ngrant" +
+            ", stall o rejected / accepted"
     ];
     sequencer -> cpu_if [
         label="completed(VectorCompletion)",
@@ -195,7 +201,7 @@ digraph AraLikeGem5 {
         dir=both, color="#19734B", penwidth=2.2, constraint=false,
         label=
             "ArithmeticTask\nDescriptor común: " +
-            "UnitTask + TaskKey\nCapacidad / finalización agregada"
+            "UnitTask + TaskKey\nAccepted o Retry / UnitCompletion"
     ];
     // Consulta de cálculo; no se envía una UnitTask al mapper.
     distributor -> mapper [
@@ -206,19 +212,20 @@ digraph AraLikeGem5 {
 
     distributor -> lane [
         dir=both, color="#19734B",
-        label="LaneTask + TaskKey\nCapacidad / finalización por lane"
+        label=
+            "LaneTask + LaneFragmentKey\nAccepted o Retry / LaneCompletion"
     ];
     sequencer -> vlsu [
         dir=both, color="#70458A", penwidth=2.2,
         label=
-            "MemoryTask\nUnitTask + TaskKey\nCapacidad / " +
+            "MemoryTask\nUnitTask + TaskKey\nAccepted o Retry / " +
             "UnitCompletion"
     ];
     vlsu -> mem_backend [
         dir=both, color="#70458A", penwidth=2.2,
         label=
             "VectorMemoryRequest\nTaskKey + requestId\n" +
-            "VectorMemoryResponse"
+            "Accepted o Retry / VectorMemoryResponse"
     ];
 
     notes [
@@ -230,12 +237,14 @@ digraph AraLikeGem5 {
             "bancos se replican N veces; el VRF no es " +
             "central.\lRuta elegida: VLSU accede al LRF de la " +
             "lane propietaria.\lComandos: CommandKey; tareas: " +
-            "TaskKey.\lMemoria: TaskKey + requestId; futuro " +
+            "TaskKey.\lFragmentos: TaskKey + LaneFragmentId.\l" +
+            "VRF: TaskKey + requester + accessId.\l" +
+            "Memoria: TaskKey + requestId; futuro " +
             "RequestKey.\lBaseline: VectorRegRef " +
             "y rango de bytes.\lCon renombramiento: " +
             "PhysicalRegRef con versión y rango.\lSin " +
             "renombramiento, ROB ni chaining; validación inicial " +
-            "funcional SE.\l"
+            "funcional SE.\lDrain termina el trabajo admitido.\l"
     ];
 
     future [
@@ -248,7 +257,8 @@ digraph AraLikeGem5 {
             "necesita transportar datos.\lConecta lanes; puede " +
             "distribuir cargas VLSU a AraLane.\lEn esta vista se " +
             "usa el acceso directo VLSU-LRF.\l\lFUERA DEL PRIMER " +
-            "HITO (sin conexiones activas)\lMUL / FPU; SLDU / " +
+            "HITO (sin conexiones activas)\lReset activo; memoria " +
+            "solapada.\lMUL / FPU; SLDU / " +
             "MASKU; reducciones y permutaciones.\lRenombramiento " +
             "al admitir: RAT + free-list + Vector ROB.\lROB: " +
             "retiro ordenado y liberación de versiones; no decide " +

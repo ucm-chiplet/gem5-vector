@@ -32,6 +32,12 @@ primer hito. Sus campos pueden permanecer en los mensajes para estabilizar la
 API, pero sus valores deben rechazarse como no soportados o mantenerse en su
 valor neutro; no deben abrir caminos parcialmente implementados.
 
+El contrato inicial admite una única petición lógica de memoria de un elemento
+de 32 bits en curso. Incluye la lectura del VRF para un store o el writeback
+de una carga: no se empieza el elemento siguiente hasta cerrar el actual.
+El solapamiento de peticiones y el reset con trabajo activo quedan fuera del
+primer hito. `drain` permite terminar el trabajo ya admitido.
+
 La responsabilidad mínima de cada instrucción es:
 
 | Instrucción | Ruta principal | Datos mínimos |
@@ -66,7 +72,8 @@ conflictos de bancos, utilización de unidades ni solapamiento entre comandos.
 - Todos los mensajes de la VPU incluyen una identidad estable de comando;
   las tareas internas incluyen además una identidad de tarea.
 - Las operaciones sobre registros usan en el baseline una referencia al grupo
-  arquitectónico y un rango explícito de bytes, o de bits para máscaras.
+  arquitectónico y un rango explícito de bytes. Los rangos de bits se reservan
+  para la futura ampliación de máscaras.
 - Sólo puede haber un comando ejecutándose en el backend. El siguiente comando
   espera en la FIFO hasta recibir la finalización del anterior.
 - La aceptación de un comando (`accepted`) y su finalización (`completed`) son
@@ -81,7 +88,7 @@ MinorCPU
    |  VectorCommand + grant/accepted/completed
    v
 Frontend VPU: admisión, FIFO y sequencer
-   |  BackendCommand / UnitTask
+   |  ArithmeticTask / MemoryTask, con UnitTask
    v
 Lanes y VLSU <--> VRF distribuido <--> enlace ideal
    |
@@ -94,8 +101,17 @@ Extensiones: SLDU, MASKU, interconexión temporizada, renombramiento y ROB
 
 ## Tipos compartidos
 
-Los siguientes tipos son conceptuales; su forma final puede adaptarse a las
-convenciones C++ de gem5.
+Los siguientes tipos especifican contratos de diseño; su forma final puede
+adaptarse a las convenciones C++ de gem5. Los bloques no son cabeceras
+compilables independientes: omiten includes y usan tipos definidos en otras
+secciones. Una declaración documental no implica que exista implementación.
+
+En el árbol actual, `common/` e `interface/` contienen los tipos básicos,
+`VectorCommand`, `VectorCompletion` y los extremos abstractos de admisión y
+finalización. Las tareas especializadas, fragmentos de lane, accesos al VRF,
+mensajes de memoria y estados internos descritos aquí están pendientes de
+implementación. También lo están los validadores completos y los módulos
+ejecutables. Esta revisión modifica documentación, no esas cabeceras.
 
 ```cpp
 struct CommandKey
@@ -236,7 +252,8 @@ futura configuración con ROB podrá conservarlas hasta el retiro.
 
 - `VectorRegRef` vive en el comando y en las tareas que el sequencer entrega a
   `TaskDistributor`, `AraVLSU` y las lanes. Identifica un grupo de registros
-  arquitectónicos: `firstReg` es su inicio y `regCount` su tamaño LMUL/EMUL.
+  arquitectónicos: `firstReg` es su inicio y `regCount` el número de registros
+  contenedores que requiere LMUL/EMUL.
   Viaja hacia `LaneRegisterFile` para seleccionar el grupo leído o escrito.
   Existe porque el baseline Ara-like no renombra registros y necesita una
   referencia estable, sin introducir versiones físicas innecesarias.
@@ -274,8 +291,8 @@ futura configuración con ROB podrá conservarlas hasta el retiro.
   un `VectorCommand` y la envía, dentro de una tarea especializada, a
   `TaskDistributor`, `AraVLSU` u otra unidad. Contiene únicamente identidad,
   unidad receptora e intervalo lógico de elementos; no contiene operandos,
-  opcode ni rangos de registros. `ArithmeticTask` añadirá su
-  `destinationRange`, mientras que `MemoryTask` añadirá un `dataRange` que es
+  opcode ni rangos de registros. `ArithmeticTask` añade su
+  `destinationRange`, mientras que `MemoryTask` añade un `dataRange` que es
   destino para una carga y fuente para un store. Así `UnitTask` no atribuye
   una semántica de destino incorrecta a las tareas de store.
 
@@ -284,9 +301,8 @@ futura configuración con ROB podrá conservarlas hasta el retiro.
   `MinorCPU::Execute/Commit`. Existe para cerrar el comando, liberar el estado
   en vuelo y transportar resultado escalar, `vstart` o excepción. El resultado
   escalar sólo existe cuando `scalarResult` contiene un valor y `fault` sólo
-  debe existir en estados de fallo. `Success` no contiene `fault`; un estado de
-  fallo contiene un objeto `Fault` válido. En un `MemoryFault`, `address` y
-  `elementIndex` identifican, cuando estén disponibles, el acceso causante.
+  debe existir en estados de fallo arquitectónico. Las combinaciones válidas
+  del baseline se fijan en la tabla de finalización siguiente.
 
 En las peticiones al VRF y de memoria, `registerRef` designa un
 `VectorRegRef` en el baseline y un `PhysicalRegRef` cuando se habilita el
@@ -299,10 +315,68 @@ sin volver a consultar la RAT para una petición ya emitida.
 
 `requestId` aplica el mismo patrón dentro de memoria: `AraVLSU` lo crea para
 cada subpetición de un `TaskKey`, `VectorMemoryBackend` lo devuelve en la
-respuesta y la VLSU lo usa para asociarla aunque las respuestas lleguen en otro
-orden. Una ampliación posterior podrá formalizar `RequestKey` como la pareja
-`(TaskKey, requestId)`. Hasta entonces, las firmas abreviadas deben transportar
+respuesta y la VLSU lo usa para asociarla explícitamente, sin depender del
+orden de llegada. Una ampliación posterior podrá formalizar `RequestKey` como
+la pareja `(TaskKey, requestId)`. Hasta entonces, las firmas deben transportar
 el `TaskKey` completo, incluido el `CommandKey` con su `contextId`.
+
+### Representación de datos e intercambio
+
+```cpp
+using LaneId = uint32_t;
+using BankId = uint32_t;
+using ByteBuffer = std::vector<uint8_t>;
+using ByteEnable = std::vector<uint8_t>;
+
+enum class TransferResult : uint8_t
+{
+    Accepted,
+    Retry,
+};
+```
+
+`LaneId` y `BankId` son índices desde cero, acotados por la geometría. No se
+usan valores ficticios de lane para representar a la VLSU.
+
+`ByteBuffer[i]` corresponde al byte de menor a mayor dirección o
+desplazamiento del rango transportado. Un `ByteEnable` tiene una entrada
+por byte, exclusivamente 0 o 1. En las transferencias de elementos completos
+del baseline todas son 1; al mapearlas a una palabra se deshabilitan los bytes
+exteriores al rango. Las máscaras de predicación RVV no se confunden con
+estas máscaras de escritura.
+
+En enlaces internos, `TransferResult` es una respuesta síncrona a un intento
+de entrega de tarea, acceso o petición. `Accepted` significa que el receptor
+ha copiado el descriptor y sus buffers; no que haya ejecutado la operación.
+`Retry` no transfiere propiedad ni causa efectos: el emisor conserva el mismo
+mensaje e identidad y puede reintentarlo en una oportunidad posterior. Este
+contrato no sustituye `GrantResult` en la frontera CPU--VPU.
+
+Tras aceptar un mensaje, el receptor debe conservarlo hasta emitir su única
+respuesta terminal. Las respuestas y finalizaciones se entregan a un estado
+de recepción reservado al aceptar la petición; no se descartan ni exigen
+reenviar una operación ya aceptada. Si ese espacio no existe, se devuelve
+`Retry` antes de aceptar. No se guardan referencias a buffers temporales.
+
+### Invariantes de finalización CPU--VPU
+
+| `CompletionStatus` | `fault` | `scalarResult` en el baseline | `finalVstart` | Uso |
+| --- | --- | --- | --- | --- |
+| `Success` | Ausente | Ausente | 0 | Todas las tareas y escrituras han terminado; también rango vacío. |
+| `MemoryFault` | `FaultInfo` con `fault != NoFault`, dirección y elemento causante | Ausente | Índice del elemento que falla | La VLSU ha cerrado la petición fallida sin iniciar elementos posteriores. |
+| `IllegalInstruction` | No se emite como finalización del baseline | Ausente | No aplicable | Un descriptor no soportado se rechaza antes de `accepted`; Minor construye la excepción. |
+| `InternalError` | No se emite como finalización normal | Ausente | No aplicable | Invariante rota o identidad desconocida: aserción o error fatal del simulador. |
+| `Cancelled` | Reservado, sin contrato activo | Ausente | No aplicable | No hay cancelación por drain ni reset de trabajo activo en este hito. |
+
+`ScalarResult` permanece reservado para futuras instrucciones; `vsetvli`
+produce su resultado escalar en MinorCPU. Un fault no retira la instrucción
+como éxito: Minor aplica la excepción y el `vstart` recibido según su camino
+de faults. Las cabeceras actuales todavía no comprueban esta tabla.
+
+Una identidad desconocida, una finalización duplicada o un rango fuera del
+comando son errores internos, no faults de memoria del programa simulado.
+Los identificadores reservados como inválidos nunca se asignan. Los contadores
+no deben desbordar ni volver a cero: su agotamiento es un error diagnosticado.
 
 ## Decode de MinorCPU
 
@@ -422,14 +496,28 @@ Las transiciones significan lo siguiente:
    `CpuVectorInterface`. La VPU ya es propietaria del comando; Minor no lo
    vuelve a enviar, pero mantiene la entrada en vuelo.
 5. `COMPLETED`: llega `VectorCompletion` desde la VPU. Minor actualiza el
-   resultado escalar o `vstart`, entrega el fault si lo hay, libera sus
-   dependencias y retira la instrucción de `inFlightInsts`.
+   resultado escalar o `vstart` y cierra el estado de offload. Con éxito libera
+   las dependencias y retira la instrucción; con fault aplica su camino de
+   excepción, sin retirarla como una instrucción ejecutada con éxito.
 
 En `vsetvli` no se recorren estos estados de offload: Execute actualiza
 `vl`/`vtype`, escribe el `vl` escalar y completa la instrucción localmente.
 Para `vle32.v`, `vadd.vv`, `vadd.vx` y `vse32.v`, mantener la entrada hasta
 `COMPLETED` garantiza que los datos de la VPU y los faults lleguen antes de que
 la CPU continúe con instrucciones dependientes.
+
+El estado local de Minor conserva la entrada de `inFlightInsts`, la fase de
+offload, el `VectorCommand` una vez construido y el token mientras no se haya
+consumido. La asociación CPU entre `CommandKey` y la instrucción nunca cruza
+la frontera con la VPU. Ante `Stall`, no se reasigna identidad ni se vuelven
+a capturar operandos. Tras `accepted`, Minor puede liberar su copia del
+descriptor, pero conserva la asociación hasta `completed`.
+
+Las llamadas de entrega y sus callbacks pueden ser síncronos. El emisor
+prepara su estado pendiente antes de invocarlas, para que `accepted` o una
+respuesta inmediata encuentren una identidad válida; si recibe `Retry`,
+conserva el mensaje como no aceptado. El contrato no presupone un ciclo
+intermedio entre entrega y respuesta.
 
 ## CpuVectorInterface
 
@@ -446,7 +534,7 @@ VRF ni memoria.
 
 - Una consulta de admisión con un `VectorCommand` inmutable.
 - Un `VectorCommand` para despacho.
-- Eventos de reset o drain.
+- Solicitud de drain; reset únicamente sin trabajo pendiente.
 
 ### Envía a MinorCPU
 
@@ -672,6 +760,144 @@ En el baseline sólo se generan los siguientes subconjuntos:
 Los campos para otros patrones y operaciones se reservan, pero el frontend
 debe rechazarlos mientras no exista una ruta funcional completa.
 
+## Tareas especializadas y finalizaciones internas
+
+Estos mensajes se crean después de la admisión. `AraSequencer` copia la
+configuración y el payload ya validados; no consulta otra vez el estado RVV
+de la CPU. La unidad comprueba las invariantes de su tarea, no decodifica
+instrucciones ni reconstruye el comando por su PC.
+
+```cpp
+struct ArithmeticTask
+{
+    UnitTask task;
+    VectorConfig config;
+    ArithmeticCommand arithmetic;
+    ByteRange destinationRange;
+};
+
+struct MemoryTask
+{
+    UnitTask task;
+    VectorConfig config;
+    MemoryCommand memory;
+    ByteRange dataRange;
+    Addr pc;
+    RequestorID requestorId;
+};
+```
+
+`ArithmeticTask.task.unit == VectorUnitClass::Lanes` y
+`MemoryTask.task.unit == VectorUnitClass::Vlsu`. El contexto está en
+`task.key.command.contextId`. `pc` y `requestorId` se conservan desde
+`VectorCommand` hasta las peticiones al backend de memoria.
+
+En el baseline, una orden con elementos ejecutables genera una sola tarea
+que cubre `[vstart, vl)`. El contrato conserva `TaskKey` para futuras
+particiones, pero el reparto aritmético actual se hace mediante fragmentos
+de lane subordinados a esa tarea. Con `vstart >= vl` no se crea ninguna tarea,
+no se accede al VRF ni a memoria y se emite `Success`, con `finalVstart = 0`.
+
+Para una tarea de elementos de 32 bits:
+
+```text
+range.offset = task.elements.firstElement * 4
+range.size   = task.elements.elementCount * 4
+```
+
+Se calcula sin desbordamiento y se comprueba que el rango cabe en el grupo
+efectivo. En aritmética `range` es `destinationRange`; el mismo intervalo se
+lee en cada fuente vectorial porque sólo se admite `SameWidth`. En memoria
+es `dataRange`, destino de carga o fuente de store. La base del intervalo es
+el primer byte del grupo, nunca el primer elemento activo.
+
+### Identidad del fragmento de lane
+
+```cpp
+using LaneFragmentId = uint32_t;
+inline constexpr LaneFragmentId InvalidLaneFragmentId =
+    std::numeric_limits<LaneFragmentId>::max();
+
+struct LaneFragmentKey
+{
+    TaskKey task;
+    LaneFragmentId fragmentId;
+};
+
+struct LaneTask
+{
+    LaneFragmentKey key;
+    LaneId laneId;
+    ArithmeticCommand arithmetic;
+    ElementRange elements;
+    ByteRange destinationRange;
+    ByteRange vectorSourceRange;
+    std::optional<ByteRange> secondVectorSourceRange;
+};
+```
+
+`TaskDistributor` asigna `fragmentId` sin reutilizarlo dentro de una tarea.
+La clave completa incluye el `TaskKey` original; no lo sustituye.
+`laneId` es una propiedad del fragmento, no su identidad: una lane puede
+recibir varios fragmentos de una misma tarea.
+
+Cada `LaneTask` abarca elementos contiguos, dentro de los de su tarea padre,
+y como máximo una palabra del destino. El distribuidor corta también en
+cualquier límite de palabra de las fuentes. Todos sus accesos pertenecen a
+la lane indicada según `AddressMapper`. Los fragmentos cubren exactamente
+los elementos de la tarea sin solapamientos ni huecos; intervalos separados
+en una lane se representan mediante varios `LaneTask`, no mediante un
+`ElementRange` que incluya elementos de otras lanes.
+
+`arithmetic` se copia de la tarea padre. Los rangos se recalculan para el
+fragmento con la fórmula anterior. `secondVectorSourceRange` sólo existe
+cuando `secondOperand` contiene `VectorRegRef`; para `vadd.vx` está ausente
+y el valor escalar viaja en la alternativa `RegVal` de `secondOperand`.
+No hay campos `opcode`, máscara o forma `vv/vx` paralelos que puedan
+contradecir ese payload. Las operaciones distintas de Add de 32 bits y sin
+máscara siguen rechazándose en admisión.
+
+### Finalización de fragmentos y tareas
+
+```cpp
+enum class UnitCompletionStatus : uint8_t
+{
+    Success,
+    MemoryFault,
+};
+
+struct LaneCompletion
+{
+    LaneFragmentKey key;
+    UnitCompletionStatus status;
+};
+
+struct UnitCompletion
+{
+    TaskKey key;
+    UnitCompletionStatus status;
+    std::optional<FaultInfo> fault;
+};
+```
+
+| Mensaje | Productor → consumidor | Condición terminal |
+| --- | --- | --- |
+| `LaneCompletion` | `AraLane` → `TaskDistributor` | Todos los accesos y el writeback del fragmento están confirmados. |
+| `UnitCompletion` aritmético | `TaskDistributor` → `AraSequencer` | Se han emitido todos los fragmentos y recibido exactamente una finalización de cada uno. |
+| `UnitCompletion` de memoria | `AraVLSU` → `AraSequencer` | Todos los elementos terminaron, o la petición fallida quedó cerrada sin trabajo posterior emitido. |
+
+`LaneCompletion.status` sólo puede ser `Success` en el baseline: la suma no
+genera faults de memoria y un acceso inválido al VRF es un error interno.
+`UnitCompletion` aritmético tampoco lleva fault. Una finalización de memoria
+con `MemoryFault` exige `FaultInfo` válido con dirección e índice de elemento;
+con `Success` exige su ausencia. El sequencer obtiene `finalVstart` del índice
+causante, sin mantener un segundo campo que pueda contradecirlo.
+
+Cada receptor conserva las identidades pendientes, no sólo un contador que
+pueda aceptar duplicados. No se completa mientras queden fragmentos por
+emitir, accesos aceptados o writebacks sin confirmar. No se añaden errores
+internos ni cancelaciones a este protocolo funcional.
+
 ## Control de admisión y CommandQueue
 
 **Conexiones directas.** Recibe `requestGrant` y `dispatch` desde
@@ -748,9 +974,10 @@ capacidad instantánea de la VPU:
   no nulo, `fieldCount` entre 1 y 8 y una alternativa reconocida en
   `MemoryAddressing`. `faultOnlyFirst` sólo es estructuralmente válido para una
   carga.
-- El tamaño de los grupos coincide con LMUL en aritmética y con EMUL en
-  memoria. EMUL se deriva de LMUL, EEW y SEW; el grupo resultante debe caber en
-  los 32 registros arquitectónicos.
+- El tamaño de los grupos representa LMUL en aritmética y EMUL en memoria,
+  con un registro contenedor para factores fraccionarios. EMUL se deriva de
+  LMUL, EEW y SEW; el grupo resultante debe caber en los 32 registros. La
+  sección de capacidad de grupos precisa los límites efectivos en bytes.
 
 Un fallo de estas reglas devuelve `Rejected` con `InvalidIdentity`,
 `InvalidVectorConfig`, `InvalidRegisterGroup` o `InvalidPayload`, según
@@ -803,6 +1030,31 @@ Aunque la FIFO pueda almacenar varias órdenes, el sequencer no inicia una
 nueva hasta completar la anterior. Si se activa en el futuro el
 renombramiento, la admisión comprobará además RAT, free-list y ROB.
 
+### Estado mínimo de admisión y drain
+
+Una reserva contiene `GrantToken` y una copia de `VectorCommand`. El control
+de admisión conserva reservas por `reservationId` y las identidades de todos
+los comandos reservados o aceptados. `dispatch` consume una reserva y crea
+una entrada FIFO, sin cambiar el total de capacidad ocupada. La cabeza activa
+sigue contando como entrada de la FIFO hasta su finalización.
+
+`drain` detiene la concesión de nuevas reservas, pero permite consumir los
+tokens ya concedidos y terminar comandos aceptados. Minor deja de iniciar
+nuevos offloads; un comando en `WAIT_GRANT` sin token puede quedarse en CPU.
+Las peticiones de admisión válidas durante drain obtienen `Stall`, sin token.
+El emisor debe consumir todo token concedido; el baseline no incorpora una
+operación de cancelación de reservas.
+
+La VPU está drenada cuando no quedan reservas, entradas FIFO, tareas,
+fragmentos, respuestas ni writebacks pendientes y el backend de memoria
+también ha terminado. Drain no genera `Cancelled` ni descarta respuestas.
+El reset sólo se admite sin ese trabajo pendiente. Un reset activo y la
+cancelación de operaciones de memoria requieren una ampliación posterior.
+
+Estas son estructuras de estado conceptuales; la elección de mapas, conjuntos
+o contadores auxiliares corresponde a la implementación. No son un ROB ni
+estructuras de disponibilidad de registros.
+
 ## AraSequencer
 
 **Conexiones directas.** Recibe comandos de `CommandQueue`, disponibilidad y
@@ -814,7 +1066,7 @@ módulos y comunica la finalización agregada a `CpuVectorInterface`.
 - Comando en cabeza de la FIFO con referencias arquitectónicas.
 - Referencias de fuentes, que el baseline considera disponibles al iniciar el
   único comando activo.
-- Capacidad de lanes, VLSU, SLDU y MASKU.
+- Capacidad del distribuidor y de la VLSU; SLDU y MASKU quedan desactivadas.
 - Finalizaciones de unidades.
 
 ### Envía
@@ -836,156 +1088,275 @@ En el baseline sólo hay una instrucción activa: la FIFO avanza al terminar la
 cabeza. La agregación de todas sus tareas es responsabilidad del sequencer, por
 lo que no se necesita un ROB para detectar la finalización del comando.
 
+El estado activo conserva el comando, la identidad de su tarea, si ya fue
+aceptada por la unidad y la finalización recibida. Un `Retry` mantiene la
+misma tarea pendiente de emisión. La cabeza se libera una sola vez, al cerrar
+el comando; el sequencer no deduce finalización de que una cola esté vacía.
+
 ## TaskDistributor
 
-Para el primer hito sólo distribuye `vadd.vv` y `vadd.vx`. La distribución de
-reducciones y otras operaciones aritméticas se incorpora después de validar la
-secuencia de referencia.
+**Conexiones directas.** Recibe `ArithmeticTask` de `AraSequencer`, consulta
+`AddressMapper`, entrega `LaneTask` a cada lane implicada y recibe
+`LaneCompletion`. Devuelve `UnitCompletion` al sequencer. En el baseline sólo
+reparte `vadd.vv` y `vadd.vx`.
 
-**Conexiones directas.** Recibe `ArithmeticTask` y los datos de configuración
-desde `AraSequencer`, además de capacidad y finalizaciones desde `AraLane`.
-Envía un `LaneTask` a cada lane implicada y devuelve la finalización agregada a
-`AraSequencer`. Consulta `AddressMapper` para determinar la lane propietaria
-de cada fragmento.
+Acepta una tarea mediante `TransferResult` cuando puede conservar su estado.
+El reparto usa exclusivamente el mapeo compartido. Obtiene los fragmentos
+contiguos de cada palabra, les asigna `LaneFragmentKey` y envía cada uno a su
+lane propietaria. La geometría inicial garantiza que las fuentes y el destino
+de una suma de igual anchura sitúan el mismo índice de elemento en la misma
+lane, aunque sus bancos o filas sean distintos.
 
-### Recibe
+El estado de distribución conserva la tarea padre, el siguiente identificador
+libre, los fragmentos por emitir y las claves aceptadas pendientes de
+finalización. `Retry` no consume una identidad nueva ni duplica un fragmento.
+Al recibir `LaneCompletion`, comprueba y elimina su clave pendiente. Sólo
+emite `UnitCompletion` cuando ya no queda trabajo por emitir ni completar.
 
-- Operación aritmética de suma vectorial.
-- `vl`, `vstart`, SEW/EEW, LMUL/EMUL y máscara.
-- Referencias arquitectónicas de fuentes y destino.
-- Capacidad de cada lane.
-
-### Envía
-
-```text
-LaneTask(taskKey, laneId, opcode, sourceRegs, destinationReg,
-         elements, byteRanges, mask)
-```
-
-- `taskKey` contiene el `CommandKey` padre y el `TaskId` del fragmento;
-  permite asociar el writeback y la finalización a la tarea correcta sin
-  perder el contexto de CPU.
-- `laneId` es la lane que ejecuta el fragmento. `TaskDistributor` la obtiene
-  consultando `AddressMapper` con la referencia de registro y el rango
-  correspondiente, de modo que el reparto respete la propiedad local del VRF.
-- `opcode` selecciona la operación de la unidad, y `sourceRegs` contiene los
-  grupos arquitectónicos de todos sus operandos.
-- `destinationReg` es el grupo arquitectónico en el que se escribirán los
-  resultados de la tarea.
-- `elements` es el `ElementRange` asignado a esa lane. No incluye elementos
-  anteriores a `vstart` ni fuera de `vl`.
-- `byteRanges` traduce esos elementos a los intervalos que se leen o escriben
-  en los grupos de registros; puede contener varios rangos para operandos o
-  grupos que cruzan registros.
-- `mask` identifica el registro arquitectónico y el rango de bits de
-  predicación, junto con la política necesaria para distinguir elementos
-  inactivos de tail agnostic.
-
-Envía asimismo confirmación de aceptación, finalización por lane y una
-finalización agregada al sequencer. Su responsabilidad es repartir las tareas
-y agregar sus finalizaciones. Utiliza el mapeo de `AddressMapper`, incluida
-la conversión `global_word -> lane_id + local_word`, sin duplicar sus
-fórmulas.
+No envía finalizaciones por lane al sequencer ni genera `TaskKey` nuevos.
+El sequencer conoce tareas; el distribuidor conoce sus fragmentos.
 
 ## AraLane
 
-**Conexiones directas.** Recibe `LaneTask` de `TaskDistributor`, datos de
-`LaneRegisterFile` y cargas de `AraVLSU`. Envía lecturas/escrituras al
-`LaneRegisterFile` y finalizaciones a `TaskDistributor` o `AraSequencer`; la
-interconexión y `ReadinessTable` son conexiones opcionales de ampliaciones.
+**Conexiones directas.** Recibe `LaneTask` de `TaskDistributor` y respuestas
+de su `LaneRegisterFile`. Envía accesos al VRF local, `ExecutionBundle` a su
+ALU y `LaneCompletion` al distribuidor. En la ruta inicial, la VLSU accede
+directamente al LRF propietario: sus cargas no pasan por la ALU ni crean
+`LaneTask` aritméticos. Interconexión, MUL, FPU y readiness quedan inactivas.
 
-### Recibe
+La lane conserva por fragmento las lecturas por emitir, los accesos aceptados,
+los operandos recibidos, la operación en curso y el writeback pendiente. Las
+colas de operandos y de writeback pertenecen a la lane, no a los bancos.
+Antes de emitir una lectura se reserva capacidad para su respuesta.
 
-- `LaneTask`.
-- Respuestas de lectura del VRF.
-- Datos de carga de la VLSU.
-- Datos remotos de la interconexión.
-- Grants de writeback y, al activar chaining, wakeups de `ReadinessTable`.
+Cada acceso al VRF se asocia localmente a la clave del fragmento y a su papel
+(fuente vectorial, segunda fuente o destino). Las fuentes se leen antes de
+escribir el resultado del fragmento, también cuando coinciden con el destino.
+La ALU no provoca la finalización: ésta espera al `WriteAck` del VRF.
 
-### Envía
+### Contrato de la ALU del baseline
 
-- Peticiones de lectura y escritura al VRF local.
-- Bundles de ejecución a ALU, MUL y FPU.
-- Paquetes a otras lanes por la interconexión.
-- Actualizaciones opcionales de readiness después del writeback.
-- `UnitCompletion` al distribuidor o sequencer.
+```cpp
+struct ExecutionBundle
+{
+    LaneFragmentKey key;
+    ArithmeticOperation operation;
+    ElementRange elements;
+    VectorRegRef destination;
+    ByteRange destinationRange;
+    std::vector<uint32_t> lhs;
+    std::vector<uint32_t> rhs;
+};
 
-La lane mantiene colas diferenciadas para tareas, solicitudes de operando,
-operandos recibidos, operaciones en curso y writebacks pendientes.
+struct ExecutionResult
+{
+    LaneFragmentKey key;
+    ElementRange elements;
+    VectorRegRef destination;
+    ByteRange destinationRange;
+    std::vector<uint32_t> values;
+};
+```
 
-Las colas de operandos se sitúan entre la salida del VRF y las unidades
-funcionales. Las colas de resultados o writeback retienen los datos producidos
-hasta que se concede la escritura. Ambas pertenecen al camino de ejecución
-de la lane; no son colas internas de los bancos del VRF.
+La lane produce un bundle por fragmento y la ALU devuelve un resultado. Las
+listas tienen exactamente `elements.elementCount` valores y su orden coincide
+con los índices crecientes del rango. `operation` sólo admite `Add`. En
+`vadd.vv`, `lhs` y `rhs` proceden de las dos lecturas. En `vadd.vx`, la lane
+normaliza el escalar a 32 bits y replica su patrón de bits en `rhs`.
 
-### ALU, MUL y FPU de la lane
+La suma conserva los 32 bits bajos, sin overflow de enteros con signo en C++.
+No produce excepción aritmética. La lane convierte entre bytes del VRF y
+valores de 32 bits según el orden de bytes del objetivo simulado, sin depender
+del endianness del host ni reinterpretar buffers mediante casts inseguros.
 
-**Conexiones directas.** Reciben `ExecutionBundle` exclusivamente de su
-`AraLane` propietaria y devuelven `ExecutionResult` a esa misma lane; no se
-conectan directamente al VRF, al sequencer ni a memoria.
-
-Reciben un `ExecutionBundle` con identificadores, opcode, operandos, máscara y
-rango de elementos. Devuelven un `ExecutionResult` con datos, rango de destino
-e indicadores de excepción. No acceden directamente al VRF.
-
-El baseline sólo necesita la suma entera de 32 bits en la ALU. MUL y FPU pueden
-declararse como puertos o módulos inactivos, pero no condicionan la admisión ni
-la finalización de la secuencia inicial.
+Clave, elementos y destino se devuelven sin cambios. El receptor verifica
+que correspondan a un fragmento pendiente. La aceptación sigue
+`TransferResult`; la capacidad del resultado se reserva al admitir el bundle.
+La ALU no accede al VRF, a memoria ni al sequencer. No se fijan todavía
+latencias o throughput. Las operaciones y excepciones de MUL/FPU se definirán
+cuando se amplíe el conjunto de instrucciones.
 
 ## LaneRegisterFile, AddressMapper y bancos
 
 ### LaneRegisterFile
 
-**Conexiones directas.** Recibe peticiones de `AraLane` y `AraVLSU`; en
-ampliaciones también de SLDU y MASKU. Envía respuestas y confirmaciones al
-solicitante original, consulta `AddressMapper` y accede a los bancos del VRF.
+**Conexiones directas.** Recibe accesos de `AraLane` y `AraVLSU`, consulta
+`AddressMapper` y accede exclusivamente a sus bancos locales. Devuelve datos o
+confirmación al solicitante original. SLDU, MASKU y readiness no intervienen
+en el baseline.
 
-Recibe peticiones de lectura/escritura de lanes, VLSU, SLDU y MASKU. Devuelve
-`ReadResponse`, `WriteAck` o `retry`, y comunica una escritura efectiva a
-`ReadinessTable`. Toda petición incluye:
+```cpp
+enum class VrfRequesterKind : uint8_t
+{
+    Lane,
+    Vlsu,
+};
 
-```text
-taskKey, registerRef, byteOffset, size, byteEnable, requester
+struct VrfRequester
+{
+    VrfRequesterKind kind;
+    std::optional<LaneId> laneId;
+};
+
+using VrfAccessId = uint32_t;
+inline constexpr VrfAccessId InvalidVrfAccessId =
+    std::numeric_limits<VrfAccessId>::max();
+
+struct VrfAccessKey
+{
+    TaskKey task;
+    VrfRequester requester;
+    VrfAccessId accessId;
+};
+
+struct VrfAccess
+{
+    VrfAccessKey key;
+    VectorRegRef reg;
+    ByteRange range;
+    ByteEnable byteEnable;
+};
+
+struct VrfReadRequest
+{
+    VrfAccess access;
+};
+
+struct VrfWriteRequest
+{
+    VrfAccess access;
+    ByteBuffer data;
+};
+
+struct ReadResponse
+{
+    VrfAccessKey key;
+    ByteBuffer data;
+};
+
+struct WriteAck
+{
+    VrfAccessKey key;
+};
 ```
 
-- `taskKey` permite atribuir la petición a su tarea y, a través de su
-  `CommandKey`, al comando y contexto originales.
-- `registerRef` selecciona el grupo arquitectónico que se lee o escribe.
-- `byteOffset` y `size` delimitan el intervalo solicitado en bytes, relativo al
-  inicio del grupo; el intervalo es `[byteOffset, byteOffset + size)`.
-- `byteEnable` indica qué bytes del intervalo son efectivos, por ejemplo tras
-  aplicar una máscara o en una escritura parcial.
-- `requester` identifica a la lane, VLSU, SLDU o MASKU que emite la petición y
-  permite al banco aplicar arbitraje y devolver la respuesta al origen.
+`VrfRequester.laneId` existe sólo para `Lane`; identifica al emisor, no a una
+lane destino de la VLSU. Cada solicitante asigna `accessId` sin reutilizarlo
+dentro de la tarea. La clave completa es `(TaskKey, requester, accessId)`.
+Una lane mantiene la asociación de esa clave con `LaneFragmentKey` y el papel
+del operando. La VLSU la asocia con `(TaskKey, requestId)` y la fase del elemento.
+No se usa `requestId` de memoria como identificador de un acceso al VRF.
 
-### AddressMapper
+`range` es relativo al principio de `reg`. `byteEnable.size() == range.size`;
+los buffers de escritura y lectura tienen también `range.size` bytes. Una
+lectura devuelve 0 en posiciones deshabilitadas y el consumidor no las usa
+como operandos; una escritura conserva los bytes deshabilitados. El baseline
+sólo emite rangos de elementos activos, sin escribir los bytes anteriores a
+`vstart` ni los posteriores a `vl`.
 
-**Conexiones directas.** Es un servicio de cálculo compartido que consultan
-`TaskDistributor`, `LaneRegisterFile` y, cuando corresponda, `AraVLSU`.
-Devuelve el mapeo de lane, banco y fila al módulo que lo consultó; no recibe
-comandos de la CPU ni tareas de ejecución.
+Cada acceso emitido al LRF cabe en una palabra y pertenece a ese LRF. Si una
+operación lógica abarca varias palabras, el solicitante la divide consultando
+el mapper y genera accesos con claves distintas; conserva la asociación para
+reunir sus respuestas. Una petición dirigida a una lane equivocada es un
+error interno, no un acceso remoto implícito.
 
-Recibe `registerRef`, desplazamiento de byte, tamaño, número de lanes y
-bancos. Devuelve:
+El LRF devuelve `Accepted` sólo cuando concede el acceso al banco y está
+reservado el espacio para la respuesta. En caso contrario devuelve `Retry`
+sin realizar lecturas o escrituras. No encola solicitudes denegadas. Una
+lectura aceptada genera un único `ReadResponse`; una escritura aceptada
+produce un único `WriteAck` después de aplicar sus bytes habilitados.
+No se reenvía una escritura aceptada mientras se espera su confirmación.
 
-```text
-laneId, bankId, row, byteOffsetInWord, byteEnable
+### AddressMapper y geometría compartida
+
+Es un servicio de cálculo sin cola ni latencia propia. Lo consultan
+`TaskDistributor`, `LaneRegisterFile` y `AraVLSU`. No recibe tareas ni asigna
+identidades. La configuración es común a todos ellos y no cambia con trabajo
+activo.
+
+```cpp
+struct VrfGeometry
+{
+    uint32_t vlenBytes;
+    uint32_t laneWordBytes;
+    uint32_t numLanes;
+    uint32_t banksPerLane;
+};
+
+struct MappedVrfFragment
+{
+    LaneId laneId;
+    BankId bankId;
+    uint64_t row;
+    uint32_t byteOffsetInWord;
+    ByteRange originalRange;
+    ByteEnable wordByteEnable;
+};
+
+using VrfMapping = std::vector<MappedVrfFragment>;
 ```
 
-- `laneId` designa la lane propietaria del fragmento de registro.
-- `bankId` selecciona el banco local que almacena la palabra solicitada.
-- `row` es el índice de fila dentro de ese banco.
-- `byteOffsetInWord` señala el primer byte dentro de la palabra física.
-- `byteEnable` es la máscara de bytes de esa palabra, ya recortada si el rango
-  original empieza o termina en mitad de ella.
+Entrada del mapper: `VectorRegRef`, `ByteRange`, `ByteEnable` del rango y la
+geometría. Salida: fragmentos ordenados por desplazamiento original, cada uno
+contenido en una palabra. `originalRange` sigue siendo relativo al grupo;
+no se sustituye por una dirección local de banco. `wordByteEnable` tiene
+`laneWordBytes` entradas y coloca la máscara original en su posición dentro
+de la palabra, con ceros fuera del fragmento. La colección cubre todo el rango
+original exactamente una vez, incluidos sus bytes deshabilitados.
 
-Es la única implementación de la regla que transforma una posición del
-registro en lane, banco y fila. `TaskDistributor` usa esa regla para repartir
-el trabajo y `LaneRegisterFile` para localizar los bytes de cada acceso.
-Inicialmente se consulta como un servicio de cálculo sin cola ni latencia
-propia; no representa un recurso central que serialice las lanes. El LRF
-gestiona el arbitraje de acceso y los bancos tienen su latencia. Las colas de
-operandos y writeback se sitúan en la lane, fuera de los bancos.
+La geometría inicial exige valores positivos, palabras múltiplo de 4 bytes y
+`vlenBytes` múltiplo de `laneWordBytes * numLanes`. Esto alinea el comienzo de
+cada registro con el ciclo de reparto entre lanes y evita que un elemento de
+32 bits cruce palabras del VRF. El número de bancos no necesita dividir el
+número de palabras locales; la última fila puede quedar parcialmente usada.
+Los productos y direcciones se calculan con aritmética comprobada de 64 bits.
+
+Para el byte `b` relativo al grupo:
+
+```text
+absoluteByte     = reg.firstReg * vlenBytes + b
+globalWord       = absoluteByte / laneWordBytes
+laneId           = globalWord % numLanes
+localWord        = globalWord / numLanes
+bankId           = localWord % banksPerLane
+row              = localWord / banksPerLane
+byteOffsetInWord = absoluteByte % laneWordBytes
+```
+
+Cada banco reserva las filas necesarias para los 32 registros arquitectónicos;
+se pueden dimensionar con el techo de
+`(32 * vlenBytes / laneWordBytes) / (numLanes * banksPerLane)`.
+La fórmula incluye `firstReg`: dos registros no pueden aliasar por compartir
+el mismo desplazamiento relativo. Las fórmulas se implementarán sólo en
+`AddressMapper`; el resto de módulos usará sus resultados.
+
+Por ejemplo, con `vlenBytes=32`, `laneWordBytes=8`, dos lanes y dos bancos,
+el rango `[0, 16)` de `v1` se divide en `[0, 8)` en lane 0, banco 0, fila 1,
+y `[8, 16)` en lane 1, banco 0, fila 1. Los elementos 0 y 1 pertenecen a
+lane 0 y los elementos 2 y 3 a lane 1. Los elementos 4 y 5 vuelven a lane 0,
+pero forman otro fragmento, no un rango contiguo con los primeros.
+
+### Capacidad de grupos y configuración admitida
+
+VLEN se obtiene de `vlenBytes * 8` y debe coincidir con el estado RVV de
+MinorCPU. La configuración de la VPU declara explícitamente un conjunto no
+vacío `supportedLmuls`; no se deduce del enum `VectorLmul`. El soporte de SEW
+queda fijado a 32 bits en este hito. Se comprueba
+`VLMAX = (VLEN / SEW) * LMUL` con aritmética exacta y `vl <= VLMAX`.
+
+Para LMUL/EMUL entero, `regCount` es 1, 2, 4 u 8, con alineación natural y
+sin exceder `v31`. Para un factor fraccionario se usa `regCount=1`, pero sólo
+es accesible la fracción efectiva inicial del registro; el factor procede de
+la configuración de la tarea y no se codifica mediante un `regCount` cero.
+El enum permite describirlo, pero sólo se admite si está en `supportedLmuls`.
+El baseline tiene EEW=SEW, por lo que EMUL=LMUL.
+
+El mapper verifica los límites físicos de `VectorRegRef`; el creador de la
+tarea o acceso comprueba además la capacidad efectiva según LMUL/EMUL y el
+rango activo. Los helpers actuales de `VectorRegRef` y `ByteRange` sólo
+comprueban parte de estas invariantes; no son validadores completos de RVV.
+Una geometría incompatible es un error de configuración al construir la VPU,
+no un `Stall` de ejecución. No se fijan aquí valores concretos del benchmark.
 
 ### Banco de VRF
 
@@ -1045,115 +1416,208 @@ InterconnectPacket(taskKey, sourceLane, destinationLane, kind,
 `load_distribution` y `operand_forward`. Una primera implementación ideal
 puede mantener esta interfaz y sustituirse después por ring o crossbar.
 
-La secuencia inicial no necesita slide, gather ni reducción. La interconexión
-sólo participa si el reparto de cargas o el acceso al VRF exige trasladar datos
-entre la VLSU y la lane propietaria; en otro caso puede ser un enlace ideal.
+La ruta inicial usa el acceso directo de la VLSU al LRF propietario y no
+necesita slide, gather ni reducción. `InterconnectPacket` queda como contrato
+de ampliación; no condiciona admisión ni finalización del baseline.
 
 ## AraVLSU
 
-**Conexiones directas.** Recibe `MemoryTask` de `AraSequencer`, datos de store
-desde `LaneRegisterFile` y respuestas de `VectorMemoryBackend`. Envía
-peticiones a `VectorMemoryBackend`, datos de carga a `AraLane` o al VRF y la
-finalización a `AraSequencer`.
+**Conexiones directas.** Recibe `MemoryTask` de `AraSequencer`, datos y
+confirmaciones de `LaneRegisterFile` y respuestas de `VectorMemoryBackend`.
+Envía peticiones de memoria, accesos al LRF propietario y `UnitCompletion`
+al sequencer. La ruta inicial conecta VLSU y LRF directamente.
 
-El baseline implementa únicamente `vle32.v` y `vse32.v` unit-stride. Genera uno
-o varios accesos que cubren los elementos de 4 bytes del rango `[vstart, vl)` y
-mantiene su asociación con `elementIndex`. No completa el comando hasta
-escribir todas las cargas o recibir la confirmación de todos los stores.
+Sólo ejecuta `vle32.v` y `vse32.v` unit-stride. Recorre los elementos de la
+tarea en orden creciente, con un único elemento en curso. No inicia otro
+hasta recibir `WriteAck` de una carga o `StoreAck` de un store. Esta regla
+incluye el tiempo de espera por arbitraje o retry y elimina el solapamiento
+de peticiones en el primer hito.
 
-### Recibe
+### Petición lógica al backend de memoria
 
-- `MemoryTask` desde el sequencer.
-- Datos para stores e índices desde el VRF.
-- Respuestas de `VectorMemoryBackend`.
-- Capacidad de writeback de las lanes propietarias.
+```cpp
+using RequestId = uint32_t;
+inline constexpr RequestId InvalidRequestId =
+    std::numeric_limits<RequestId>::max();
 
-### Envía a VectorMemoryBackend
-
-```text
-VectorMemoryRequest(taskKey, requestId, registerRef, elementIndex,
-                    laneId, destinationByteRange, virtualAddress, size,
-                    isLoad, isStore, storeData, byteEnable, orderingMetadata)
+struct VectorMemoryRequest
+{
+    TaskKey taskKey;
+    RequestId requestId;
+    MemoryDirection direction;
+    VectorRegRef registerRef;
+    ByteRange dataRange;
+    uint32_t elementIndex;
+    LaneId laneId;
+    Addr virtualAddress;
+    uint32_t size;
+    ByteBuffer storeData;
+    ByteEnable byteEnable;
+    Addr pc;
+    RequestorID requestorId;
+};
 ```
 
-- `taskKey` identifica la tarea de memoria y `requestId` identifica de forma
-  única esta subpetición entre las peticiones pendientes de esa tarea. La
-  pareja constituye conceptualmente un futuro `RequestKey`.
-- `registerRef` es el grupo de destino en una carga o el grupo fuente de los
-  datos en un store: `VectorRegRef` en el baseline o `PhysicalRegRef`, con
-  su versión, en el modo con renombramiento. `elementIndex` es el elemento
-  vectorial al que corresponde y permite calcular `vstart` si ocurre un
-  fallo.
-- `laneId` es la lane propietaria del writeback de una carga. En un store puede
-  conservarse como origen para trazabilidad y arbitraje.
-- `destinationByteRange` es el intervalo del grupo de destino donde se
-  escribirá una carga; no se usa para stores.
-- `virtualAddress` es la dirección virtual ya calculada para este acceso, y
-  `size` es el número de bytes que se transferirán.
-- `isLoad` e `isStore` distinguen la dirección de la transferencia y son
-  mutuamente excluyentes. `storeData` sólo es válido para un store.
-- `byteEnable` precisa los bytes activos de una transferencia parcial.
-- `orderingMetadata` queda en su valor neutro para las operaciones unit-stride
-  iniciales. Sus variantes para accesos ordenados, segmentados o
-  *fault-only-first* se reservan para ampliaciones posteriores.
+La VLSU asigna un identificador creciente por tarea al preparar cada elemento;
+no se reutiliza dentro de ella, ni cambia al reintentar. La clave de la
+petición es **`(TaskKey, requestId)`**, incluido el contexto del comando. No
+se introduce aún un tipo `RequestKey`. La VLSU conserva esa pareja hasta
+terminar el elemento, también después de recibir datos de carga y mientras
+espera su escritura en el VRF.
 
-### Envía a lanes o VRF
+Invariantes del baseline:
 
-```text
-LoadData(taskKey, requestId, destinationReg, elementIndex,
-         laneId, destinationByteRange, data)
+- `direction` es `Load` o `Store`; no hay dos booleanos independientes.
+- `size == 4`, `dataRange == ByteRange{elementIndex * 4, 4}` y
+  `virtualAddress == memory.base + elementIndex * 4`. El índice es absoluto
+  dentro del vector, no relativo a `vstart`.
+- `registerRef` se copia de `MemoryTask.memory.dataReg`; es destino en cargas
+  y fuente en stores. `dataRange` sirve en ambos casos.
+- `laneId` procede del mapper. Un elemento ocupa una palabra de una sola lane
+  bajo las restricciones de geometría del baseline.
+- `byteEnable` tiene cuatro entradas a 1. `storeData` está vacío en cargas y
+  tiene cuatro bytes obtenidos del VRF en stores.
+- `pc` y `requestorId` se copian de la tarea. El contexto está en
+  `taskKey.command.contextId`; el backend no recupera una instrucción CPU.
+- El cálculo de dirección sigue el ancho de dirección del objetivo, sin
+  overflow de enteros con signo del host. No se confunde un error de
+  traducción de una dirección con un error de identidad del protocolo.
+
+Los metadatos de accesos indexados, segmentados, ordenados o fault-only-first
+no se añaden al mensaje activo: sus comandos se rechazan en admisión. El
+orden de emisión de este baseline lo determina el recorrido secuencial de
+la VLSU, no un campo `orderingMetadata` sin semántica definida.
+
+### Datos de carga y escritura al VRF
+
+```cpp
+struct LoadData
+{
+    TaskKey taskKey;
+    RequestId requestId;
+    VectorRegRef destinationReg;
+    uint32_t elementIndex;
+    LaneId laneId;
+    ByteRange destinationByteRange;
+    ByteBuffer data;
+};
 ```
 
-- `taskKey` y `requestId` correlacionan los datos con la petición original.
-- `destinationReg` conserva la referencia de destino de la petición:
-  arquitectónica en el baseline o física, con su versión, en el modo con
-  renombramiento. `destinationByteRange` delimita exactamente dónde se deben
-  escribir los bytes recibidos.
-- `elementIndex` conserva la posición arquitectónica para actualizar
-  readiness, diagnosticar fallos y completar tareas fragmentadas.
-- `laneId` selecciona el propietario del writeback y `data` contiene los bytes
-  de la respuesta, en el mismo orden que el rango de destino.
+La VLSU construye `LoadData` al recibir una respuesta correcta usando la
+referencia, rango, lane e índice guardados en su petición original. `data`
+contiene cuatro bytes. Este descriptor conserva la correlación de memoria
+hasta el writeback; no necesita una cola o un módulo adicionales.
 
-También notifica `UnitCompletion` y comunica un fault con el elemento causante
-y el `vstart` resultante. Si se activa `ReadinessTable`, la actualiza después
-de escribir una carga. La VLSU guarda una tabla de requests pendientes indexada
-por `requestId`; las respuestas no se asocian por orden de llegada.
+En la ruta directa, la propia VLSU transforma `LoadData` en
+`VrfWriteRequest`, asigna `VrfAccessKey` y conserva la asociación entre ambas
+identidades hasta `WriteAck`. No lo entrega a la ALU ni considera escrita la
+carga al recibir solamente `LoadData`. Si en el futuro se transporta mediante
+una interconexión, ésta deberá mantener el mismo contrato de confirmación.
+
+Para stores, la VLSU asigna primero `requestId` y un acceso de lectura al VRF.
+Tras `ReadResponse` incorpora los bytes a `storeData` y puede enviar la
+petición al backend. Un retry del backend no obliga a releer el registro ni
+modifica el buffer ya capturado.
+
+### Estado del elemento y terminación
+
+El estado mínimo guarda `MemoryTask`, siguiente índice, siguiente
+`RequestId` y una entrada opcional del elemento activo. Esta entrada conserva
+la petición lógica, fase, clave del acceso al VRF y, cuando corresponde, los
+datos de respuesta o el fault. Una tabla futura de varias entradas se
+indexaría por la pareja completa `(TaskKey, requestId)`.
+
+```text
+Carga:  PREPARE -> SEND_MEMORY -> WAIT_MEMORY
+        -> SEND_WRITEBACK -> WAIT_WRITE_ACK -> NEXT_ELEMENT
+Store:  PREPARE -> SEND_VRF_READ -> WAIT_VRF_READ
+        -> SEND_MEMORY -> WAIT_MEMORY -> NEXT_ELEMENT
+Fault:  WAIT_MEMORY -> TASK_MEMORY_FAULT
+```
+
+Los estados `SEND_*` conservan mensaje y clave ante `Retry`; sólo avanzan a
+`WAIT_*` tras `Accepted`. `NEXT_ELEMENT` libera el estado del elemento y
+avanza, o emite `UnitCompletion(Success)` si terminó el último.
+
+En `TASK_MEMORY_FAULT`, la respuesta ya es terminal para el backend: no quedan
+subpeticiones físicas pendientes. No se emiten nuevos elementos ni writeback
+para una carga fallida. Los elementos anteriores permanecen completados.
+La VLSU devuelve `UnitCompletion(MemoryFault)` con el fault, la dirección
+causante y `elementIndex`. El sequencer genera `VectorCompletion` con ese
+índice como `finalVstart`. No necesita cancelar otras peticiones lógicas,
+porque sólo había una en curso.
 
 ## VectorMemoryBackend
 
-Es la única capa que conoce `Request`, `Packet`, TLB y puertos de memoria de
-gem5.
+Es la capa que adapta peticiones lógicas a `Request`, `Packet`, traducción y
+puertos de gem5. Recibe `VectorMemoryRequest` de la VLSU y devuelve una sola
+respuesta terminal por petición aceptada.
 
-**Conexiones directas.** Recibe `VectorMemoryRequest` de `AraVLSU` y eventos
-de traducción, respuesta o `retry` de los puertos de gem5. Envía peticiones de
-traducción y paquetes a gem5, y respuestas normalizadas a `AraVLSU`.
+### Respuestas normalizadas
 
-### Recibe
+```cpp
+enum class MemoryResponseStatus : uint8_t
+{
+    LoadData,
+    StoreAck,
+    Fault,
+};
 
-- `VectorMemoryRequest` de la VLSU.
-- Señales de retry, reset o drain.
-- Traducciones, respuestas y faults de gem5.
-
-### Envía
-
-- Peticiones de traducción y paquetes de carga/almacenamiento a gem5.
-- Reenvío cuando gem5 señalice `recvReqRetry`.
-- A la VLSU:
-
-```text
-VectorMemoryResponse(taskKey, requestId, status, data, fault)
+struct VectorMemoryResponse
+{
+    TaskKey taskKey;
+    RequestId requestId;
+    MemoryResponseStatus status;
+    ByteBuffer data;
+    std::optional<FaultInfo> fault;
+};
 ```
 
-- `taskKey` y `requestId` identifican la solicitud que el backend ha
-  completado; la VLSU los usa como clave de su tabla de peticiones pendientes.
-- `status` distingue una carga correcta, una confirmación de store, un fallo
-  de traducción/acceso o una cancelación por reset o drain.
-- `data` contiene los bytes de una carga correcta y está vacío en stores o
-  respuestas con error.
-- `fault` sólo está presente cuando `status` representa un fallo e incluye la
-  causa y dirección necesarias para construir la excepción de gem5.
+| Estado | Petición original | `data` | `fault` |
+| --- | --- | --- | --- |
+| `LoadData` | `Load` | Exactamente `size` bytes, en orden de dirección | Ausente |
+| `StoreAck` | `Store` | Vacío | Ausente |
+| `Fault` | `Load` o `Store` | Vacío | Objeto `Fault` válido, dirección virtual causante e índice del elemento original |
 
-Así ningún objeto interno de memoria de gem5 se filtra a las lanes.
+La VLSU valida identidad, tamaño y compatibilidad del estado con la dirección
+de la petición original antes de consumir una respuesta. El backend conserva
+`TaskKey`, `requestId`, `elementIndex`, `pc`
+y `requestorId` durante traducción y envío. Obtiene el contexto de traducción
+a partir de `contextId`, sin filtrar `ThreadContext`, `Packet` o punteros de
+instrucción hacia las lanes. El soporte inicial sigue siendo SE.
+
+### Fragmentación y retry de gem5
+
+Una petición lógica contiene un elemento completo aunque el acceso físico
+necesite dividirse por límites de línea, página o por requisitos del puerto.
+El backend conserva internamente cada fragmento, su desplazamiento en el
+buffer lógico y su estado de traducción/envío/respuesta. Esos fragmentos no
+reciben nuevos `requestId` visibles en la VLSU.
+
+El backend acepta la petición mediante `TransferResult` sólo si puede guardar
+su descriptor, datos y respuesta terminal. Una vez aceptada, los retries del
+puerto (`recvReqRetry`) son responsabilidad del backend: la VLSU no vuelve a
+enviar la petición lógica. Un paquete que el puerto no ha aceptado conserva
+sus datos y estado hasta el reintento. Nunca se reenvía un paquete aceptado
+por no haber recibido todavía su respuesta.
+
+Para el baseline, los fragmentos físicos se sirven sin solapamiento. Antes
+de enviar un store fragmentado, se completan las traducciones necesarias;
+un fallo de traducción no debe emitir sólo una parte de ese store. En una
+carga, los bytes se reúnen antes de responder y no se publica un resultado
+parcial en el VRF. `StoreAck` exige confirmar todos los fragmentos del store.
+
+Un fault conserva la dirección virtual del fragmento causante y el índice
+del elemento lógico. Se detiene la emisión de fragmentos posteriores y se
+cierra cualquier estado pendiente antes de entregar `Fault`. Esto no añade
+rollback ni garantiza atomicidad de un store que ya haya producido efectos
+antes de un error de acceso; no se anuncia como éxito ni se reenvía de forma
+automática. La política de alineación y los faults del objetivo se respetan
+en la adaptación a gem5, sin inventar una alineación distinta en las lanes.
+
+Durante drain se sigue atendiendo traducción, retry y respuestas del trabajo
+aceptado hasta vaciar ese estado. No existe `MemoryResponseStatus::Cancelled`
+en el baseline. La cancelación por reset requiere un contrato posterior.
 
 ## SLDU y MASKU
 
@@ -1180,8 +1644,8 @@ Recibe operaciones de máscara, rangos de bits de fuentes, resultados booleanos,
 máscara, bits de predicación para lanes, `maskReady`, resultados escalares y
 `UnitCompletion`.
 
-Las referencias de máscara del baseline deben usar `maskReg`, `firstBit` y
-`bitCount`, en lugar de rangos de bytes. La extensión con renombramiento puede
+Las referencias de máscara de esa ampliación deben usar `maskReg`, `firstBit`
+y `bitCount`, en lugar de rangos de bytes. El renombramiento puede
 sustituir `maskReg` por `maskVersion`.
 
 ## ReadinessTable fuera del mínimo funcional
@@ -1231,12 +1695,15 @@ Decode clasifica la macro RVV
   -> vsetvli: MinorCPU actualiza vl/vtype y el destino escalar
   -> vle32.v/vadd.vv/vadd.vx/vse32.v: Execute valida dependencias
      y lee bases u operandos escalares
-  -> CpuVectorInterface asigna CommandKey y valida VectorCommand
+  -> CpuVectorInterface asigna CommandKey
+  -> Minor construye VectorCommand; CpuVectorInterface lo valida
   -> Commit obtiene grant y hace dispatch
   -> admisión almacena el comando y emite accepted
   -> AraSequencer asigna TaskKey y genera ArithmeticTask o MemoryTask
-  -> lanes o VLSU ejecutan y escriben el resultado
-  -> AraSequencer agrega finalizaciones y peticiones pendientes
+  -> distribuidor genera fragmentos de lane, o VLSU recorre elementos
+  -> lanes o VLSU ejecutan y esperan writeback / confirmaciones
+  -> distribuidor agrega LaneCompletion; VLSU cierra su petición
+  -> AraSequencer recibe UnitCompletion y cierra el comando
   -> CpuVectorInterface emite completed
   -> Minor finaliza la instrucción o entrega el fault
 ```
@@ -1245,6 +1712,34 @@ La posible optimización futura de retirar la instrucción de Minor en
 `accepted`, en vez de hacerlo en `completed`, debe posponerse hasta disponer de
 un mecanismo explícito de excepciones precisas y orden de memoria entre la CPU
 escalar y la VPU.
+
+### Recorridos de comprobación documental
+
+Estos recorridos comprueban el contrato; no son pruebas implementadas ni
+resultados de simulación.
+
+| Caso | Recorrido y condición que debe poder verificarse |
+| --- | --- |
+| `vadd.vx` | Minor captura `RegVal` → `ArithmeticTask` → fragmentos `LaneTask` con el mismo escalar → lectura de fuente → `ExecutionBundle` → `ExecutionResult` → escritura y `WriteAck` → `LaneCompletion` → `UnitCompletion` → `VectorCompletion`. |
+| `vle32.v` | `MemoryTask` → petición del elemento `i` con clave completa → `LoadData` de memoria → descriptor `LoadData` de writeback → acceso de escritura al LRF → `WriteAck` → siguiente elemento. La última escritura precede a `UnitCompletion`. |
+| `vse32.v` | Se reserva identidad del elemento `i` → lectura del LRF → datos de store → petición de memoria → `StoreAck` → siguiente elemento. El último ack precede a `UnitCompletion`. |
+| Rango vacío | Tras admisión, `vstart >= vl` produce `Success` y `finalVstart=0`, sin construir rangos o tareas vacíos ni acceder a VRF/memoria. |
+| Fault en elemento `i` | Los elementos anteriores ya terminaron; la respuesta `Fault` cierra el elemento actual, no se inicia `i+1` y el sequencer devuelve `MemoryFault` con `finalVstart=i`. No hay writeback de una carga fallida. |
+| Retry | No cambia la identidad ni transfiere propiedad. Tras aceptación, se espera respuesta; no se repite una operación aceptada. |
+| Drain | No se conceden reservas nuevas; se consumen las ya concedidas y terminan todos los accesos aceptados, sin `Cancelled`. |
+
+### Decisiones y alternativas descartadas en este hito
+
+- Un fragmento contiguo por `LaneTask`, frente a extender `ElementRange` para
+  representar intervalos dispersos. Se conserva la semántica del tipo actual.
+- Identidad de fragmento subordinada a `TaskKey`, frente a identificarlo sólo
+  con `laneId`. Una misma lane puede recibir varios fragmentos.
+- Una petición lógica de memoria de un elemento en curso, frente a cargas
+  solapadas. Reduce el estado de progreso y de fallo sin eliminar identidades.
+- `MemoryDirection`, frente a booleanos de carga/store que pueden contradecirse.
+- Acceso directo VLSU--LRF, frente a añadir transporte de cargas por las lanes.
+- Estado de tareas y accesos pendientes, frente a activar ROB, renombramiento
+  o readiness. No se prescribe aún una microarquitectura temporal avanzada.
 
 ## Extensión futura: renombramiento y ROB
 
