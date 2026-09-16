@@ -87,6 +87,14 @@ enum class MemoryOrdering : uint8_t
     Unordered,
 };
 
+/** Backend unit which owns a task derived from a vector command. */
+enum class VectorUnitClass : uint8_t
+{
+    Invalid,
+    Lanes,
+    Vlsu,
+};
+
 } // namespace gem5::vector_engine
 
 #endif // __CPU_VECTOR_ENGINE_COMMON_VECTOR_TYPES_HH__
