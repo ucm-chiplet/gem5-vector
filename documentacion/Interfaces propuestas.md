@@ -156,14 +156,35 @@ struct ByteRange
     uint32_t size;
 };
 
-struct UnitTask
+using TaskId = uint32_t;
+
+inline constexpr TaskId InvalidTaskId =
+    std::numeric_limits<TaskId>::max();
+
+enum class VectorUnitClass : uint8_t
+{
+    Invalid,
+    Lanes,
+    Vlsu,
+};
+
+struct TaskKey
 {
     CommandKey command;
-    uint32_t taskId;
-    VectorUnitClass unit;
+    TaskId taskId;
+};
+
+struct ElementRange
+{
     uint32_t firstElement;
     uint32_t elementCount;
-    ByteRange destination;
+};
+
+struct UnitTask
+{
+    TaskKey key;
+    VectorUnitClass unit;
+    ElementRange elements;
 };
 
 struct ScalarResult
@@ -201,7 +222,7 @@ que otro módulo pueda observar. `CpuVectorInterface` crea las identidades, el
 backend las propaga y el sequencer las descarta al finalizar el comando. Una
 futura configuración con ROB podrá conservarlas hasta el retiro.
 
-- `CommandKey` vive en `VectorCommand`, `UnitTask`, peticiones de memoria y
+- `CommandKey` vive en `VectorCommand`, `TaskKey`, peticiones de memoria y
   `VectorCompletion`. `CpuVectorInterface` asigna la identidad y MinorCPU la
   incorpora al construir el comando. `CommandQueue`, `AraSequencer`, las
   unidades y el backend de memoria la propagan hasta que `VectorCompletion`
@@ -233,12 +254,30 @@ futura configuración con ROB podrá conservarlas hasta el retiro.
   de registros. Existe para identificar exactamente los bytes de una operación
   parcial; debe caber en `VectorRegRef` y no puede estar vacío.
 
+- `TaskId` es un identificador asignado por `AraSequencer` y sólo necesita ser
+  único dentro del `CommandKey` al que pertenece. El valor reservado como
+  inválido no se asigna y un identificador no se reutiliza mientras siga viva
+  una tarea del mismo comando.
+
+- `TaskKey` combina el `CommandKey` padre y el `TaskId`. Es la identidad que
+  conservan `TaskDistributor`, las lanes, `AraVLSU`, los accesos al VRF y los
+  paquetes de interconexión hasta devolver la finalización al sequencer. La
+  pareja completa, y no uno de sus campos por separado, identifica una tarea.
+
+- `ElementRange` expresa el intervalo semiabierto
+  `[firstElement, firstElement + elementCount)`. No puede estar vacío, la suma
+  no puede desbordar y el intervalo de una tarea ejecutable debe quedar dentro
+  de `[vstart, vl)` del comando padre. Cuando `vstart >= vl`, el comando tiene
+  un rango de ejecución vacío y el sequencer no crea tareas para elementos.
+
 - `UnitTask` vive sólo dentro del backend VPU. `AraSequencer` la crea al partir
-  un `VectorCommand` y la envía a `TaskDistributor`, `AraVLSU` u otra unidad;
-  el receptor devuelve una finalización al sequencer. `(command, taskId)` es
-  único mientras la tarea vive, y `firstElement`, `elementCount` y
-  `destination` delimitan su trabajo. Existe para convertir una instrucción
-  completa en trabajo ejecutable por lanes o memoria sin perder su origen.
+  un `VectorCommand` y la envía, dentro de una tarea especializada, a
+  `TaskDistributor`, `AraVLSU` u otra unidad. Contiene únicamente identidad,
+  unidad receptora e intervalo lógico de elementos; no contiene operandos,
+  opcode ni rangos de registros. `ArithmeticTask` añadirá su
+  `destinationRange`, mientras que `MemoryTask` añadirá un `dataRange` que es
+  destino para una carga y fuente para un store. Así `UnitTask` no atribuye
+  una semántica de destino incorrecta a las tareas de store.
 
 - `VectorCompletion` vive en la frontera de salida VPU--CPU. `AraSequencer` la
   crea una vez agregadas todas las tareas y la envía por `CpuVectorInterface` a
@@ -253,16 +292,17 @@ En las peticiones al VRF y de memoria, `registerRef` designa un
 `VectorRegRef` en el baseline y un `PhysicalRegRef` cuando se habilita el
 renombramiento. Cada petición conserva esa referencia y su rango de bytes;
 no se añade una versión física ficticia al modo sin renombramiento.
-En memoria, `CommandKey` y `requestId` identifican la operación y la
-subpetición en ambos modos, mientras que la referencia de registro identifica
-dónde leer o escribir. La VLSU conserva la referencia original hasta resolver la
-respuesta, sin volver a consultar la RAT para una petición ya emitida.
+En memoria, `TaskKey` y `requestId` identifican la tarea y su subpetición en
+ambos modos, mientras que la referencia de registro identifica dónde leer o
+escribir. La VLSU conserva la referencia original hasta resolver la respuesta,
+sin volver a consultar la RAT para una petición ya emitida.
 
 `requestId` aplica el mismo patrón dentro de memoria: `AraVLSU` lo crea para
-cada subpetición de un `CommandKey`, `VectorMemoryBackend` lo devuelve en la
+cada subpetición de un `TaskKey`, `VectorMemoryBackend` lo devuelve en la
 respuesta y la VLSU lo usa para asociarla aunque las respuestas lleguen en otro
-orden. Las firmas abreviadas que muestran sólo `commandId` deben transportar
-también su `contextId` o usar directamente `CommandKey`.
+orden. Una ampliación posterior podrá formalizar `RequestKey` como la pareja
+`(TaskKey, requestId)`. Hasta entonces, las firmas abreviadas deben transportar
+el `TaskKey` completo, incluido el `CommandKey` con su `contextId`.
 
 ## Decode de MinorCPU
 
@@ -779,11 +819,18 @@ módulos y comunica la finalización agregada a `CpuVectorInterface`.
 
 ### Envía
 
-- `ArithmeticTask` a `TaskDistributor`.
-- `MemoryTask` a `AraVLSU`.
+- `ArithmeticTask` a `TaskDistributor`, con un `UnitTask` común y el rango de
+  bytes de destino propio de la operación aritmética.
+- `MemoryTask` a `AraVLSU`, con un `UnitTask` común y un `dataRange` que actúa
+  como destino de una carga o fuente de un store.
 - En ampliaciones posteriores, `SlideTask`, `PermutationTask`, `MaskTask` y
   tareas de reducción.
 - Estado de finalización directamente a `CpuVectorInterface`.
+
+El sequencer asigna el `TaskId` y forma el `TaskKey` antes de enviar una tarea.
+La tarea especializada conserva ese sobre común durante todo su recorrido y
+la finalización devuelve el mismo `TaskKey`; ningún módulo intermedio genera
+una identidad sustitutiva.
 
 En el baseline sólo hay una instrucción activa: la FIFO avanza al terminar la
 cabeza. La agregación de todas sus tareas es responsabilidad del sequencer, por
@@ -811,12 +858,13 @@ de cada fragmento.
 ### Envía
 
 ```text
-LaneTask(commandId, taskId, laneId, opcode, sourceRegs,
-         destinationReg, firstElement, elementCount, byteRanges, mask)
+LaneTask(taskKey, laneId, opcode, sourceRegs, destinationReg,
+         elements, byteRanges, mask)
 ```
 
-- `commandId` identifica el comando padre y `taskId` el fragmento concreto;
-  juntos permiten asociar el writeback y la finalización a la tarea correcta.
+- `taskKey` contiene el `CommandKey` padre y el `TaskId` del fragmento;
+  permite asociar el writeback y la finalización a la tarea correcta sin
+  perder el contexto de CPU.
 - `laneId` es la lane que ejecuta el fragmento. `TaskDistributor` la obtiene
   consultando `AddressMapper` con la referencia de registro y el rango
   correspondiente, de modo que el reparto respete la propiedad local del VRF.
@@ -824,8 +872,8 @@ LaneTask(commandId, taskId, laneId, opcode, sourceRegs,
   grupos arquitectónicos de todos sus operandos.
 - `destinationReg` es el grupo arquitectónico en el que se escribirán los
   resultados de la tarea.
-- `firstElement` y `elementCount` delimitan los elementos lógicos asignados a
-  esa lane. No incluyen elementos anteriores a `vstart` ni fuera de `vl`.
+- `elements` es el `ElementRange` asignado a esa lane. No incluye elementos
+  anteriores a `vstart` ni fuera de `vl`.
 - `byteRanges` traduce esos elementos a los intervalos que se leen o escriben
   en los grupos de registros; puede contener varios rangos para operandos o
   grupos que cruzan registros.
@@ -897,11 +945,11 @@ Recibe peticiones de lectura/escritura de lanes, VLSU, SLDU y MASKU. Devuelve
 `ReadinessTable`. Toda petición incluye:
 
 ```text
-commandId, registerRef, byteOffset, size, byteEnable, requester
+taskKey, registerRef, byteOffset, size, byteEnable, requester
 ```
 
-- `commandId` permite atribuir la petición a su comando y mantener
-  trazabilidad.
+- `taskKey` permite atribuir la petición a su tarea y, a través de su
+  `CommandKey`, al comando y contexto originales.
 - `registerRef` selecciona el grupo arquitectónico que se lee o escribe.
 - `byteOffset` y `size` delimitan el intervalo solicitado en bytes, relativo al
   inicio del grupo; el intervalo es `[byteOffset, byteOffset + size)`.
@@ -971,17 +1019,19 @@ destino y devuelve `ready/stall` al emisor.
 ### Recibe
 
 ```text
-InterconnectPacket(commandId, taskId, sourceLane, destinationLane,
-                   kind, registerRef, byteRange, data, last)
+InterconnectPacket(taskKey, sourceLane, destinationLane, kind,
+                   registerRef, byteRange, data, last)
 ```
 
-- `commandId` y `taskId` identifican la tarea que espera el paquete.
+- `taskKey` identifica la tarea que espera el paquete y conserva la identidad
+  completa del comando padre.
 - `sourceLane` y `destinationLane` especifican el salto lógico, incluso si la
   implementación posterior lo encamina por varios nodos físicos.
 - `kind` clasifica la transferencia (`slide`, `gather`, reducción, etc.) para
   que el receptor interprete `data` y aplique el orden apropiado.
 - `registerRef` y `byteRange` indican el grupo arquitectónico y los bytes a los
-  que pertenecen los datos; `commandId` evita confundir comandos sucesivos.
+  que pertenecen los datos; `TaskKey` evita confundir tareas o comandos
+  sucesivos.
 - `data` contiene el fragmento transferido y `last` marca el último paquete de
   la secuencia necesaria para completar ese rango o esa tarea.
 
@@ -1021,13 +1071,14 @@ escribir todas las cargas o recibir la confirmación de todos los stores.
 ### Envía a VectorMemoryBackend
 
 ```text
-VectorMemoryRequest(commandId, requestId, registerRef, elementIndex,
+VectorMemoryRequest(taskKey, requestId, registerRef, elementIndex,
                     laneId, destinationByteRange, virtualAddress, size,
                     isLoad, isStore, storeData, byteEnable, orderingMetadata)
 ```
 
-- `commandId` identifica el comando padre y `requestId` identifica de forma
-  única esta subpetición entre las peticiones pendientes de ese comando.
+- `taskKey` identifica la tarea de memoria y `requestId` identifica de forma
+  única esta subpetición entre las peticiones pendientes de esa tarea. La
+  pareja constituye conceptualmente un futuro `RequestKey`.
 - `registerRef` es el grupo de destino en una carga o el grupo fuente de los
   datos en un store: `VectorRegRef` en el baseline o `PhysicalRegRef`, con
   su versión, en el modo con renombramiento. `elementIndex` es el elemento
@@ -1049,11 +1100,11 @@ VectorMemoryRequest(commandId, requestId, registerRef, elementIndex,
 ### Envía a lanes o VRF
 
 ```text
-LoadData(commandId, requestId, destinationReg, elementIndex,
+LoadData(taskKey, requestId, destinationReg, elementIndex,
          laneId, destinationByteRange, data)
 ```
 
-- `commandId` y `requestId` correlacionan los datos con la petición original.
+- `taskKey` y `requestId` correlacionan los datos con la petición original.
 - `destinationReg` conserva la referencia de destino de la petición:
   arquitectónica en el baseline o física, con su versión, en el modo con
   renombramiento. `destinationByteRange` delimita exactamente dónde se deben
@@ -1090,10 +1141,10 @@ traducción y paquetes a gem5, y respuestas normalizadas a `AraVLSU`.
 - A la VLSU:
 
 ```text
-VectorMemoryResponse(commandId, requestId, status, data, fault)
+VectorMemoryResponse(taskKey, requestId, status, data, fault)
 ```
 
-- `commandId` y `requestId` identifican la solicitud que el backend ha
+- `taskKey` y `requestId` identifican la solicitud que el backend ha
   completado; la VLSU los usa como clave de su tabla de peticiones pendientes.
 - `status` distingue una carga correcta, una confirmación de store, un fallo
   de traducción/acceso o una cancelación por reset o drain.
@@ -1183,7 +1234,7 @@ Decode clasifica la macro RVV
   -> CpuVectorInterface asigna CommandKey y valida VectorCommand
   -> Commit obtiene grant y hace dispatch
   -> admisión almacena el comando y emite accepted
-  -> AraSequencer genera ArithmeticTask o MemoryTask
+  -> AraSequencer asigna TaskKey y genera ArithmeticTask o MemoryTask
   -> lanes o VLSU ejecutan y escriben el resultado
   -> AraSequencer agrega finalizaciones y peticiones pendientes
   -> CpuVectorInterface emite completed

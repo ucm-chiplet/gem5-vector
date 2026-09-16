@@ -141,7 +141,7 @@ digraph AraLikeGem5 {
 
         vlsu [label=
             "AraVLSU\nvle32.v / vse32.v unit-stride\nCorrelación " +
-            "por command y requestId\nCompleta tras writeback / " +
+            "por TaskKey y requestId\nCompleta tras writeback / " +
             "ack de stores"
         ,
               fillcolor="#EAD8F3", color="#70458A"];
@@ -195,7 +195,7 @@ digraph AraLikeGem5 {
         dir=both, color="#19734B", penwidth=2.2, constraint=false,
         label=
             "ArithmeticTask\nDescriptor común: " +
-            "UnitTask\nCapacidad / finalización agregada"
+            "UnitTask + TaskKey\nCapacidad / finalización agregada"
     ];
     // Consulta de cálculo; no se envía una UnitTask al mapper.
     distributor -> mapper [
@@ -206,17 +206,19 @@ digraph AraLikeGem5 {
 
     distributor -> lane [
         dir=both, color="#19734B",
-        label="LaneTask\nCapacidad / finalización por lane"
+        label="LaneTask + TaskKey\nCapacidad / finalización por lane"
     ];
     sequencer -> vlsu [
         dir=both, color="#70458A", penwidth=2.2,
         label=
-            "MemoryTask\nDescriptor común: UnitTask\nCapacidad / " +
+            "MemoryTask\nUnitTask + TaskKey\nCapacidad / " +
             "UnitCompletion"
     ];
     vlsu -> mem_backend [
         dir=both, color="#70458A", penwidth=2.2,
-        label="VectorMemoryRequest\nVectorMemoryResponse"
+        label=
+            "VectorMemoryRequest\nTaskKey + requestId\n" +
+            "VectorMemoryResponse"
     ];
 
     notes [
@@ -228,7 +230,8 @@ digraph AraLikeGem5 {
             "bancos se replican N veces; el VRF no es " +
             "central.\lRuta elegida: VLSU accede al LRF de la " +
             "lane propietaria.\lComandos: CommandKey; tareas: " +
-            "taskId; memoria: requestId.\lBaseline: VectorRegRef " +
+            "TaskKey.\lMemoria: TaskKey + requestId; futuro " +
+            "RequestKey.\lBaseline: VectorRegRef " +
             "y rango de bytes.\lCon renombramiento: " +
             "PhysicalRegRef con versión y rango.\lSin " +
             "renombramiento, ROB ni chaining; validación inicial " +

@@ -293,6 +293,13 @@ la instrucción situada en la cabeza y la distribuye a la unidad correspondiente
 - máscaras → MASKU;
 - reducciones → lanes + interconexión.
 
+Al dividir un comando, `AraSequencer` asigna un `TaskId` único dentro de su
+`CommandKey` y forma un `TaskKey`. Todas las tareas especializadas contienen
+un descriptor común `UnitTask` con ese `TaskKey`, la clase de unidad y el
+intervalo lógico de elementos. Los rangos de bytes no pertenecen al descriptor
+común: `ArithmeticTask` define su rango de destino y `MemoryTask` un
+`dataRange`, que es destino para loads y fuente para stores.
+
 La cola única debe ser parametrizable en profundidad, pero inicialmente tendrá
 política FIFO estricta. No se implementará issue OoO entre instrucciones en esta
 primera fase.
@@ -461,7 +468,8 @@ puertos de memoria de gem5 v25.
 Cada request de memoria debe conservar:
 
 ```text
-command_id
+task_key
+request_id
 register_ref
 destination_byte_range
 element_index
@@ -475,8 +483,8 @@ fault_and_order_metadata
 arquitectónico en el baseline o `PhysicalRegRef`, con su versión, cuando se
 habilita el renombramiento. El modo sin renombramiento no exige
 `physical_version`. La petición conserva además su rango de bytes y su
-identidad de comando y subpetición (`CommandKey` y `requestId` en las
-interfaces propuestas).
+identidad de tarea y subpetición (`TaskKey` y `requestId` en las interfaces
+propuestas). Esa pareja podrá formalizarse más adelante como `RequestKey`.
 
 Al recibir una respuesta, la VLSU la distribuye a la lane propietaria y conserva
 la identidad de la operación, del elemento y la referencia original del
@@ -567,16 +575,17 @@ bytes.
 2. Evitar que Minor descomponga RVV en microoperaciones cuando el offload esté activo.
 3. Crear `VectorCommand`.
 4. Implementar `requestGrant`, `dispatch`, `accepted` y `completed`.
-5. Crear `AraSequencer` y una única FIFO de comandos.
-6. Implementar un backend funcional simple sin renombramiento ni chaining.
-7. Añadir lanes físicas y distribución por palabras.
-8. Añadir VRF distribuido y bancarizado.
-9. Añadir VLSU, SLDU, MASKU e interconexión.
-10. Añadir el modo opcional `enable_vector_renaming`.
-11. Añadir la tabla de readiness por bytes como preparación para el chaining.
-12. Implementar chaining granular después de validar el modelo de lanes, VRF y
+5. Definir `TaskKey`, `ElementRange` y el sobre común `UnitTask`.
+6. Crear `AraSequencer` y una única FIFO de comandos.
+7. Implementar un backend funcional simple sin renombramiento ni chaining.
+8. Añadir lanes físicas y distribución por palabras.
+9. Añadir VRF distribuido y bancarizado.
+10. Añadir VLSU, SLDU, MASKU e interconexión.
+11. Añadir el modo opcional `enable_vector_renaming`.
+12. Añadir la tabla de readiness por bytes como preparación para el chaining.
+13. Implementar chaining granular después de validar el modelo de lanes, VRF y
     colas de operandos.
-13. Evaluar bypass, OoO o políticas de issue alternativas sólo después de
+14. Evaluar bypass, OoO o políticas de issue alternativas sólo después de
     validar el baseline FIFO.
 
 ## 11. Código de Vitruvius reutilizable
