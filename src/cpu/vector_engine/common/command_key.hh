@@ -12,11 +12,10 @@ namespace gem5::vector_engine
 {
 
 /**
- * Identity of a vector command.
- *
- * A command identifier is only unique within its owning context.  The full
- * identity must therefore be propagated whenever work derived from a command
- * crosses a module boundary.
+ * Identidad de un comando, asignada por CpuVectorInterface.
+ * MinorCPU la incorpora al comando; la cola, AraSequencer y las unidades
+ * la conservan hasta devolver la finalización a la CPU.
+ * commandId sólo es único dentro de contextId: se usan siempre juntos.
  */
 struct CommandKey
 {
@@ -54,7 +53,10 @@ operator<(const CommandKey &lhs, const CommandKey &rhs)
             lhs.commandId < rhs.commandId);
 }
 
-/** Hash function for command-indexed protocol state. */
+/**
+ * Permite indexar por CommandKey las tablas de la interfaz y del frontend.
+ * Combina contexto e identificador para distinguir comandos entre hilos.
+ */
 struct CommandKeyHash
 {
     std::size_t

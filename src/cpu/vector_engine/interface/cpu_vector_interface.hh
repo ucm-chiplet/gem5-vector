@@ -12,6 +12,7 @@
 namespace gem5::vector_engine
 {
 
+/** Admisión indica a MinorCPU si reserva espacio, debe esperar o rechaza. */
 enum class GrantStatus : uint8_t
 {
     Granted,
@@ -19,6 +20,10 @@ enum class GrantStatus : uint8_t
     Rejected,
 };
 
+/**
+ * Motivo que admisión devuelve antes de aceptar un comando.
+ * MinorCPU lo usa para tratar el rechazo, sin esperar una finalización.
+ */
 enum class RejectionReason : uint8_t
 {
     InvalidIdentity,
@@ -30,7 +35,10 @@ enum class RejectionReason : uint8_t
     DuplicateCommand,
 };
 
-/** Opaque, single-use reservation issued for one specific command. */
+/**
+ * Reserva que admisión concede a MinorCPU para un comando concreto.
+ * MinorCPU la entrega en dispatch; admisión la consume una sola vez.
+ */
 struct GrantToken
 {
     static constexpr uint64_t InvalidReservationId =
@@ -59,7 +67,11 @@ operator!=(const GrantToken &lhs, const GrantToken &rhs)
     return !(lhs == rhs);
 }
 
-/** Result of admission without modifying the command FIFO. */
+/**
+ * Respuesta de requestGrant que admisión devuelve a MinorCPU.
+ * Granted lleva un token; Rejected, un motivo; Stall no lleva ninguno.
+ * Conceder la reserva todavía no inserta el comando en la FIFO.
+ */
 struct GrantResult
 {
     GrantStatus status = GrantStatus::Stall;
@@ -101,25 +113,36 @@ struct GrantResult
     }
 };
 
-/** Non-owning contract implemented by the VPU admission frontend. */
+/**
+ * Contrato de entrada que implementará la admisión de la VPU.
+ * MinorCPU lo usa para reservar y entregar comandos por CpuVectorInterface.
+ * Las referencias recibidas no transfieren la propiedad de los objetos.
+ */
 class VpuCommandEndpoint
 {
   public:
     virtual ~VpuCommandEndpoint() = default;
 
+    // MinorCPU pide una reserva; Stall permite reintentar el mismo comando.
     virtual GrantResult requestGrant(const VectorCommand &command) = 0;
 
+    // MinorCPU entrega el comando reservado; ya no puede recibir Stall.
     virtual void dispatch(
         const GrantToken &token, const VectorCommand &command) = 0;
 };
 
-/** Non-owning contract implemented by the CPU completion receiver. */
+/**
+ * Contrato de retorno que implementará el receptor de MinorCPU.
+ * CpuVectorInterface comunica por él la aceptación y la finalización.
+ */
 class CpuCompletionEndpoint
 {
   public:
     virtual ~CpuCompletionEndpoint() = default;
 
+    // Admisión confirma la inserción en la FIFO; aún no ha terminado.
     virtual void accepted(CommandKey command) = 0;
+    // AraSequencer informa del cierre; Minor procesa el resultado o el fallo.
     virtual void completed(const VectorCompletion &completion) = 0;
 };
 

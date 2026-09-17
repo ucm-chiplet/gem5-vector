@@ -26,49 +26,40 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
-#define __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
+#ifndef __CPU_VECTOR_ENGINE_COMMON_UNIT_COMPLETION_HH__
+#define __CPU_VECTOR_ENGINE_COMMON_UNIT_COMPLETION_HH__
 
 #include <cstdint>
-#include <deque>
-#include <map>
+#include <optional>
 
-#include "cpu/vector_engine/interface/cpu_vector_interface.hh"
+#include "cpu/vector_engine/common/unit_task.hh"
+#include "cpu/vector_engine/interface/vector_completion.hh"
 
-namespace gem5::vector_engine::detail
+namespace gem5::vector_engine
 {
 
-/**
- * Admisión conserva el token y una copia del comando reservado.
- * Al recibir dispatch, los compara para consumir la reserva correcta.
- */
-struct CommandReservation
+/** AraSequencer distingue una tarea terminada de un fallo de memoria. */
+enum class UnitCompletionStatus : uint8_t
 {
-    GrantToken token;
-    VectorCommand descriptor;
+    Success,
+    MemoryFault,
 };
 
 /**
- * Estado que el control de admisión y CommandQueue necesitan conservar.
- * AraSequencer toma el comando en cabeza y lo libera al finalizar.
- * Define el almacenamiento; aún no implementa admisión ni vaciado.
+ * TaskDistributor o AraVLSU la envían a AraSequencer al terminar una tarea.
+ * La clave permite asociar la respuesta con la tarea pendiente.
  */
-struct CommandQueueState
+struct UnitCompletion
 {
-    // Admisión busca por reservationId; reservar todavía no acepta el comando.
-    std::map<uint64_t, CommandReservation> reservations;
+    TaskKey key;
+    UnitCompletionStatus status = UnitCompletionStatus::Success;
 
-    // CommandQueue conserva el orden; la cabeza activa sigue ocupando plaza.
-    std::deque<VectorCommand> commands;
-
-    // Admisión obtiene las claves vivas de los descriptores anteriores.
-    // El siguiente ID no puede desbordar ni usar InvalidReservationId.
-    uint64_t nextReservationId = 0;
-
-    // Admisión deja de dar reservas nuevas mientras termina lo pendiente.
-    bool draining = false;
+    // AraVLSU informa de causa, dirección e índice si hay MemoryFault.
+    // TaskDistributor sólo devuelve Success en la versión inicial.
+    // AraSequencer exige que fault esté ausente en una respuesta Success.
+    std::optional<FaultInfo> fault;
 };
 
-} // namespace gem5::vector_engine::detail
+} // namespace gem5::vector_engine
 
-#endif // __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
+#endif // __CPU_VECTOR_ENGINE_COMMON_UNIT_COMPLETION_HH__

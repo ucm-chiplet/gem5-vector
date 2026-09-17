@@ -9,12 +9,17 @@ namespace gem5::vector_engine
 
 inline constexpr uint8_t NumArchitecturalVectorRegs = 32;
 
-/** Architectural vector register group used by the baseline VPU. */
+/**
+ * Grupo de registros arquitectónicos que MinorCPU incorpora al comando.
+ * AraSequencer y las unidades lo conservan; el VRF ubica con él los datos.
+ * regCount cuenta registros contenedores, también para LMUL fraccionario.
+ */
 struct VectorRegRef
 {
     uint8_t firstReg = 0;
     uint8_t regCount = 0;
 
+    // Comprobación local de límites; no valida toda la configuración RVV.
     constexpr bool
     valid() const
     {
@@ -23,7 +28,7 @@ struct VectorRegRef
                regCount <= NumArchitecturalVectorRegs - firstReg;
     }
 
-    /** Alignment rule for integral LMUL/EMUL register groups. */
+    /** La admisión usa esta regla para comprobar la alineación del grupo. */
     constexpr bool
     naturallyAligned() const
     {
@@ -43,7 +48,11 @@ operator!=(const VectorRegRef &lhs, const VectorRegRef &rhs)
     return !(lhs == rhs);
 }
 
-/** A non-empty half-open byte interval [offset, offset + size). */
+/**
+ * Intervalo de bytes [offset, offset + size), relativo al grupo de registros.
+ * AraSequencer y las unidades lo usan en tareas y accesos al VRF.
+ * No puede estar vacío; el productor comprueba además la capacidad efectiva.
+ */
 struct ByteRange
 {
     uint32_t offset = 0;

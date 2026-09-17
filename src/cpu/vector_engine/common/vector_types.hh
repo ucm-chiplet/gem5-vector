@@ -6,7 +6,11 @@
 namespace gem5::vector_engine
 {
 
-/** Base-two exponent used to encode the effective RVV LMUL. */
+/**
+ * Factor LMUL expresado como exponente de dos.
+ * MinorCPU lo captura; admisión y las unidades dimensionan con él los grupos.
+ * Que un valor exista en el enum no implica que la VPU lo admita.
+ */
 enum class VectorLmul : int8_t
 {
     Mf8 = -3,
@@ -25,7 +29,11 @@ isValid(VectorLmul lmul)
     return lmul >= VectorLmul::Mf8 && lmul <= VectorLmul::M8;
 }
 
-/** Effective RVV state captured by MinorCPU when it creates a command. */
+/**
+ * Configuración RVV que MinorCPU captura una vez al construir el comando.
+ * Admisión comprueba su soporte; AraSequencer y las unidades usan esta copia
+ * sin volver a consultar los registros de estado de la CPU.
+ */
 struct VectorConfig
 {
     uint32_t vl = 0;
@@ -53,12 +61,20 @@ operator!=(const VectorConfig &lhs, const VectorConfig &rhs)
     return !(lhs == rhs);
 }
 
+/**
+ * Operación que MinorCPU describe y TaskDistributor entrega a las lanes.
+ * La ALU usa Add en la versión inicial; no necesita volver a decodificar.
+ */
 enum class ArithmeticOperation : uint8_t
 {
     Invalid,
     Add,
 };
 
+/**
+ * Relación entre anchos de operandos que MinorCPU incluye en el comando.
+ * Admisión sólo permite SameWidth en la versión inicial.
+ */
 enum class ElementWidthMode : uint8_t
 {
     SameWidth,
@@ -66,6 +82,10 @@ enum class ElementWidthMode : uint8_t
     Narrowing,
 };
 
+/**
+ * Interpretación del signo que MinorCPU indica en el comando aritmético.
+ * Admisión exige NotApplicable para la suma de la versión inicial.
+ */
 enum class ElementSignedness : uint8_t
 {
     NotApplicable,
@@ -73,6 +93,7 @@ enum class ElementSignedness : uint8_t
     Unsigned,
 };
 
+/** MinorCPU indica carga o store; AraVLSU selecciona el recorrido de datos. */
 enum class MemoryDirection : uint8_t
 {
     Invalid,
@@ -80,6 +101,10 @@ enum class MemoryDirection : uint8_t
     Store,
 };
 
+/**
+ * Orden descrito para accesos indexados; lo transporta IndexedAddress.
+ * Admisión rechaza esos accesos en la versión inicial.
+ */
 enum class MemoryOrdering : uint8_t
 {
     NotApplicable,
@@ -87,7 +112,10 @@ enum class MemoryOrdering : uint8_t
     Unordered,
 };
 
-/** Backend unit which owns a task derived from a vector command. */
+/**
+ * AraSequencer usa este valor para indicar la unidad responsable de la tarea.
+ * Lanes corresponde al reparto aritmético; Vlsu, a las operaciones de memoria.
+ */
 enum class VectorUnitClass : uint8_t
 {
     Invalid,

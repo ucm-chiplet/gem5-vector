@@ -12,12 +12,17 @@
 namespace gem5::vector_engine
 {
 
+/** AraSequencer asigna este número dentro del comando al crear una tarea. */
 using TaskId = uint32_t;
 
 inline constexpr TaskId InvalidTaskId =
     std::numeric_limits<TaskId>::max();
 
-/** Identity of one internal task belonging to a vector command. */
+/**
+ * Identidad de tarea que AraSequencer entrega a TaskDistributor o AraVLSU.
+ * Las unidades la propagan en accesos y respuestas para cerrar la tarea
+ * correcta. taskId sólo es único dentro de su CommandKey.
+ */
 struct TaskKey
 {
     CommandKey command;
@@ -49,7 +54,10 @@ operator<(const TaskKey &lhs, const TaskKey &rhs)
            (lhs.command == rhs.command && lhs.taskId < rhs.taskId);
 }
 
-/** Hash function for task-indexed backend state. */
+/**
+ * Permite a AraSequencer y a las unidades indexar tablas por TaskKey.
+ * Incluye el comando completo, no sólo el número local de tarea.
+ */
 struct TaskKeyHash
 {
     std::size_t
@@ -64,7 +72,11 @@ struct TaskKeyHash
     }
 };
 
-/** A non-empty half-open interval of logical vector elements. */
+/**
+ * Elementos lógicos [firstElement, firstElement + elementCount).
+ * AraSequencer fija el rango; TaskDistributor y AraVLSU lo recorren.
+ * Debe ser no vacío y quedar dentro de [vstart, vl) del comando.
+ */
 struct ElementRange
 {
     uint32_t firstElement = 0;
@@ -105,7 +117,11 @@ operator!=(const ElementRange &lhs, const ElementRange &rhs)
     return !(lhs == rhs);
 }
 
-/** Common envelope propagated with every baseline backend task. */
+/**
+ * Parte común de las tareas que AraSequencer envía a las unidades.
+ * TaskDistributor y AraVLSU reciben identidad, unidad destino y elementos.
+ * Los operandos y rangos de bytes están en ArithmeticTask o MemoryTask.
+ */
 struct UnitTask
 {
     TaskKey key;

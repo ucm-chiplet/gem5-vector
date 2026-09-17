@@ -14,15 +14,20 @@ namespace gem5::vector_engine
 {
 
 // --------------------------------------------------------------------------
-// Arithmetic command types.
+// Tipos de comandos aritméticos.
 // --------------------------------------------------------------------------
 
 /**
- * The active alternative identifies vv, vx, or vi arithmetic without a
- * second, potentially contradictory, operand-form field.
+ * MinorCPU captura aquí el segundo operando que consumirán las lanes.
+ * La alternativa distingue registro vectorial, valor escalar o inmediato,
+ * sin duplicar esa información en otro campo. El inmediato queda reservado.
  */
 using ArithmeticOperand = std::variant<VectorRegRef, RegVal, int64_t>;
 
+/**
+ * Operación y operandos que MinorCPU entrega a la VPU ya decodificados.
+ * AraSequencer los copia a ArithmeticTask para TaskDistributor y las lanes.
+ */
 struct ArithmeticCommand
 {
     ArithmeticOperation operation = ArithmeticOperation::Invalid;
@@ -50,12 +55,14 @@ operator!=(const ArithmeticCommand &lhs, const ArithmeticCommand &rhs)
     return !(lhs == rhs);
 }
 
-// End of arithmetic command types.
-
 // --------------------------------------------------------------------------
-// Memory addressing types.
+// Formas de direccionamiento de memoria.
 // --------------------------------------------------------------------------
 
+/**
+ * MinorCPU indica elementos consecutivos en memoria.
+ * AraVLSU usa la base y el índice de elemento para obtener cada dirección.
+ */
 struct UnitStrideAddress
 {};
 
@@ -71,6 +78,10 @@ operator!=(const UnitStrideAddress &, const UnitStrideAddress &)
     return false;
 }
 
+/**
+ * Describe una separación entre elementos para una ampliación futura.
+ * Admisión reconoce la variante, pero la rechaza en la versión inicial.
+ */
 struct StridedAddress
 {
     RegVal stride = 0;
@@ -88,6 +99,10 @@ operator!=(const StridedAddress &lhs, const StridedAddress &rhs)
     return !(lhs == rhs);
 }
 
+/**
+ * Describe registros de índices y orden para una ampliación futura.
+ * Admisión rechaza esta variante; AraVLSU aún no ejecuta accesos indexados.
+ */
 struct IndexedAddress
 {
     VectorRegRef index;
@@ -106,17 +121,24 @@ operator!=(const IndexedAddress &lhs, const IndexedAddress &rhs)
     return !(lhs == rhs);
 }
 
+/**
+ * Forma de direccionamiento que MinorCPU incluye en MemoryCommand.
+ * Admisión sólo admite UnitStrideAddress en la versión inicial.
+ */
 using MemoryAddressing = std::variant<
     UnitStrideAddress,
     StridedAddress,
     IndexedAddress>;
 
-// End of memory addressing types.
-
 // --------------------------------------------------------------------------
-// Memory command type.
+// Comando de memoria.
 // --------------------------------------------------------------------------
 
+/**
+ * Carga o store descrito por MinorCPU con base escalar ya capturada.
+ * AraSequencer lo copia a MemoryTask; AraVLSU usa dataReg como destino de
+ * las cargas o fuente de los stores.
+ */
 struct MemoryCommand
 {
     MemoryDirection direction = MemoryDirection::Invalid;
@@ -145,26 +167,27 @@ operator!=(const MemoryCommand &lhs, const MemoryCommand &rhs)
     return !(lhs == rhs);
 }
 
-// End of memory command type.
-
 // --------------------------------------------------------------------------
-// Common command payload.
-// --------------------------------------------------------------------------
-
-using VectorCommandPayload =
-    std::variant<ArithmeticCommand, MemoryCommand>;
-
-// End of common command payload.
-
-// --------------------------------------------------------------------------
-// CPU--VPU command descriptor.
+// Contenido específico del comando.
 // --------------------------------------------------------------------------
 
 /**
- * Immutable descriptor at the CPU--VPU boundary.
- *
- * MinorCPU supplies already-decoded semantics and effective operand values.
- * The VPU must not use this descriptor to recover a StaticInst or DynInst.
+ * MinorCPU selecciona una operación aritmética o de memoria.
+ * AraSequencer usa la alternativa para crear la tarea de la unidad adecuada.
+ */
+using VectorCommandPayload =
+    std::variant<ArithmeticCommand, MemoryCommand>;
+
+// --------------------------------------------------------------------------
+// Descriptor compartido entre CPU y VPU.
+// --------------------------------------------------------------------------
+
+/**
+ * Comando que MinorCPU construye con semántica y operandos ya capturados.
+ * CpuVectorInterface lo entrega a admisión; CommandQueue lo conserva y
+ * AraSequencer lo transforma en trabajo para las unidades.
+ * Se mantiene inmutable durante los reintentos. La VPU no recupera una
+ * StaticInst o DynInst a partir de este descriptor ni vuelve a decodificar.
  */
 struct VectorCommand
 {
@@ -188,8 +211,6 @@ operator!=(const VectorCommand &lhs, const VectorCommand &rhs)
 {
     return !(lhs == rhs);
 }
-
-// End of CPU--VPU command descriptor.
 
 } // namespace gem5::vector_engine
 

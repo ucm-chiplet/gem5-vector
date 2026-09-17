@@ -26,49 +26,52 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
-#define __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
+#ifndef __CPU_MINOR_VECTOR_STATE_HH__
+#define __CPU_MINOR_VECTOR_STATE_HH__
 
-#include <cstdint>
-#include <deque>
-#include <map>
+#include <optional>
 
+#include "cpu/minor/dyn_inst.hh"
+#include "cpu/minor/vector_types.hh"
 #include "cpu/vector_engine/interface/cpu_vector_interface.hh"
 
-namespace gem5::vector_engine::detail
+namespace gem5::minor
 {
 
-/**
- * Admisión conserva el token y una copia del comando reservado.
- * Al recibir dispatch, los compara para consumir la reserva correcta.
- */
-struct CommandReservation
+/** Execute usa estas fases para seguir el envío y la respuesta de la VPU. */
+enum class MinorVectorPhase : uint8_t
 {
-    GrantToken token;
-    VectorCommand descriptor;
+    WaitDependencies, // Execute aún no ha capturado los operandos.
+    WaitGrant,        // Conserva el comando ante una respuesta Stall.
+    Dispatched,       // Ha consumido la reserva; espera accepted.
+    Accepted,         // Espera la respuesta final del comando.
+    Completed,        // Debe procesar el resultado o la excepción.
 };
 
 /**
- * Estado que el control de admisión y CommandQueue necesitan conservar.
- * AraSequencer toma el comando en cabeza y lo libera al finalizar.
- * Define el almacenamiento; aún no implementa admisión ni vaciado.
+ * Estado que Execute conserva hasta retirar la instrucción o tratar su fallo.
+ * Execute es su propietario, no la instrucción a la que apunta inst.
+ * Describe el contrato; las transiciones aún no están conectadas al pipeline.
  */
-struct CommandQueueState
+struct MinorVectorState
 {
-    // Admisión busca por reservationId; reservar todavía no acepta el comando.
-    std::map<uint64_t, CommandReservation> reservations;
+    MinorDynInstPtr inst;
+    MinorVectorPhase phase = MinorVectorPhase::WaitDependencies;
+    DecodedVectorOp decoded;
 
-    // CommandQueue conserva el orden; la cabeza activa sigue ocupando plaza.
-    std::deque<VectorCommand> commands;
+    // Execute asocia con esta clave el comando, la reserva y la respuesta.
+    std::optional<vector_engine::CommandKey> commandKey;
 
-    // Admisión obtiene las claves vivas de los descriptores anteriores.
-    // El siguiente ID no puede desbordar ni usar InvalidReservationId.
-    uint64_t nextReservationId = 0;
+    // Execute lo captura una vez y puede liberarlo tras recibir accepted.
+    std::optional<vector_engine::VectorCommand> command;
 
-    // Admisión deja de dar reservas nuevas mientras termina lo pendiente.
-    bool draining = false;
+    // Execute recibe la reserva y la consume una sola vez al hacer dispatch.
+    std::optional<vector_engine::GrantToken> grantToken;
+
+    // Minor la conserva hasta procesar el retiro o la excepción.
+    std::optional<vector_engine::VectorCompletion> completion;
 };
 
-} // namespace gem5::vector_engine::detail
+} // namespace gem5::minor
 
-#endif // __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
+#endif // __CPU_MINOR_VECTOR_STATE_HH__

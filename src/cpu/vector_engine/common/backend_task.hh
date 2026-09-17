@@ -26,49 +26,49 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
-#define __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
+#ifndef __CPU_VECTOR_ENGINE_COMMON_BACKEND_TASK_HH__
+#define __CPU_VECTOR_ENGINE_COMMON_BACKEND_TASK_HH__
 
-#include <cstdint>
-#include <deque>
-#include <map>
+#include "cpu/vector_engine/common/unit_task.hh"
+#include "cpu/vector_engine/common/vector_reg_ref.hh"
+#include "cpu/vector_engine/interface/vector_command.hh"
 
-#include "cpu/vector_engine/interface/cpu_vector_interface.hh"
-
-namespace gem5::vector_engine::detail
+namespace gem5::vector_engine
 {
 
 /**
- * Admisión conserva el token y una copia del comando reservado.
- * Al recibir dispatch, los compara para consumir la reserva correcta.
+ * AraSequencer la crea para que TaskDistributor reparta el trabajo aritmético.
+ * Conserva el comando ya validado; task.unit debe ser Lanes.
  */
-struct CommandReservation
+struct ArithmeticTask
 {
-    GrantToken token;
-    VectorCommand descriptor;
+    UnitTask task;
+    VectorConfig config;
+    ArithmeticCommand arithmetic;
+    ByteRange destinationRange;
 };
 
 /**
- * Estado que el control de admisión y CommandQueue necesitan conservar.
- * AraSequencer toma el comando en cabeza y lo libera al finalizar.
- * Define el almacenamiento; aún no implementa admisión ni vaciado.
+ * AraSequencer la crea para que AraVLSU ejecute la carga o el store.
+ * Conserva los metadatos de memoria del comando; task.unit debe ser Vlsu.
  */
-struct CommandQueueState
+struct MemoryTask
 {
-    // Admisión busca por reservationId; reservar todavía no acepta el comando.
-    std::map<uint64_t, CommandReservation> reservations;
+    UnitTask task;
+    VectorConfig config;
+    MemoryCommand memory;
 
-    // CommandQueue conserva el orden; la cabeza activa sigue ocupando plaza.
-    std::deque<VectorCommand> commands;
-
-    // Admisión obtiene las claves vivas de los descriptores anteriores.
-    // El siguiente ID no puede desbordar ni usar InvalidReservationId.
-    uint64_t nextReservationId = 0;
-
-    // Admisión deja de dar reservas nuevas mientras termina lo pendiente.
-    bool draining = false;
+    // AraVLSU usa este rango como destino de carga o fuente de store.
+    // El desplazamiento es relativo al principio del grupo de registros.
+    ByteRange dataRange;
+    Addr pc = 0;
+    RequestorID requestorId = Request::invldRequestorId;
 };
 
-} // namespace gem5::vector_engine::detail
+// AraSequencer crea una tarea para [vstart, vl) en la versión inicial.
+// Para elementos de 32 bits, el rango comienza en firstElement * 4 y ocupa
+// elementCount * 4 bytes. Si vstart >= vl, no crea ninguna tarea.
 
-#endif // __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
+} // namespace gem5::vector_engine
+
+#endif // __CPU_VECTOR_ENGINE_COMMON_BACKEND_TASK_HH__

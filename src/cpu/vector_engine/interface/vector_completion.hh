@@ -10,6 +10,10 @@
 namespace gem5::vector_engine
 {
 
+/**
+ * Resultado que AraSequencer comunica a MinorCPU al cerrar un comando.
+ * La versión inicial sólo emite Success o MemoryFault como respuesta normal.
+ */
 enum class CompletionStatus : uint8_t
 {
     Success,
@@ -19,12 +23,21 @@ enum class CompletionStatus : uint8_t
     Cancelled,
 };
 
+/**
+ * Resultado escalar reservado para futuras instrucciones de la VPU.
+ * MinorCPU sería su consumidor; vsetvli se resuelve en CPU y no usa este tipo.
+ */
 struct ScalarResult
 {
     RegIndex destination = 0;
     RegVal value = 0;
 };
 
+/**
+ * Causa y posición del fallo que memoria comunica a AraVLSU.
+ * AraSequencer las propaga en la finalización para que MinorCPU las procese.
+ * En MemoryFault son obligatorios fault distinto de NoFault, address e índice.
+ */
 struct FaultInfo
 {
     Fault fault = NoFault;
@@ -33,11 +46,12 @@ struct FaultInfo
 };
 
 /**
- * Terminal event for a command accepted by the VPU.
- *
- * A successful completion carries no fault.  A failing completion carries a
- * valid FaultInfo; memory faults may additionally identify the address and
- * vector element which caused the failure.
+ * AraSequencer la crea al terminar un comando aceptado por la VPU.
+ * CpuVectorInterface la devuelve a MinorCPU, que retira o trata la excepción.
+ * Success no lleva fault ni resultado escalar y deja finalVstart en cero.
+ * MemoryFault exige causa, dirección virtual e índice del elemento;
+ * finalVstart debe coincidir con ese índice y scalarResult queda ausente.
+ * Los demás estados no son finalizaciones normales de la versión inicial.
  */
 struct VectorCompletion
 {
