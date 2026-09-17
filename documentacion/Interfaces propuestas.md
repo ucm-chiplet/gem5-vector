@@ -358,6 +358,30 @@ de recepción reservado al aceptar la petición; no se descartan ni exigen
 reenviar una operación ya aceptada. Si ese espacio no existe, se devuelve
 `Retry` antes de aceptar. No se guardan referencias a buffers temporales.
 
+### Progreso y reactivación tras Retry
+
+Un emisor con mensajes internos no aceptados programa una evaluación en el
+siguiente ciclo de su reloj. Mantiene como máximo un evento de reintento
+pendiente por emisor; ese evento atiende el trabajo pendiente sin crear
+copias nuevas de mensajes o identidades. Si sigue recibiendo `Retry`, programa
+la siguiente evaluación. No depende de que Minor tenga trabajo escalar.
+
+Tras `Accepted` se deja de reintentar ese mensaje. El receptor conserva la
+obligación de responder y la respuesta reactiva al consumidor si habilita
+trabajo nuevo. Un módulo puede dormir cuando sólo espera respuestas aceptadas;
+si queda trabajo listo, debe mantener programada su evaluación. Un callback
+inmediato no debe provocar un bucle de reintentos en el mismo tick.
+
+Minor aplica el mismo principio a `GrantStatus::Stall` mientras pueda iniciar
+un offload. Al comenzar drain deja de solicitar grants nuevos y aplica la
+política de descarte o finalización de la sección de drain conjunto.
+
+Esta regla es funcional, no una especificación de throughput. El retry de un
+puerto timing de gem5 es distinto: después de un `sendTimingReq` fallido, el
+backend espera `recvReqRetry`; no sondea el puerto cada ciclo. Una vez recibido
+ese aviso puede reintentar el paquete conservado, sin que la VLSU vuelva a
+emitir la petición lógica.
+
 ### Invariantes de finalización CPU--VPU
 
 | `CompletionStatus` | `fault` | `scalarResult` en el baseline | `finalVstart` | Uso |
@@ -377,6 +401,51 @@ Una identidad desconocida, una finalización duplicada o un rango fuera del
 comando son errores internos, no faults de memoria del programa simulado.
 Los identificadores reservados como inválidos nunca se asignan. Los contadores
 no deben desbordar ni volver a cero: su agotamiento es un error diagnosticado.
+
+## Configuración global de la VPU
+
+`VectorConfig` es el estado RVV de una instrucción. `VpuParameters` describe
+la configuración del coprocesador y es compartida por sus módulos:
+
+```cpp
+struct VpuParameters
+{
+    VrfGeometry vrf;
+    std::vector<VectorLmul> supportedLmuls;
+    uint32_t commandQueueEntries;
+    uint32_t laneTaskEntries;
+    uint32_t operandBufferEntriesPerSource;
+    uint32_t resultBufferEntries;
+};
+```
+
+`VrfGeometry` se define en la sección de `AddressMapper`. Los parámetros del
+SimObject `VectorEngine` son el origen de estos valores; la instancia C++ de
+`VectorEngine` los valida al construirse y conserva la configuración. Los
+módulos reciben vistas inmutables válidas durante toda su vida, sin mantener
+copias modificables independientes. No cambia con trabajo activo.
+
+| Campo | Unidad y consumidor | Restricción del baseline |
+| --- | --- | --- |
+| `vrf` | Geometría común para mapper, VRF, distribuidor y VLSU | Cumple las restricciones de mapeo y coincide con VLEN de Minor. |
+| `supportedLmuls` | Conjunto de factores aceptados por admisión | No vacío, sin duplicados ni `Invalid`; cada factor permite al menos un elemento de 32 bits. |
+| `commandQueueEntries` | Comandos, incluyendo cabeza activa y reservas | Al menos 1; corresponde a `queueDepth` en la fórmula de admisión. |
+| `laneTaskEntries` | Fragmentos aceptados por lane, incluidos los activos | Al menos 1. |
+| `operandBufferEntriesPerSource` | Buffers de fragmento por fuente vectorial y lane | Al menos 1 para cada una de las dos fuentes; cada buffer aloja hasta una palabra de lane. |
+| `resultBufferEntries` | Resultados de fragmento pendientes de writeback por lane | Al menos 1; cada buffer aloja hasta una palabra de lane. |
+
+Una suma vectorial puede reservar una entrada de cada fuente y una de resultado
+sin exigir que todas las tareas aceptadas progresen simultáneamente. La
+reserva de espacio para respuestas no se comparte de forma que una fuente
+ocupe toda la capacidad e impida recibir la otra. En `vadd.vx`, la segunda
+fuente procede del escalar y no necesita lectura del VRF.
+
+`VectorEngine` distribuye configuración y valida compatibilidad, pero no
+decide operaciones ni vuelve a decodificar. La FIFO gestiona sus créditos;
+cada lane gestiona sus buffers. La VLSU mantiene el límite ya fijado de un
+elemento lógico en curso. Los valores de VLEN, LMUL y capacidades se declaran
+en la configuración de ejecución; este contrato no inventa un benchmark ni
+fija latencias, frecuencia o número de puertos del modelo temporal futuro.
 
 ## Decode de MinorCPU
 
@@ -423,6 +492,80 @@ Commit no vuelve a decodificar el opcode. Para el primer hito, sólo
 `vle32.v`, `vadd.vv`, `vadd.vx` y `vse32.v` reciben `VPU_OFFLOAD`; si el
 offload está desactivado, esas instrucciones se clasifican como
 `NATIVE_VECTOR`.
+
+### Descripción decodificada conservada en CPU
+
+`DecodedVectorOp` pertenece exclusivamente al lado CPU. Viaja asociado a la
+macroinstrucción desde Decode hasta Execute; no se entrega a la VPU.
+
+```cpp
+enum class VectorExecutionClass : uint8_t
+{
+    CpuScalar,
+    CpuVectorConfig,
+    VpuOffload,
+    NativeVector,
+};
+
+struct ScalarOperandRef
+{
+    uint32_t sourceOperandIndex;
+};
+
+struct DecodedArithmeticOp
+{
+    ArithmeticOperation operation;
+    RegIndex destination;
+    RegIndex vectorSource;
+    std::variant<RegIndex, ScalarOperandRef> secondOperand;
+};
+
+struct DecodedMemoryOp
+{
+    MemoryDirection direction;
+    RegIndex dataReg;
+    ScalarOperandRef base;
+    uint16_t elementWidthBits;
+};
+
+struct DecodedVectorOp
+{
+    VectorExecutionClass executionClass;
+    bool masked;
+    std::optional<std::variant<DecodedArithmeticOp, DecodedMemoryOp>> payload;
+};
+```
+
+Los valores del enum corresponden a las cuatro clases de la tabla anterior.
+`payload` existe sólo para `VpuOffload`. Las otras clases conservan sus rutas
+de ejecución CPU; en particular, esta estructura no sustituye la semántica
+de `vsetvli` en el lado CPU.
+
+`masked` conserva la predicación decodificada de la instrucción y se copia a
+`VectorConfig.masked` al construir el comando. No se deduce de los CSR RVV.
+Permite rechazar comandos enmascarados en admisión sin volver a decodificar;
+no activa soporte de máscaras. Para clases sin payload se mantiene neutro.
+
+Los campos `RegIndex` son números arquitectónicos vectoriales entre 0 y 31,
+no índices de las tablas de operandos ni grupos ya dimensionados.
+`ScalarOperandRef.sourceOperandIndex` sí indexa la tabla de fuentes de la
+instrucción; debe ser menor que `numSrcRegs()` y designar un registro entero.
+Execute usa las APIs de operandos de gem5 y el scoreboard para resolverlo,
+sin interpretarlo como un número de registro escalar. Esta referencia no
+contiene aún un `RegVal` capturado.
+
+Decode obtiene la semántica una sola vez a partir de la instrucción
+decodificada y construye el payload. Para el baseline, aritmética implica
+`Add`, `SameWidth` y `NotApplicable`; memoria implica unit-stride,
+`elementWidthBits=32`, un campo y sin fault-only-first. Esos atributos fijos
+no necesitan campos duplicados. Otras operaciones no reciben un payload de
+offload válido.
+
+Cuando puede capturar operandos, Execute lee la configuración RVV y resuelve
+las referencias escalares. A partir de los números vectoriales y LMUL/EMUL
+construye `VectorRegRef`; después forma el payload de `VectorCommand` y añade
+identidad, PC y `requestorId`. Los reintentos reutilizan esa captura. Commit
+no vuelve a leer bits de instrucción para deducir operación o operandos.
 
 ## Minor Execute y Commit
 
@@ -483,8 +626,8 @@ Las transiciones significan lo siguiente:
    conserva la macro en `inFlightInsts`. Mientras falte un registro escalar o
    la instrucción anterior de Minor, no se lee el operando ni se contacta con
    la VPU.
-2. `WAIT_GRANT`: las dependencias escalares están listas. Execute extrae la
-   semántica y los operandos, obtiene un `CommandKey` de
+2. `WAIT_GRANT`: las dependencias escalares están listas. Execute consume la
+   descripción decodificada y captura operandos, obtiene un `CommandKey` de
    `CpuVectorInterface`, construye el `VectorCommand` y envía `requestGrant`.
    Un `stall` no cambia este estado y se vuelve a intentar en un ciclo
    posterior. Un `rejected` es permanente y se convierte en una instrucción
@@ -518,6 +661,68 @@ prepara su estado pendiente antes de invocarlas, para que `accepted` o una
 respuesta inmediata encuentren una identidad válida; si recibe `Retry`,
 conserva el mensaje como no aceptado. El contrato no presupone un ciclo
 intermedio entre entrega y respuesta.
+
+### Estado privado de offload en MinorCPU
+
+`MinorVectorState` es propiedad de Execute y está asociado a una entrada de
+`inFlightInsts`. No forma parte de los tipos compartidos de la VPU:
+
+```cpp
+enum class MinorVectorPhase : uint8_t
+{
+    WaitDependencies,
+    WaitGrant,
+    Dispatched,
+    Accepted,
+    Completed,
+};
+
+struct MinorVectorState
+{
+    MinorDynInstPtr inst;
+    MinorVectorPhase phase;
+    DecodedVectorOp decoded;
+    std::optional<CommandKey> commandKey;
+    std::optional<VectorCommand> command;
+    std::optional<GrantToken> grantToken;
+    std::optional<VectorCompletion> completion;
+};
+```
+
+`inst` mantiene la asociación con la instrucción del pipeline. Execute posee
+este estado; la instrucción no contiene un puntero propietario a sí misma.
+Puede indexarlo por su identidad dinámica y conservar además una asociación
+de `CommandKey` al estado para los callbacks. Ninguna de esas referencias
+CPU se entrega a las unidades vectoriales.
+
+| Fase | Campos y condición |
+| --- | --- |
+| `WaitDependencies` | `inst` y `decoded` válidos; sin comando, clave, token ni finalización. No se han capturado valores escalares. |
+| `WaitGrant` sin token | Clave y comando capturados e inmutables. `Stall` conserva ambos y programa otro intento mientras no se esté drenando. |
+| `WaitGrant` con token | La reserva ya se concedió. Se prepara el estado de despacho y se consume el token; no se vuelve a llamar a `requestGrant`. |
+| `Dispatched` | Clave y comando válidos, esperando `accepted`. El token se consume en la entrega y no queda disponible para un segundo despacho. |
+| `Accepted` | Clave e instrucción retenidas; sin token. Se puede liberar la copia del comando. No se puede descartar por squash o drain. |
+| `Completed` | Clave e instrucción retenidas y una finalización recibida. Minor debe procesar el resultado o fault antes de liberar la asociación. |
+
+La clave de `command`, `grantToken` y `completion`, cuando existan, debe
+coincidir con `commandKey`. En `WaitGrant`, `Rejected` cierra el intento por
+el camino de excepción local de Minor: no se fabrica `VectorCompletion` ni
+se espera una respuesta de una orden no aceptada. La identidad consumida
+no se reutiliza. Un squash previo a tener reserva puede eliminar el estado
+mediante el camino normal de descarte de Minor y su limpieza de dependencias.
+
+La concesión se solicita en commit, cuando ya no existe una instrucción
+anterior capaz de anularla. Una reserva concedida se consume incluso si
+comienza drain. Un comando despachado o aceptado conserva su instrucción hasta
+completar; las instrucciones posteriores sí pueden descartarse. Estas reglas
+deben integrarse en los caminos de descarte de Minor, no sólo en el callback.
+
+Antes de `dispatch`, el estado ya permite recibir `accepted`; antes de admitir
+ejecución, permite recibir `completed`. Al volver de una llamada síncrona no
+se sobrescribe una fase que el callback haya avanzado ni se accede a un estado
+ya liberado. La finalización se procesa una vez: con éxito se retira, con fault
+se actualiza `vstart` y se sigue el camino de excepción. Sólo después se libera
+la asociación con `CommandKey` y la referencia retenida a la instrucción.
 
 ## CpuVectorInterface
 
@@ -1040,14 +1245,44 @@ sigue contando como entrada de la FIFO hasta su finalización.
 
 `drain` detiene la concesión de nuevas reservas, pero permite consumir los
 tokens ya concedidos y terminar comandos aceptados. Minor deja de iniciar
-nuevos offloads; un comando en `WAIT_GRANT` sin token puede quedarse en CPU.
-Las peticiones de admisión válidas durante drain obtienen `Stall`, sin token.
-El emisor debe consumir todo token concedido; el baseline no incorpora una
-operación de cancelación de reservas.
+nuevos offloads y de reintentar `requestGrant`. Las consultas válidas que
+alcancen la admisión durante drain obtienen `Stall`, sin token. El emisor debe
+consumir todo token concedido; el baseline no incorpora cancelación de
+reservas.
+
+### Drain conjunto de MinorCPU y VPU
+
+La coordinación es parte del contrato CPU--VPU. No basta con comprobar que la
+FIFO está vacía ni con dejar indefinidamente un comando en `WAIT_GRANT`:
+
+| Estado al comenzar drain | Acción y condición de cierre |
+| --- | --- |
+| Instrucción sin token y sin despacho | Minor puede descartarla por su mecanismo de vaciado, limpiar sus dependencias y preservar el punto arquitectónico para volver a buscarla al reanudar. No hay trabajo que cancelar en la VPU. |
+| Reserva concedida | Se conserva la instrucción y se consume el token con `dispatch`, aunque ya no se concedan reservas nuevas. |
+| Comando despachado o aceptado | Se protege frente al descarte de instrucciones; se atienden callbacks y se espera a `completed`. |
+| Finalización pendiente de procesar | Minor procesa el éxito o fault antes de liberar el estado. Una excepción no se descarta para acelerar drain. |
+
+Una instrucción no enviada que se vuelva a buscar recibe otra identidad al
+construir su nuevo comando; no reutiliza la anterior. El punto de reanudación
+es el PC arquitectónico que conserva Minor mediante su vaciado normal, no un
+PC elegido por la VPU. Las operaciones que sí fueron aceptadas terminan una
+sola vez y no se vuelven a ejecutar al reanudar.
+
+La integración futura debe extender los criterios de `Execute::drain`,
+`isInbetweenInsts` e `isDrained`, y el descarte de `DrainAllInsts` en
+`src/cpu/minor/execute.cc`. Mientras exista reserva, despacho o aceptación
+sin cierre CPU, no se puede considerar terminada la instrucción ni eliminar
+su estado. Se siguen permitiendo su despacho, finalización y procesamiento
+de fault; se detiene el avance de instrucciones posteriores. Es un contrato
+por implementar, no una propiedad del código actual de Minor.
 
 La VPU está drenada cuando no quedan reservas, entradas FIFO, tareas,
 fragmentos, respuestas ni writebacks pendientes y el backend de memoria
-también ha terminado. Drain no genera `Cancelled` ni descarta respuestas.
+también ha terminado. CPU y VPU sólo están drenadas conjuntamente cuando
+también se cumplen los criterios normales de pipeline y LSQ de Minor, no hay
+`MinorVectorState` pendiente y no quedan callbacks o eventos con trabajo.
+Los eventos de reintento sin trabajo se desprograman. Drain no genera
+`Cancelled` ni descarta respuestas.
 El reset sólo se admite sin ese trabajo pendiente. Un reset activo y la
 cancelación de operaciones de memoria requieren una ampliación posterior.
 
@@ -1133,6 +1368,50 @@ Cada acceso al VRF se asocia localmente a la clave del fragmento y a su papel
 (fuente vectorial, segunda fuente o destino). Las fuentes se leen antes de
 escribir el resultado del fragmento, también cuando coinciden con el destino.
 La ALU no provoca la finalización: ésta espera al `WriteAck` del VRF.
+
+### Estado privado de fragmento y accesos pendientes
+
+`LaneFragmentState` pertenece a la lane receptora. Tiene los siguientes
+campos conceptuales; no se impone un contenedor concreto para almacenarlos:
+
+| Campo | Contenido e invariante |
+| --- | --- |
+| `task` | `LaneTask` aceptado; su `key` identifica esta entrada hasta finalizar. |
+| `phase` | Lectura de operandos, ejecución, escritura o cierre. No se avanza por el mero envío de una petición. |
+| `lhs`, `rhs` | Buffers opcionales de valores de 32 bits. Un buffer presente tiene `elementCount` valores. `rhs` puede proceder del escalar capturado. |
+| `pendingReads` | Claves de lecturas por emitir o esperando respuesta, con su papel de fuente. |
+| `executionAccepted` | Indica que la ALU aceptó el bundle; desde ese momento no se reenvía. |
+| `result` | `ExecutionResult` recibido, retenido hasta preparar y confirmar el writeback. |
+| `writeback` | Clave del acceso de escritura, cuando se haya preparado. Su aceptación no equivale a confirmación. |
+| `completionSent` | Se activa una sola vez tras `WriteAck` y antes de notificar al distribuidor. |
+
+Los buffers se reservan antes de emitir sus lecturas y antes de aceptar el
+bundle en la ALU. Una respuesta puede llegar mientras se esperan otras:
+`lhs` y `rhs` se asocian por clave y papel, nunca por orden de llegada.
+El resultado debe pertenecer al fragmento en ejecución. Tras la confirmación
+de escritura se liberan los buffers y accesos; la entrada se elimina después
+de emitir su única `LaneCompletion`.
+
+Cada emisor de accesos al VRF, lane o VLSU, mantiene `PendingVrfAccess`:
+
+| Campo | Contenido e invariante |
+| --- | --- |
+| `request` | `VrfReadRequest` o `VrfWriteRequest` completo; contiene `VrfAccessKey`, rango, máscara y datos cuando correspondan. |
+| `owner` | `LaneFragmentKey` para la lane, o pareja `(TaskKey, requestId)` para la VLSU. El `TaskKey` coincide con el del acceso. |
+| `role` | Primera fuente, segunda fuente, destino aritmético, datos para store o writeback de carga. Debe coincidir con la dirección del acceso. |
+| `phase` | Preparado para enviar o esperando respuesta. `Retry` conserva la primera fase y todos los campos. |
+
+La entrada y el espacio de respuesta existen antes de invocar al LRF. Se
+prepara la recepción antes de la llamada; si ésta devuelve `Retry`, se
+restablece el estado de no aceptado. Si un callback síncrono ya resolvió el
+acceso, el retorno no lo recrea ni sobrescribe su progreso.
+
+Al recibir `ReadResponse` o `WriteAck`, se comprueba clave, propietario, papel
+y tipo de respuesta, se entrega el resultado al estado propietario y se retira
+la entrada. Un acceso resuelto no se reenvía. La lane sólo puede cerrar un
+fragmento cuando no le quedan entradas pendientes; la VLSU aplica la misma
+regla al elemento activo. No se conserva el acceso hasta finalizar todo el
+comando si su respuesta ya se consumió.
 
 ### Contrato de la ALU del baseline
 
@@ -1364,10 +1643,59 @@ no un `Stall` de ejecución. No se fijan aquí valores concretos del benchmark.
 `LaneRegisterFile`. Devuelve datos, confirmaciones o `retry` a
 `LaneRegisterFile`, que los reenvía al solicitante original.
 
-Recibe lecturas/escrituras ya mapeadas y una clase de solicitante. Devuelve
-grant, datos tras su latencia, confirmación de escritura o retry. Una política
-inicial puede arbitrar round-robin entre lecturas de operandos, writeback de
-lanes, VLSU y SLDU/MASKU.
+El LRF arbitra entre solicitantes y entrega accesos ya mapeados. El banco
+devuelve aceptación, datos tras su latencia o confirmación de escritura. Si
+no puede aceptar, devuelve `Retry` sin efectos. Una política inicial del LRF
+puede arbitrar round-robin entre operandos, writeback y VLSU; SLDU/MASKU siguen
+fuera del baseline.
+
+```cpp
+struct BankReadRequest
+{
+    VrfAccessKey key;
+    uint64_t row;
+    ByteEnable wordByteEnable;
+};
+
+struct BankWriteRequest
+{
+    VrfAccessKey key;
+    uint64_t row;
+    ByteEnable wordByteEnable;
+    ByteBuffer wordData;
+};
+
+struct BankReadResponse
+{
+    VrfAccessKey key;
+    ByteBuffer wordData;
+};
+
+struct BankWriteAck
+{
+    VrfAccessKey key;
+};
+```
+
+Lane y banco están determinados por el objeto receptor. `row` debe caber en
+su almacenamiento; `wordByteEnable` y `wordData` tienen `laneWordBytes`
+entradas. El LRF expande el rango original a posiciones de palabra con ayuda
+del mapper. Los bytes exteriores llevan máscara 0; su dato de escritura es
+irrelevante y puede inicializarse a 0. El banco conserva los bytes con máscara
+0 y devuelve 0 en esas posiciones de una lectura.
+
+Cada acceso del baseline cabe en una palabra, por lo que se conserva
+`VrfAccessKey` sin asignar una segunda identidad interna. El LRF retiene el
+acceso y su mapeo hasta la respuesta: compacta `BankReadResponse.wordData` al
+rango original para construir `ReadResponse`, o convierte `BankWriteAck` en
+`WriteAck`. Sólo confirma después de la escritura efectiva del banco.
+La capacidad para ese retorno se reserva antes de conceder el acceso.
+
+El banco no resuelve registros arquitectónicos ni decide tareas o destinos
+de respuesta globales; siempre responde a su LRF. Una solicitud denegada
+permanece en el emisor original, sin crear una entrada de espera en el banco.
+La latencia concreta y el número de puertos quedan para el modelo temporal;
+estos mensajes sólo fijan datos, propiedad y condición de confirmación.
 
 El banco no incorpora una FIFO de peticiones. El arbitraje del LRF selecciona
 los accesos que pueden usar sus puertos; una petición no concedida permanece
@@ -1619,6 +1947,104 @@ Durante drain se sigue atendiendo traducción, retry y respuestas del trabajo
 aceptado hasta vaciar ese estado. No existe `MemoryResponseStatus::Cancelled`
 en el baseline. La cancelación por reset requiere un contrato posterior.
 
+### Estado privado y propiedad de objetos de gem5
+
+`MemoryTransactionState` es propiedad de `VectorMemoryBackend`; existe una
+entrada por petición lógica aceptada, como máximo una en el baseline:
+
+| Campo | Contenido e invariante |
+| --- | --- |
+| `request` | Copia de `VectorMemoryRequest`; conserva la clave lógica y los metadatos CPU. |
+| `data` | Buffer de `request.size` bytes para reunir la carga o conservar el store. No se publica parcialmente. |
+| `fragments` | Entradas `MemoryFragmentState` que cubren el acceso sin huecos ni solapamientos. |
+| `nextFragment` | Fragmento que puede enviarse a memoria una vez traducido. No hay dos fragmentos físicos enviados sin respuesta a la vez. |
+| `pendingTranslations` | Traducciones iniciadas cuyos callbacks todavía no terminaron. Impide liberar la transacción antes de tiempo. |
+| `fault` | Primer fallo terminal registrado, asociado a su dirección virtual y elemento lógico. Impide emitir fragmentos posteriores. |
+| `responseSent` | Marca de respuesta lógica emitida una sola vez, después de cerrar todo el trabajo físico. |
+
+Cada `MemoryFragmentState` contiene:
+
+| Campo | Contenido e invariante |
+| --- | --- |
+| `offset`, `size` | Intervalo no vacío dentro del buffer lógico; la suma no desborda ni excede el tamaño de la petición lógica. |
+| `virtualAddress` | Dirección del fragmento derivada de la petición original con el ancho de dirección del objetivo. |
+| `physicalAddress` | Opcional; sólo existe después de una traducción correcta. |
+| `phase` | Pendiente de traducción, traduciendo, listo para enviar, esperando retry del puerto, esperando respuesta, terminado o fallido. |
+| `request` | Referencia gestionada al `Request` de gem5 mientras sea necesaria para traducción o paquete. |
+| `retryPacket` | Paquete todavía no aceptado por el puerto, cuando se está preparando el envío o esperando retry. |
+| `fault` | Causa local del fallo; permite construir el `FaultInfo` de la transacción. |
+
+Los callbacks de traducción y el estado de retorno del paquete identifican la
+transacción y el índice de fragmento. Son referencias privadas del backend;
+no crean nuevos `requestId` ni cruzan hacia las lanes. La transacción y sus
+entradas mantienen direcciones estables mientras existan callbacks o paquetes
+que las referencien. Un `Packet::SenderState` propio puede transportar esa
+correlación; no debe ser un puntero a una instrucción CPU.
+
+| Momento | Propiedad y liberación |
+| --- | --- |
+| Preparación/traducción | El backend conserva la transacción, el buffer y las referencias `RequestPtr`. No libera el estado de una traducción pendiente. |
+| Paquete construido, aún no enviado | El backend posee el paquete y el estado de retorno que ha creado; prepara ambos antes de llamar al puerto. |
+| `sendTimingReq` devuelve falso | El backend conserva el mismo paquete en espera. Sólo puede reenviarlo después de `recvReqRetry`; si vuelve a fallar, espera otro aviso. |
+| `sendTimingReq` devuelve verdadero | El paquete está en el camino de memoria. El backend no lo modifica, reenvía ni destruye; conserva el estado y buffers que todavía puedan estar referenciados. |
+| `recvTimingResp` acepta la respuesta | El backend recupera la correlación, copia los datos o registra el fallo, retira su estado de retorno y libera el paquete recibido una sola vez. |
+| Cierre lógico | Sin callbacks de traducción ni paquetes pendientes, se construye la respuesta lógica y se entrega a la VLSU. Después se libera la transacción y sus referencias gestionadas. |
+
+`RequestPtr` se libera soltando la referencia gestionada, no mediante un
+`delete` independiente. Los buffers propios de paquete y de transacción no
+deben liberar dos veces la misma memoria: la adaptación debe usar copias o
+expresar un único propietario. Si un paquete referencia bytes del buffer
+lógico, éste vive hasta completar el acceso físico. La respuesta lógica
+entregada a la VLSU conserva su propia copia conforme al contrato de mensajes.
+
+Al enviar se reserva recepción suficiente para el único fragmento físico en
+curso. El baseline acepta su respuesta sin introducir un segundo protocolo
+de backpressure de respuestas. En ningún caso se descarta una respuesta por
+falta de espacio. Los estados se preparan antes de llamadas que puedan
+invocar callbacks; el retorno no sobrescribe una transición ya completada.
+
+Ante un fallo de traducción, no se envía el paquete correspondiente y se
+espera a cerrar los callbacks ya iniciados. Los paquetes preparados pero no
+enviados pueden liberarse al cerrar el fallo; los aceptados por memoria nunca
+se destruyen mientras estén en vuelo. La respuesta lógica `Fault` sólo sale
+cuando se cumplen estas condiciones. Drain usa el mismo cierre, sin cancelar
+traducciones ni paquetes aceptados.
+
+## Validación por tipo y estado de implementación
+
+Un helper local no sustituye la validación con contexto. Los productores
+construyen mensajes válidos; los receptores comprueban las invariantes de su
+frontera y que las respuestas correspondan a trabajo pendiente.
+
+| Tipo o familia | Comprobación local | Comprobación con contexto y responsable | Incumplimiento |
+| --- | --- | --- | --- |
+| `VpuParameters`, `VrfGeometry` | Capacidades positivas, LMUL válidos y sin duplicados | `VectorEngine`: geometría, tamaños de buffers y coincidencia con VLEN de CPU | Error de configuración antes de ejecutar. |
+| `DecodedVectorOp`, `ScalarOperandRef` | Clase y payload coherentes; registros vectoriales en rango | Decode/Execute: índice dentro de la tabla de fuentes, clase escalar y dependencias listas | Error interno si el descriptor CPU está mal formado; una instrucción no soportada sigue el camino de rechazo definido. |
+| `VectorConfig` | LMUL y SEW representables; rango vacío permitido | Interfaz valida estructura; admisión comprueba `supportedLmuls`, SEW=32 y `VLMAX` | `InvalidVectorConfig` o `UnsupportedConfiguration`, sin reserva. |
+| `VectorRegRef`, `ByteRange` | Límites de registros, rango no vacío y sin overflow | Constructor del comando/interfaz: alineación y capacidad LMUL/EMUL; productor de tarea/acceso: rango efectivo | `InvalidRegisterGroup` en admisión; error interno si llega a una unidad. |
+| `VectorCommand` | Identidad, payload y metadatos válidos | Interfaz valida estructura; frontend valida soporte, duplicados y capacidad | `Rejected(reason)` para descriptor inválido/no soportado; `Stall` sólo para indisponibilidad temporal. |
+| `GrantToken`, `GrantResult` | Combinaciones de estado, token y motivo coherentes | Admisión: reserva existente, descriptor idéntico y consumo único | Error interno al consumir un token inválido o repetido. |
+| `UnitTask`, tareas especializadas | Clave, unidad, elementos y payload coherentes | Sequencer/productor y unidad receptora: pertenencia al comando, rango `[vstart, vl)` y equivalencia con rangos de bytes | Error interno; no es una nueva admisión. |
+| `LaneTask`, mensajes de ALU | Clave, tamaños de operandos y rango coherentes | Distribuidor/lane: propiedad según mapper, cobertura y asociación con tarea/fragmento pendiente | Error interno. |
+| Accesos VRF y banco | Máscaras, tamaños, filas y claves válidos | Emisor/LRF/banco: capacidad efectiva, mapeo, propietario y respuesta del acceso aceptado | Error interno; falta de capacidad produce `Retry` antes de efectos. |
+| Peticiones y respuestas de memoria | Clave, dirección, tamaño y buffers coherentes | VLSU/backend: asociación lógica/física, fragmentos y traducción | Descriptor interno inválido: error interno; fallo de traducción/acceso: respuesta `Fault`. |
+| `LaneCompletion`, `UnitCompletion` | Estado y fault compatibles | Distribuidor/sequencer: identidad pendiente y todas las escrituras o peticiones cerradas | Error interno ante duplicados o cierre prematuro. |
+| `VectorCompletion`, `FaultInfo` | Combinaciones de la tabla CPU--VPU; dirección e índice obligatorios en `MemoryFault` del baseline | Sequencer/interfaz/Minor: comando aceptado, elemento dentro del rango y `finalVstart` igual al índice causante | Error interno del protocolo; un fault válido se entrega al programa por Minor. |
+| Estados privados | Campos válidos para su fase | Módulo propietario: transiciones, propiedad de objetos y ausencia de trabajo antes de liberar | Error interno; no se convierte en excepción arquitectónica. |
+
+Los tipos nuevos de configuración, Decode, estado privado, bancos y memoria
+son especificaciones documentales pendientes de implementación. Los tipos
+básicos existentes tienen algunos helpers locales; no incluyen todavía todos
+los validadores de esta matriz ni el comportamiento de los módulos.
+
+Hay un desajuste pendiente de corregir al implementar
+`interface/vector_completion.hh`: su comentario presenta dirección e índice
+del fault de memoria como opcionales, mientras el contrato del baseline los
+exige. Los campos pueden seguir siendo `std::optional` para otros usos, pero
+el validador debe exigirlos en `MemoryFault`. También debe excluir los estados
+reservados de la finalización normal del baseline. Esta revisión registra el
+desajuste y no modifica la cabecera.
+
 ## SLDU y MASKU
 
 Estos módulos no son necesarios para la secuencia funcional inicial. Pueden
@@ -1728,6 +2154,19 @@ resultados de simulación.
 | Retry | No cambia la identidad ni transfiere propiedad. Tras aceptación, se espera respuesta; no se repite una operación aceptada. |
 | Drain | No se conceden reservas nuevas; se consumen las ya concedidas y terminan todos los accesos aceptados, sin `Cancelled`. |
 
+Los siguientes recorridos cierran la integración y los estados privados:
+
+| Caso | Recorrido y condición que debe poder verificarse |
+| --- | --- |
+| Dos fuentes y writeback | Dos `PendingVrfAccess` con papeles distintos pueden responder en cualquier orden; la ALU espera ambos operandos. El acceso de destino tiene su propia clave y sólo su `WriteAck` permite finalizar. |
+| Retry interno y aceptación | Un solo evento del emisor reintenta el mismo mensaje en el ciclo siguiente. Tras aceptación no hay reenvío; la respuesta reactiva el trabajo habilitado. |
+| Retry del puerto | Un envío fallido conserva el paquete y espera `recvReqRetry`. No se activa el sondeo interno para ese paquete ni se duplica la petición de la VLSU. |
+| Traducción y fragmentación | Los fragmentos cubren el buffer lógico una sola vez. Sus callbacks mantienen estado válido; un fault impide emitir nuevos fragmentos y espera al cierre de los ya iniciados antes de responder. |
+| Drain antes del grant | La instrucción no enviada se descarta mediante Minor y conserva su punto de reanudación. No queda un `WAIT_GRANT` que impida vaciar el pipeline ni se reutiliza su identidad. |
+| Drain después del grant | El token se consume aunque la admisión ya esté drenando; la instrucción queda protegida hasta completar. No se abandona una reserva. |
+| Drain después de accepted | Se siguen atendiendo respuestas y writebacks, Minor procesa la finalización o fault y sólo después libera el estado. El criterio conjunto incluye LSQ, pipeline y VPU. |
+| Callback inmediato | La asociación y recepción existen antes de la llamada. El retorno no sobrescribe la fase avanzada por el callback, no recrea accesos resueltos ni usa estado liberado. |
+
 ### Decisiones y alternativas descartadas en este hito
 
 - Un fragmento contiguo por `LaneTask`, frente a extender `ElementRange` para
@@ -1740,6 +2179,14 @@ resultados de simulación.
 - Acceso directo VLSU--LRF, frente a añadir transporte de cargas por las lanes.
 - Estado de tareas y accesos pendientes, frente a activar ROB, renombramiento
   o readiness. No se prescribe aún una microarquitectura temporal avanzada.
+- Configuración global inmutable, frente a copias modificables por módulo.
+  Los valores concretos de ejecución no se deducen de los enums de RVV.
+- Semántica conservada en CPU desde Decode, frente a reinterpretar opcodes
+  en Commit o entregar objetos de instrucción a la VPU.
+- Evaluación funcional tras retry interno y aviso del puerto para retry de
+  memoria, sin depender de actividad escalar ajena ni sondear el puerto.
+- Descartar mediante Minor sólo instrucciones sin reserva ni despacho al
+  drenar; las reservadas o aceptadas terminan y conservan su asociación CPU.
 
 ## Extensión futura: renombramiento y ROB
 

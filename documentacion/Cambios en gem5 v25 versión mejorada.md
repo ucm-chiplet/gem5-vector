@@ -37,6 +37,33 @@ los módulos del frontend y backend aún son armazones vacíos. Las nuevas
 estructuras de tareas, fragmentos, VRF y memoria son contratos documentales
 pendientes de implementación. Esta revisión no modifica el código.
 
+### Configuración y propietarios del estado
+
+`VectorEngine` obtiene los parámetros del SimObject, construye
+`VpuParameters`, valida geometría, LMUL admitidos y capacidades y proporciona
+vistas inmutables a sus módulos. `VectorConfig` sigue siendo el estado RVV
+capturado por instrucción; no se usa como configuración del hardware.
+
+| Propietario | Estructura o contrato | Responsabilidad |
+| --- | --- | --- |
+| `VectorEngine` | `VpuParameters` | Geometría compartida, capacidades en unidades explícitas y compatibilidad con Minor. |
+| Decode/Execute de Minor | `DecodedVectorOp`, `MinorVectorState` | Conservar semántica decodificada, resolver operandos y asociar comando e instrucción hasta el cierre CPU. |
+| Lane | `LaneFragmentState`, `PendingVrfAccess` | Relacionar lecturas de ambas fuentes, ejecución y writeback sin depender del orden de respuestas. |
+| LRF y banco local | Mensajes `BankReadRequest`, `BankWriteRequest` y respuestas | El LRF mapea y arbitra; el banco aplica accesos a filas ya resueltas. |
+| VLSU | `PendingVrfAccess` del elemento activo | Asociar lectura de store o escritura de carga con la petición lógica. |
+| Backend de memoria | `MemoryTransactionState`, `MemoryFragmentState` | Traducción, fragmentación, paquetes, retry, buffers y liberación de objetos de gem5. |
+
+Los campos, invariantes y validadores se detallan en [[Interfaces propuestas]].
+Las estructuras privadas no requieren contenedores ni módulos nuevos por
+defecto. La implementación elegirá sus contenedores manteniendo esas reglas.
+
+Un mensaje interno que recibe `Retry` conserva identidad y datos; su emisor
+programa una evaluación para el siguiente ciclo, con un solo evento de
+reintento pendiente. Tras aceptación espera respuesta, y los callbacks
+reactivan el trabajo habilitado. Un envío timing rechazado por el puerto de
+memoria espera específicamente `recvReqRetry`; no se sondea cada ciclo.
+Estas reglas aseguran progreso funcional sin fijar rendimiento.
+
 ### Raíces de código del plan
 
 Para distinguir de forma explícita el origen y el destino del código, el
@@ -78,6 +105,12 @@ inst->isVector()
 La modificación debe mantener el comportamiento nativo de gem5 cuando
 `vectorOffloadEnabled = false`.
 
+Decode conserva la clasificación y semántica en `DecodedVectorOp`, asociado
+a la macro. Las referencias vectoriales son números arquitectónicos; las
+escalares son índices de operandos fuente que Execute resuelve mediante las
+APIs de gem5 cuando están listos. Esta representación sólo vive en CPU.
+Commit construye o entrega el comando capturado sin decodificar de nuevo.
+
 ### Archivos implicados y reutilización
 
 | Archivo | Acción | Vitruvius necesario |
@@ -102,6 +135,13 @@ Esto reutiliza conceptualmente el mecanismo de Vitruvius en
 `gem5_VPU/src/cpu/minor/execute.cc`: las instrucciones vectoriales se mantienen como
 instrucciones en vuelo del pipeline escalar, pero su ejecución se delega a la
 VPU.
+
+Execute conserva `MinorVectorState`: instrucción, fase, descripción
+decodificada, clave, comando capturado, token no consumido y finalización
+pendiente, según la fase. `Stall` no recaptura operandos ni cambia identidad.
+Las asociaciones CPU no cruzan hacia la VPU. El estado se prepara antes de
+llamadas que puedan producir callbacks síncronos, y sólo se libera después
+de procesar el resultado o fault.
 
 ### Archivos implicados y reutilización
 
@@ -147,6 +187,24 @@ Las instrucciones `vsetvl`/ `vsetvli` se procesan en el lado CPU para
 actualizar el estado RVV 1.0 de gem5. La VPU recibe después el valor efectivo
 de `vl`, `vstart`, `SEW`, `LMUL`, máscara y políticas de tail y mask. Recibe
 estos campos ya normalizados y no vuelve a decodificar `vtype`.
+
+### Coordinación de drain con Minor
+
+Drain detiene los grants nuevos y los reintentos de admisión. Una instrucción
+sin token ni despacho puede descartarse mediante el vaciado normal de Minor,
+limpiando dependencias y conservando el punto arquitectónico para volver a
+buscarla al reanudar. Su identidad anterior no se reutiliza.
+
+Una reserva concedida se consume y un comando despachado o aceptado debe
+terminar. Se protege su estado frente al descarte de instrucciones, se siguen
+atendiendo callbacks y se procesa también cualquier fault terminal. No se
+genera `Cancelled` ni se reejecuta al reanudar un comando ya completado.
+
+La implementación deberá coordinar `Execute::drain`, `isInbetweenInsts`,
+`isDrained` y `DrainAllInsts` con el estado de offload. El criterio conjunto
+incluye pipeline y LSQ de Minor, reservas, tareas, respuestas, writebacks y
+callbacks/eventos con trabajo de la VPU. No basta con vaciar `CommandQueue`.
+Los detalles y la tabla por fase están en [[Interfaces propuestas]].
 
 ### Archivos implicados y reutilización
 
@@ -450,6 +508,12 @@ Cada lane convierte sus operandos a un `ExecutionBundle` de valores de 32 bits
 y recibe un `ExecutionResult` antes del writeback. No se fijan en esta fase
 las latencias o el throughput de la ALU.
 
+`LaneFragmentState` conserva operandos, fase de ejecución y resultado hasta
+el writeback. `PendingVrfAccess` relaciona cada acceso con su fragmento y su
+papel: primera fuente, segunda fuente o destino. Las dos lecturas se asocian
+por identidad aunque sus respuestas cambien de orden. Se reserva recepción
+antes de emitir; la finalización requiere consumir el `WriteAck`.
+
 El número de lanes debe cambiar el paralelismo real y no únicamente la cantidad
 de elementos calculados en una llamada al datapath.
 
@@ -486,6 +550,11 @@ Las colas de operandos y writeback pertenecen al camino de ejecución de cada
 lane. Si un acceso pierde el arbitraje, el solicitante lo mantiene pendiente
 hasta obtener concesión; el banco no encola la petición. Antes de emitir una
 lectura se comprueba que su cola de operandos pueda recibir la respuesta.
+La frontera LRF--banco conserva `VrfAccessKey`, fila, máscara de palabra y
+datos de escritura. El LRF expande o compacta el rango original y recibe
+`BankReadResponse` o `BankWriteAck`; el banco no reconstruye grupos vectoriales
+ni añade una FIFO. Los formatos se definen en [[Interfaces propuestas]].
+
 Esta organización sigue el
 [VRF de Ara](https://pulp-platform.github.io/ara/modules/lane/vrf.html).
 
@@ -546,6 +615,16 @@ La dirección y el índice causantes llegan al sequencer, que devuelve
 identidad o protocolo se diagnostican como errores del simulador. Drain no
 cancela accesos admitidos. Cargas solapadas, cancelación activa y chaining
 requieren una ampliación posterior del estado de seguimiento.
+
+`MemoryTransactionState` conserva la petición lógica, buffer, fragmentos,
+traducciones pendientes y fallo terminal. Cada `MemoryFragmentState` conserva
+direcciones, rango y fase. Las referencias usadas por callbacks y paquetes
+permanecen válidas hasta cerrar el acceso. Un paquete no aceptado sigue
+perteneciendo al backend; uno aceptado no se modifica ni se destruye en vuelo.
+La respuesta permite consumir datos, retirar el estado de retorno y liberar
+el paquete. La transacción se libera sólo tras cerrar los callbacks y emitir
+la única respuesta lógica. La tabla de propiedad está en
+[[Interfaces propuestas]].
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
@@ -624,22 +703,28 @@ bytes.
 La primera etapa es documental; las siguientes requieren sus propuestas de
 código y aprobación correspondientes. No se implementan pruebas por defecto.
 
-1. Cerrar los contratos de tareas especializadas, fragmentos, finalizaciones,
-   accesos al VRF, geometría y mensajes de memoria en [[Interfaces propuestas]].
-2. Completar validación de los tipos básicos existentes y definir los tipos
-   pendientes, sin activar renombramiento, ROB ni readiness.
+1. Usar los contratos de [[Interfaces propuestas]]: configuración global,
+   representación CPU, tareas, mensajes, estados privados y reglas de progreso
+   y drain. Las estructuras documentadas no se consideran ya implementadas.
+2. Implementar `VpuParameters` y los tipos pendientes; completar validadores
+   según su matriz de responsabilidades. Alinear el comentario y validación de
+   `VectorCompletion` con los campos obligatorios de `MemoryFault`.
 3. Implementar identidad, reservas, FIFO y protocolo
-   `requestGrant`/`dispatch`/`accepted`/`completed`, incluido drain.
-4. Integrar clasificación y estado de offload en MinorCPU, manteniendo
-   `vsetvli` en CPU y la ruta nativa cuando se deshabilite el coprocesador.
+   `requestGrant`/`dispatch`/`accepted`/`completed`. Preparar reactivación por
+   eventos y cierre de trabajo pendiente durante drain.
+4. Integrar `DecodedVectorOp` y `MinorVectorState`, con `vsetvli` en CPU
+   y la ruta nativa con offload deshabilitado. Coordinar descarte, callbacks,
+   faults y drain de Minor con el frontend antes de ejecutar comandos.
 5. Implementar `AraSequencer`, una tarea por comando no vacío y terminación
    inmediata de rangos vacíos.
-6. Implementar geometría compartida, `AddressMapper`, VRF por lane y accesos
-   identificados con lectura, escritura, confirmación y retry.
+6. Implementar geometría compartida, `AddressMapper`, VRF por lane y contrato
+   LRF--banco, con lecturas, escrituras, confirmaciones y retry identificados.
 7. Implementar `TaskDistributor`, fragmentos contiguos, ALU de 32 bits y
-   agregación de `LaneCompletion` después de los writebacks.
+   agregación de `LaneCompletion` después de los writebacks. Usar
+   `LaneFragmentState` y `PendingVrfAccess` para correlacionar los operandos.
 8. Implementar VLSU y backend de memoria con un elemento en curso, acceso
-   directo al LRF, traducción, fragmentación física, retry y faults.
+   directo al LRF, traducción, fragmentación física, retry y faults. Aplicar
+   las reglas de propiedad de transacciones, fragmentos, paquetes y buffers.
 9. Validar el baseline SE con la secuencia y las pruebas definidas por el
    equipo humano; no evaluar rendimiento a partir del modelo funcional.
 10. Tras terminar el baseline y con aprobación específica, ampliar el modelo
