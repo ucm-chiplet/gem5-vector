@@ -50,6 +50,8 @@
 #include "cpu/minor/activity.hh"
 #include "cpu/minor/stats.hh"
 #include "cpu/simple_thread.hh"
+#include "cpu/vector_engine/interface/cpu_vector_interface.hh"
+#include "cpu/vector_engine/vector_engine.hh"
 #include "enums/ThreadPolicy.hh"
 #include "params/BaseMinorCPU.hh"
 
@@ -205,6 +207,18 @@ class MinorCPU : public BaseCPU
      *  enumeration Pipeline::StageId */
     void wakeupOnEvent(unsigned int stage_id);
     EventFunctionWrapper *fetchEventWrapper;
+
+  protected:
+    /**  Whether supported vector instructions may be offloaded to a VPU. */
+    bool vectorOffloadEnabledFlag;
+    vector_engine::VpuCommandEndpoint *vectorEngine;
+
+  public:
+    bool
+    isVectorOffloadEnabled() const
+    {
+        return vectorOffloadEnabledFlag && vectorEngine != nullptr;
+    }
 };
 
 } // namespace gem5

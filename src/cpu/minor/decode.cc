@@ -49,6 +49,81 @@ namespace gem5
 namespace minor
 {
 
+DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
+{
+    DecodedVectorOp decoded;
+    // -TODO falta poner registros numerados de 0 a 31
+
+    if (!static_inst->isVector()) {
+        decoded.executionClass = VectorExecutionClass::CpuScalar;
+        return decoded;
+    }
+    if (static_inst->opClass() == OpClass::SimdConfig) {
+        decoded.executionClass = VectorExecutionClass::CpuVectorConfig;
+        return decoded;
+    }
+
+    // -TODO temporal mientras solo tenemos estas 4 instrucciones definidas.
+    const std::string name = static_inst->getName();
+    const bool is_vadd_vv = name == "vadd_vv";
+    const bool is_vadd_vx = name == "vadd_vx";
+    const bool is_vle32 = name == "vle32_v";
+    const bool is_vse32 = name == "vse32_v";
+
+    if ((!is_vadd_vv && !is_vadd_vx && !is_vle32 && !is_vse32) ||
+        !cpu.isVectorOffloadEnabled()) {
+        decoded.executionClass = VectorExecutionClass::NativeVector;
+        return decoded;
+    }
+
+    decoded.executionClass = VectorExecutionClass::VpuOffload;
+    if(static_inst->isMemRef()) {
+        DecodedMemoryOp mem_op;
+        mem_op.elementWidthBits = 32; // Fijo temporalmente por vle32/vse32
+
+        if (static_inst->isLoad()) {
+            mem_op.direction = vector_engine::MemoryDirection::Load;
+            mem_op.dataReg = static_inst->destRegIdx(0).index();
+            mem_op.base.sourceOperandIndex = 0; // vle32.v dest (src)
+        } else if (static_inst->isStore()) {
+            mem_op.direction = vector_engine::MemoryDirection::Store;
+            if (static_inst->srcRegIdx(0).classValue() == IntRegClass) { // Para asegurar que el primer operando es el registro de datos (vs2) y no el registro base (rs1)
+                mem_op.base.sourceOperandIndex = 0;
+                mem_op.dataReg = static_inst->srcRegIdx(1).index();
+            } else{
+                mem_op.base.sourceOperandIndex = 1;
+                mem_op.dataReg = static_inst->srcRegIdx(0).index();
+            }
+        }
+
+        decoded.payload = mem_op;
+    } else {
+        DecodedArithmeticOp arith_op;
+        arith_op.operation = vector_engine::ArithmeticOperation::Add; // De momento fijo al solo soportar vadd dentro de aritmeticas
+
+        /* Extraemos el índice arquitectónico
+         * del destino (vd) y el primer operando. */
+        arith_op.destination = static_inst->destRegIdx(0).index();
+        arith_op.vectorSource = (static_inst->srcRegIdx(0).classValue()==VecRegClass)?static_inst->srcRegIdx(0).index():static_inst->srcRegIdx(1).index();
+
+        if (is_vadd_vv) {
+            // vv: el segundo operando es otro registro vectorial (vs1).
+            arith_op.secondOperand = static_inst->srcRegIdx(1).index();
+        } else if (is_vadd_vx) {
+            // vx: el segundo operando es un escalar (rs1).
+            ScalarOperandRef scal_ref;
+            scal_ref.sourceOperandIndex =
+                (static_inst->srcRegIdx(0).classValue() == VecRegClass)
+                    ? 1
+                    : 0; // El segundo operando es el que no es vectorial (rs1)
+            arith_op.secondOperand = scal_ref;
+        }
+
+        decoded.payload = arith_op;
+    }
+    return decoded;
+}
+
 Decode::Decode(const std::string &name,
     MinorCPU &cpu_,
     const BaseMinorCPUParams &params,
@@ -162,6 +237,13 @@ Decode::evaluate()
                 StaticInstPtr static_inst = inst->staticInst;
                 /* Static inst of a macro-op above the output_inst */
                 StaticInstPtr parent_static_inst = NULL;
+                inst->decodedVectorOp = decodeVectorOp(static_inst);
+                DPRINTF(Decode, "Decoded vector instruction: %s as %s\n",
+                        *inst,
+                        inst->decodedVectorOp.executionClass ==
+                                VectorExecutionClass::VpuOffload
+                            ? "VPU offload"
+                            : "Other");
                 MinorDynInstPtr output_inst = inst;
 
                 auto *dec_ptr =
@@ -173,7 +255,11 @@ Decode::evaluate()
 
                     decode_info.inputIndex++;
                     decode_info.inMacroop = false;
-                } else if (static_inst->isMacroop()) {
+                } else if (static_inst->isMacroop() &&
+                           !(inst->decodedVectorOp.executionClass ==
+                             VectorExecutionClass::VpuOffload)) {
+                    // Las únicas instrucciones que no se descomponen son
+                    // las que pasamos a la VPU
                     /* Generate a new micro-op */
                     StaticInstPtr static_micro_inst;
 
