@@ -58,6 +58,7 @@
 #include "cpu/timing_expr.hh"
 #include "sim/faults.hh"
 #include "sim/insttracer.hh"
+#include "vector_types.hh"
 
 namespace gem5
 {
@@ -191,6 +192,9 @@ class MinorDynInst : public RefCounted
     /** Predicted branch target */
     std::unique_ptr<PCStateBase> predictedTarget;
 
+    /**  Decoded vector operation */
+    DecodedVectorOp decodedVectorOp;
+
     /** Fields only set during execution */
 
     /** FU this instruction is issued to */
@@ -282,6 +286,7 @@ class MinorDynInst : public RefCounted
     void setMemAccPredicate(bool val) { memAccPredicate = val; }
 
     ~MinorDynInst();
+  
 };
 
 /** Print a summary of the instruction */

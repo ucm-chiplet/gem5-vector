@@ -47,10 +47,13 @@
 namespace gem5
 {
 
-MinorCPU::MinorCPU(const BaseMinorCPUParams &params) :
-    BaseCPU(params),
-    threadPolicy(params.threadPolicy),
-    stats(this)
+MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
+    : BaseCPU(params),
+      threadPolicy(params.threadPolicy),
+      stats(this),
+      vectorOffloadEnabledFlag(params.vectorOffloadEnabled),
+      vectorEngine(static_cast<vector_engine::VpuCommandEndpoint *>(
+          params.vectorEngine))
 {
     /* This is only written for one thread at the moment */
     minor::MinorThread *thread;

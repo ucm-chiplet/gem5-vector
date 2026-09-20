@@ -160,6 +160,9 @@ class Scoreboard : public Named
         const std::vector<bool> *cant_forward_from_fu_indices,
         Cycles now, ThreadContext *thread_context);
 
+    bool canVPUInstOffload(MinorDynInstPtr inst, Cycles now,
+                           ThreadContext *thread_context);
+
     /** MinorTraceIF interface */
     void minorTrace() const;
 };

@@ -44,6 +44,7 @@
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/lsq.hh"
 #include "cpu/op_class.hh"
+#include "cpu/vector_engine/interface/vector_command.hh"
 #include "debug/Activity.hh"
 #include "debug/Branch.hh"
 #include "debug/Drain.hh"
@@ -595,6 +596,47 @@ Execute::issue(ThreadID thread_id)
             /* Try FU from 0 each instruction */
             fu_index = 0;
 
+            /** As if it's an VPUOfload instruction
+             * it doesn't have to pass through an VPU, thus we don't
+             * have to check whether there is one available.
+             * Fuera de búcle por mayor control y eficiencia*/
+            if (inst->decodedVectorOp.executionClass ==
+                    VectorExecutionClass::VpuOffload &&
+                cpu.isVectorOffloadEnabled()) {
+                DPRINTF(MinorExecute,
+                        "Skipping issue stage as the instruction %s is "
+                        "VPU Offload\n",
+                        *inst);
+                /** Issue VPUOffload insts. to noCostFUIndex as we are not
+                 * trying to model latency in issue stage for the moment
+                 */
+
+                // -TODO No es necesario comprobar aquí dependencias ya que
+                // hasta que no llegue al head of inFlightInst, que es cuando
+                // se mandaría a la VPU
+
+                fu_index = noCostFUIndex;
+                cpu.activityRecorder->activity();
+
+                scoreboard[thread_id].markupInstDests(
+                    inst, cpu.curCycle() + Cycles(0),
+                    cpu.getContext(thread_id), false);
+
+                inst->fuIndex = noCostFUIndex;
+                inst->extraCommitDelay = Cycles(0);
+                inst->extraCommitDelayExpr = NULL;
+
+                MinorVectorState vector_state;
+                vector_state.inst = inst;
+                vector_state.decoded = inst->decodedVectorOp;
+                vector_state.phase = MinorVectorPhase::WaitDependencies;
+
+                QueuedInst fu_inst(inst);
+                thread.inFlightInsts->push(fu_inst);
+                thread.vpuOffloadStates->push(vector_state);
+
+                issued = true;
+            }
             /* Try and issue a single instruction stepping through the
              *  available FUs */
             do {
@@ -979,6 +1021,75 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
         inst->fault->invoke(thread, NULL);
 
         tryToBranch(inst, fault, branch);
+
+    } else if (inst->decodedVectorOp.executionClass ==
+                   VectorExecutionClass::VpuOffload &&
+               cpu.isVectorOffloadEnabled()) {
+        /*
+         * 2. Intercepción VPU Offload.
+         * Todas las instrucciones vectoriales (vadd, vle, vse...) entran aquí.
+         * Evitamos que las de memoria caigan al LSQ escalar y que vayan a
+         * tc->execute().
+         */
+        DPRINTF(MinorExecute, "Trying to commit VPU Offload inst: %s\n",
+                *inst);
+
+        completed_inst = false;
+
+        ExecuteThreadInfo &ex_info = executeInfo[thread_id];
+        MinorVectorState *vec_state = &ex_info.vpuOffloadStates->front();
+
+        // Por precaución, comprobamos que la instrucción que estamos
+        // intentando despachar es la misma que la que está en el head de
+        // vpuOffloadStates
+        assert(!ex_info.vpuOffloadStates->empty() &&
+               ex_info.vpuOffloadStates->front().inst->id.execSeqNum ==
+                   inst->id.execSeqNum);
+
+        switch (vec_state->phase) {
+            case MinorVectorPhase::WaitDependencies:
+                if (scoreboard[thread_id].canVPUInstOffload(
+                        inst, cpu.curCycle(), cpu.getContext(thread_id))) {
+                    // -TODO ask CpuVectorInterface for commandKey
+                    /**
+                     * vec_state->commandKey = requestCommandKey()
+                     * VectorCommand vec_command;
+                     * Rellenamos vec_command;
+                     * vec_state->command = vec_command;*/
+                    // Avanzamos a WaitGrant
+                    vec_state->phase = MinorVectorPhase::WaitGrant;
+                }
+                break;
+            case MinorVectorPhase::WaitGrant:
+                /**
+                 * CpuVectorInterface::requestGrant(command)
+                 * Si stall, mantenemos aquí, si grantend, guardamos
+                 * GrantToken, hacemos dispatch de la instrucción y avanzamos a
+                 * Dispatched vec_state->phase = (res==granted) ?
+                 * MinorVectorPhase::Dispatched : MinorVectorPhase::WaitGrant;
+                 */
+                break;
+            case MinorVectorPhase::Dispatched:
+                /**
+                 * CpuVectorInterface::dispatch(grantToken, command), se
+                 * empujan los datos a la VPU -TODO no avanza a accepted aún?
+                 * Donde se queda?, porque sino podría volverse a dispatchear
+                 */
+                break;
+            case MinorVectorPhase::Accepted:
+                /**
+                 * Se espera la respuesta final del comando
+                 */
+                break;
+            case MinorVectorPhase::Completed:
+                /**
+                 * Se gestionan excepciones, actualizas registros escalares en
+                 * caso de que sea necesario, borras de inFlightInst...
+                 */
+                completed_inst = true;
+                break;
+        }
+
     } else if (inst->staticInst->isMemRef()) {
         /* Memory accesses are executed in two parts:
          *  executeMemRefInst -- calculates the EA and issues the access
@@ -1019,14 +1130,13 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
         }
         completed_mem_issue = completed_inst;
     } else if (inst->isInst() && inst->staticInst->isFullMemBarrier() &&
-        !lsq.canPushIntoStoreBuffer())
-    {
+               !lsq.canPushIntoStoreBuffer()) {
         DPRINTF(MinorExecute, "Can't commit data barrier inst: %s yet as"
             " there isn't space in the store buffer\n", *inst);
 
         completed_inst = false;
-    } else if (inst->isInst() && inst->staticInst->isQuiesce()
-            && !branch.isBubble()){
+    } else if (inst->isInst() && inst->staticInst->isQuiesce() &&
+               !branch.isBubble()) {
         /* This instruction can suspend, need to be able to communicate
          * backwards, so no other branches may evaluate this cycle*/
         completed_inst = false;
@@ -1156,6 +1266,15 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
         }
 
         QueuedInst *head_inflight_inst = &(ex_info.inFlightInsts->front());
+        /** To keep track of the VPUOffload instructions that are being
+         * committed */
+        if (head_inflight_inst->inst->decodedVectorOp.executionClass ==
+                VectorExecutionClass::VpuOffload &&
+            cpu.isVectorOffloadEnabled()) {
+
+            DPRINTF(MinorExecute, "Trying to commit VPU Offload inst: %s\n",
+                    *(head_inflight_inst->inst));
+        }
 
         InstSeqNum head_exec_seq_num =
             head_inflight_inst->inst->id.execSeqNum;
@@ -1261,8 +1380,13 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                 }
             }
 
-            /* Try and commit FU-less insts */
-            if (!completed_inst && inst->isNoCostInst()) {
+            /* Try and commit FU-less insts. Including VPU offload instructions
+             */
+            bool sendToVPU = inst->decodedVectorOp.executionClass ==
+                                 VectorExecutionClass::VpuOffload &&
+                             cpu.isVectorOffloadEnabled();
+
+            if (!completed_inst && (inst->isNoCostInst() || sendToVPU)) {
                 DPRINTF(MinorExecute, "Committing no cost inst: %s", *inst);
 
                 try_to_commit = true;
@@ -1433,6 +1557,18 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
             /* Finished with the inst, remove it from the inst queue and
              *  clear its dependencies */
             ex_info.inFlightInsts->pop();
+
+            /* Remove its state too from the VPUO. states queue.*/
+            if (inst->decodedVectorOp.executionClass ==
+                VectorExecutionClass::VpuOffload) {
+                std::queue<MinorVectorState> &states =
+                    *ex_info.vpuOffloadStates;
+
+                assert(!states.empty());
+                assert(states.front().inst->id == inst->id);
+
+                states.pop();
+            }
 
             /* Complete barriers in the LSQ/move to store buffer */
             if (inst->isInst() && inst->staticInst->isFullMemBarrier()) {
@@ -1627,6 +1763,49 @@ Execute::evaluate()
 
             if (head_inst.inst->isNoCostInst()) {
                 head_inst_might_commit = true;
+            } else if (head_inst.inst->decodedVectorOp.executionClass ==
+                           VectorExecutionClass::VpuOffload &&
+                       cpu.isVectorOffloadEnabled()) {
+
+                ThreadID thread_id = head_inst.inst->id.threadId;
+                MinorVectorState *vec_state =
+                    &executeInfo[thread_id].vpuOffloadStates->front();
+
+                switch (vec_state->phase) {
+                    case MinorVectorPhase::WaitDependencies:
+                        /*
+                         * Si faltan operandos escalares, dejamos que el reloj
+                         * se apague. La instrucción escalar que los produzca
+                         * despertará a Execute automáticamente cuando haga
+                         * commit. Solo pedimos tick si ya están listos.
+                         */
+                        if (scoreboard[thread_id].canVPUInstOffload(
+                                head_inst.inst, cpu.curCycle(),
+                                cpu.getContext(thread_id))) {
+                            head_inst_might_commit = true;
+                        }
+                        break;
+
+                    case MinorVectorPhase::WaitGrant:
+                    case MinorVectorPhase::Completed:
+                        /*
+                         * Aquí sí necesitamos el reloj.
+                         * WaitGrant: para volver a intentar requestGrant el
+                         * ciclo que viene. Completed: para que commitInst()
+                         * procese el resultado y la retire.
+                         */
+                        head_inst_might_commit = true;
+                        break;
+
+                    case MinorVectorPhase::Dispatched:
+                    case MinorVectorPhase::Accepted:
+                        /*
+                         * Asincronía pura. La instrucción está viajando o
+                         * procesándose en la VPU. No forzamos tick.
+                         */
+                        break;
+                }
+
             } else {
                 FUPipeline *fu = funcUnits[head_inst.inst->fuIndex];
                 if ((fu->stalled &&

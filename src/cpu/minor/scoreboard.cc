@@ -278,6 +278,49 @@ Scoreboard::canInstIssue(MinorDynInstPtr inst,
     return ret;
 }
 
+bool
+Scoreboard::canVPUInstOffload(MinorDynInstPtr inst, Cycles now,
+                              ThreadContext *thread_context)
+{
+    /* Always allow fault to be issued */
+    if (inst->isFault()) {
+        return true;
+    }
+
+    StaticInstPtr staticInst = inst->staticInst;
+    unsigned int num_srcs = staticInst->numSrcRegs();
+
+    /* Default to saying you can issue */
+    bool ret = true;
+
+    auto *isa = thread_context->getIsaPtr();
+
+    /* For each source register, find the latest result */
+    unsigned int src_index = 0;
+    while (src_index < num_srcs && /* More registers */
+           ret /* Still possible */) {
+        RegId reg = staticInst->srcRegIdx(src_index).flatten(*isa);
+        if (reg.classValue() == VecRegClass ||
+            reg.classValue() == VecElemClass ||
+            reg.classValue() == VecPredRegClass) {
+            src_index++;
+            continue;
+        }
+        unsigned short int index;
+
+        if (findIndex(reg, index)) {
+
+            if (returnCycle[index] > now ||
+                numUnpredictableResults[index] != 0) {
+                ret = false;
+            }
+        }
+        src_index++;
+    }
+
+    return ret;
+}
+
 void
 Scoreboard::minorTrace() const
 {

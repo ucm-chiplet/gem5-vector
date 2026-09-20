@@ -42,6 +42,7 @@ from m5.objects.BranchPredictor import *
 from m5.objects.DummyChecker import DummyChecker
 from m5.objects.FuncUnit import OpClass
 from m5.objects.TimingExpr import TimingExpr
+from m5.objects.VectorEngine import VectorEngine
 from m5.params import *
 from m5.proxy import *
 from m5.SimObject import SimObject
@@ -442,6 +443,16 @@ class BaseMinorCPU(BaseCPU):
             conditionalBranchPred=TournamentBP(numThreads=Parent.numThreads)
         ),
         "Branch Predictor",
+    )
+
+    # -TODO must add the VPU as a variable to the MinorCPU in a near future.
+    vectorOffloadEnabled = Param.Bool(
+        False,
+        "Allow supported vector instructions to be offloaded to a VPU",
+    )
+
+    vectorEngine = Param.VectorEngine(
+        NULL, "Vector Engine to offload supported vector instructions to"
     )
 
     def addCheckerCpu(self):

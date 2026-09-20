@@ -55,6 +55,7 @@
 #include "cpu/minor/lsq.hh"
 #include "cpu/minor/pipe_data.hh"
 #include "cpu/minor/scoreboard.hh"
+#include "cpu/minor/vector_state.hh"
 
 namespace gem5
 {
@@ -175,6 +176,9 @@ class Execute : public Named
 
         /** Memory ref instructions still in the FUs */
         Queue<QueuedInst, ReportTraitsAdaptor<QueuedInst> > *inFUMemInsts;
+
+        /** To handle VPU Offload state */
+        std::queue<MinorVectorState> *vpuOffloadStates;
 
         /** Index that we've completed upto in getInput data.  We can say we're
          *  popInput when this equals getInput()->width() */
