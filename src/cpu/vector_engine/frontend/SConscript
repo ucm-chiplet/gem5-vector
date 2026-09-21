@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+Import("*")
+
+# src/SConscript descubre este archivo al recorrer el árbol de fuentes.
+Source("command_queue.cc")

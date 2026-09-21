@@ -29,9 +29,12 @@
 #ifndef __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
 #define __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
 
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <optional>
+#include <vector>
 
 #include "cpu/vector_engine/interface/cpu_vector_interface.hh"
 
@@ -50,8 +53,8 @@ struct CommandReservation
 
 /**
  * Estado que el control de admisión y CommandQueue necesitan conservar.
- * AraSequencer toma el comando en cabeza y lo libera al finalizar.
- * Define el almacenamiento; aún no implementa admisión ni vaciado.
+ * AraSequencer consulta el comando en cabeza y lo libera al finalizar.
+ * CommandQueue es el único propietario de las reservas y de la FIFO.
  */
 struct CommandQueueState
 {
@@ -70,5 +73,105 @@ struct CommandQueueState
 };
 
 } // namespace gem5::vector_engine::detail
+
+namespace gem5::vector_engine
+{
+
+/**
+ * Extremo de admisión de la VPU y FIFO de comandos aceptados.
+ *
+ * requestGrant reserva capacidad; dispatch consume esa reserva y confirma
+ * accepted después de guardar una copia del comando. La ocupación suma
+ * reservas y entradas FIFO, incluida la cabeza que ejecuta el sequencer.
+ *
+ * La validación estructural pertenece a CpuVectorInterface. Esta clase
+ * comprueba el soporte del baseline, duplicados y capacidad; no decodifica
+ * instrucciones ni sustituye el validador de la frontera CPU--VPU.
+ *
+ * La FIFO conserva el orden de dispatch. El emisor debe despachar en orden
+ * y AraSequencer debe mantener una única instrucción activa. Esta clase
+ * no ejecuta comandos, emite completed ni programa eventos de progreso.
+ */
+class CommandQueue : public VpuCommandEndpoint
+{
+  public:
+    // Configuración suministrada por el futuro propietario VectorEngine.
+    // supported_lmuls y completion_endpoint deben sobrevivir a la cola;
+    // el conjunto de LMUL no puede modificarse durante su vida.
+    CommandQueue(
+        std::size_t queue_depth,
+        uint32_t vlen_bytes,
+        const std::vector<VectorLmul> &supported_lmuls,
+        CpuCompletionEndpoint &completion_endpoint);
+
+    // Copiar la cola duplicaría reservas y obligaciones de aceptación.
+    CommandQueue(const CommandQueue &) = delete;
+    CommandQueue &operator=(const CommandQueue &) = delete;
+
+    // Precondición: descriptor validado por CpuVectorInterface.
+    GrantResult requestGrant(const VectorCommand &command) override;
+
+    // Un token válido garantiza espacio, incluso durante drain.
+    void dispatch(
+        const GrantToken &token,
+        const VectorCommand &command) override;
+
+    // Devuelve una copia; consultar no libera capacidad ni inicia ejecución.
+    std::optional<VectorCommand> front() const;
+
+    // Sólo lo llama el sequencer al cerrar el comando de cabeza, después
+    // de terminar sus tareas, accesos y writebacks pendientes.
+    void releaseHead(CommandKey command);
+
+    std::size_t occupancy() const
+    {
+        return state.commands.size() + state.reservations.size();
+    }
+
+    bool full() const
+    {
+        return occupancy() == queueDepth;
+    }
+
+    // FIFO vacía no implica ausencia de reservas pendientes de dispatch.
+    bool empty() const
+    {
+        return state.commands.empty();
+    }
+
+    // Describe sólo esta cola; no certifica el drain de toda la VPU.
+    bool isIdle() const
+    {
+        return empty() && state.reservations.empty();
+    }
+
+    // Cierra la admisión nueva sin cancelar reservas ni comandos aceptados.
+    void beginDrain()
+    {
+        state.draining = true;
+    }
+
+    // Reabre la admisión cuando ya no quedan reservas ni entradas FIFO.
+    void endDrain();
+
+  private:
+    const std::size_t queueDepth;
+    const uint32_t vlenBytes;
+
+    // Vista no propietaria de una configuración inmutable.
+    const std::vector<VectorLmul> &supportedLmuls;
+    CpuCompletionEndpoint &completionEndpoint;
+
+    detail::CommandQueueState state;
+
+    // Precondición: LMUL válido; el baseline usa elementos de 32 bits.
+    uint64_t maxElements(VectorLmul lmul) const;
+    bool contains(CommandKey command) const;
+
+    std::optional<RejectionReason> checkSupport(
+        const VectorCommand &command) const;
+};
+
+} // namespace gem5::vector_engine
 
 #endif // __CPU_VECTOR_ENGINE_FRONTEND_COMMAND_QUEUE_HH__
