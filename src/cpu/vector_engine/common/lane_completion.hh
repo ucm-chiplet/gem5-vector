@@ -26,38 +26,25 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
-#define __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
+#ifndef __CPU_VECTOR_ENGINE_COMMON_LANE_COMPLETION_HH__
+#define __CPU_VECTOR_ENGINE_COMMON_LANE_COMPLETION_HH__
 
-#include "cpu/vector_engine/common/vrf_types.hh"
+#include "cpu/vector_engine/common/lane_task.hh"
+#include "cpu/vector_engine/common/unit_completion.hh"
 
 namespace gem5::vector_engine
 {
 
 /**
- * Servicio compartido de mapeo, sin estado de ejecución, colas ni latencia.
- * El propietario conserva la geometría inmutable y sobrevive al mapper.
- * Sólo comprueba límites físicos; el productor valida LMUL y rango activo.
+ * AraLane responde una sola vez, después de cerrar accesos y writeback.
+ * Sólo Success es válido para los fragmentos aritméticos del baseline.
  */
-class AddressMapper
+struct LaneCompletion
 {
-  public:
-    explicit AddressMapper(const VrfGeometry &geometry);
-    AddressMapper(VrfGeometry &&) = delete;
-
-    const VrfGeometry &
-    geometry() const
-    {
-        return vrfGeometry;
-    }
-
-    VrfMapping map(const VectorRegRef &reg, const ByteRange &range,
-                   const ByteEnable &byte_enable) const;
-
-  private:
-    const VrfGeometry &vrfGeometry;
+    LaneFragmentKey key;
+    UnitCompletionStatus status = UnitCompletionStatus::Success;
 };
 
 } // namespace gem5::vector_engine
 
-#endif // __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
+#endif // __CPU_VECTOR_ENGINE_COMMON_LANE_COMPLETION_HH__

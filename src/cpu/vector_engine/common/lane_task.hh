@@ -26,38 +26,67 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
-#define __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
+#ifndef __CPU_VECTOR_ENGINE_COMMON_LANE_TASK_HH__
+#define __CPU_VECTOR_ENGINE_COMMON_LANE_TASK_HH__
 
+#include <cstdint>
+#include <limits>
+#include <optional>
+
+#include "cpu/vector_engine/common/unit_task.hh"
 #include "cpu/vector_engine/common/vrf_types.hh"
+#include "cpu/vector_engine/interface/vector_command.hh"
 
 namespace gem5::vector_engine
 {
 
-/**
- * Servicio compartido de mapeo, sin estado de ejecución, colas ni latencia.
- * El propietario conserva la geometría inmutable y sobrevive al mapper.
- * Sólo comprueba límites físicos; el productor valida LMUL y rango activo.
- */
-class AddressMapper
+using LaneFragmentId = uint32_t;
+inline constexpr LaneFragmentId InvalidLaneFragmentId =
+    std::numeric_limits<LaneFragmentId>::max();
+
+/** El distribuidor asigna fragmentId sin sustituir la identidad de tarea. */
+struct LaneFragmentKey
 {
-  public:
-    explicit AddressMapper(const VrfGeometry &geometry);
-    AddressMapper(VrfGeometry &&) = delete;
+    TaskKey task;
+    LaneFragmentId fragmentId = InvalidLaneFragmentId;
 
-    const VrfGeometry &
-    geometry() const
+    constexpr bool
+    valid() const
     {
-        return vrfGeometry;
+        return task.valid() && fragmentId != InvalidLaneFragmentId;
     }
+};
 
-    VrfMapping map(const VectorRegRef &reg, const ByteRange &range,
-                   const ByteEnable &byte_enable) const;
+constexpr bool
+operator==(const LaneFragmentKey &lhs, const LaneFragmentKey &rhs)
+{
+    return lhs.task == rhs.task && lhs.fragmentId == rhs.fragmentId;
+}
 
-  private:
-    const VrfGeometry &vrfGeometry;
+constexpr bool
+operator!=(const LaneFragmentKey &lhs, const LaneFragmentKey &rhs)
+{
+    return !(lhs == rhs);
+}
+
+/**
+ * Elementos contiguos de una sola palabra de cada operando vectorial.
+ * Todos los accesos pertenecen a laneId; los rangos son relativos al grupo
+ * arquitectónico, no al primer elemento activo ni a la palabra local.
+ */
+struct LaneTask
+{
+    LaneFragmentKey key;
+    LaneId laneId = 0;
+    ArithmeticCommand arithmetic;
+    ElementRange elements;
+    ByteRange destinationRange;
+    ByteRange vectorSourceRange;
+
+    // Ausente para vadd.vx: el escalar viaja en arithmetic.secondOperand.
+    std::optional<ByteRange> secondVectorSourceRange;
 };
 
 } // namespace gem5::vector_engine
 
-#endif // __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
+#endif // __CPU_VECTOR_ENGINE_COMMON_LANE_TASK_HH__

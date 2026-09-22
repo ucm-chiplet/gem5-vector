@@ -26,38 +26,46 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
-#define __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
+#ifndef __CPU_VECTOR_ENGINE_COMMON_VRF_TYPES_HH__
+#define __CPU_VECTOR_ENGINE_COMMON_VRF_TYPES_HH__
 
-#include "cpu/vector_engine/common/vrf_types.hh"
+#include <cstdint>
+#include <vector>
+
+#include "cpu/vector_engine/common/vector_reg_ref.hh"
 
 namespace gem5::vector_engine
 {
 
-/**
- * Servicio compartido de mapeo, sin estado de ejecución, colas ni latencia.
- * El propietario conserva la geometría inmutable y sobrevive al mapper.
- * Sólo comprueba límites físicos; el productor valida LMUL y rango activo.
- */
-class AddressMapper
+using LaneId = uint32_t;
+using BankId = uint32_t;
+
+// Una entrada por byte, con valor 0 o 1; no es una máscara de predicación RVV.
+using ByteEnable = std::vector<uint8_t>;
+
+/** Geometría compartida e inmutable durante la vida de los módulos del VRF. */
+struct VrfGeometry
 {
-  public:
-    explicit AddressMapper(const VrfGeometry &geometry);
-    AddressMapper(VrfGeometry &&) = delete;
-
-    const VrfGeometry &
-    geometry() const
-    {
-        return vrfGeometry;
-    }
-
-    VrfMapping map(const VectorRegRef &reg, const ByteRange &range,
-                   const ByteEnable &byte_enable) const;
-
-  private:
-    const VrfGeometry &vrfGeometry;
+    uint32_t vlenBytes = 0;
+    uint32_t laneWordBytes = 0;
+    uint32_t numLanes = 0;
+    uint32_t banksPerLane = 0;
 };
+
+/** Una parte contigua del rango original, contenida en una palabra del VRF. */
+struct MappedVrfFragment
+{
+    LaneId laneId = 0;
+    BankId bankId = 0;
+    uint64_t row = 0;
+    uint32_t byteOffsetInWord = 0;
+    ByteRange originalRange;
+    ByteEnable wordByteEnable;
+};
+
+// En orden de originalRange.offset, incluidos los bytes deshabilitados.
+using VrfMapping = std::vector<MappedVrfFragment>;
 
 } // namespace gem5::vector_engine
 
-#endif // __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
+#endif // __CPU_VECTOR_ENGINE_COMMON_VRF_TYPES_HH__
