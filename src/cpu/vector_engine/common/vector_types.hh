@@ -7,6 +7,16 @@ namespace gem5::vector_engine
 {
 
 /**
+ * Respuesta inmediata a un envío interno. Accepted transfiere una copia
+ * del mensaje; Retry no causa efectos ni cambia su identidad.
+ */
+enum class TransferResult : uint8_t
+{
+    Accepted,
+    Retry,
+};
+
+/**
  * Factor LMUL expresado como exponente de dos.
  * MinorCPU lo captura; admisión y las unidades dimensionan con él los grupos.
  * Que un valor exista en el enum no implica que la VPU lo admita.

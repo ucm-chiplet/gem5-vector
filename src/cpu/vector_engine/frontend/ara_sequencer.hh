@@ -29,11 +29,15 @@
 #ifndef __CPU_VECTOR_ENGINE_FRONTEND_ARA_SEQUENCER_HH__
 #define __CPU_VECTOR_ENGINE_FRONTEND_ARA_SEQUENCER_HH__
 
+#include <functional>
 #include <optional>
 #include <variant>
 
 #include "cpu/vector_engine/common/backend_task.hh"
 #include "cpu/vector_engine/common/unit_completion.hh"
+#include "cpu/vector_engine/frontend/command_queue.hh"
+#include "sim/clocked_object.hh"
+#include "sim/eventq.hh"
 
 namespace gem5::vector_engine::detail
 {
@@ -59,5 +63,74 @@ struct ActiveCommandState
 };
 
 } // namespace gem5::vector_engine::detail
+
+namespace gem5::vector_engine
+{
+
+/**
+ * Ejecuta una cabeza FIFO cada vez y conserva su crédito hasta finalizar.
+ * Recibe comandos ya validados estructuralmente y admitidos por la cola.
+ *
+ * El propietario conecta los envíos a TaskDistributor y AraVLSU y llama a
+ * wakeup después de dispatch. Las unidades copian la tarea al aceptarla y
+ * llaman a recvCompletion sólo después de cerrar accesos y writebacks.
+ * Los callbacks pueden responder durante el envío; no destruyen el módulo.
+ *
+ * El propietario, la cola y los receptores deben sobrevivir al sequencer.
+ * La destrucción no sustituye drain ni cancela tareas aceptadas.
+ */
+class AraSequencer
+{
+  public:
+    using ArithmeticSender =
+        std::function<TransferResult(const ArithmeticTask &)>;
+    using MemorySender = std::function<TransferResult(const MemoryTask &)>;
+
+    AraSequencer(ClockedObject &owner, CommandQueue &queue,
+                 CpuCompletionEndpoint &completion_endpoint,
+                 uint32_t vlen_bytes, ArithmeticSender send_arithmetic,
+                 MemorySender send_memory);
+
+    ~AraSequencer();
+
+    AraSequencer(const AraSequencer &) = delete;
+    AraSequencer &operator=(const AraSequencer &) = delete;
+
+    // Programa progreso, nunca ejecuta el comando directamente.
+    void wakeup();
+
+    // La unidad puede responder durante la llamada de envío.
+    void recvCompletion(const UnitCompletion &completion);
+
+    // Sólo describe este módulo, no el drain global de la VPU.
+    bool
+    isIdle() const
+    {
+        return !active && !progressEvent.scheduled();
+    }
+
+  private:
+    using BackendTask = std::variant<ArithmeticTask, MemoryTask>;
+
+    ClockedObject &owner;
+    CommandQueue &queue;
+    CpuCompletionEndpoint &completionEndpoint;
+
+    // Mismo VLEN inmutable que recibe CommandQueue.
+    const uint32_t vlenBytes;
+
+    ArithmeticSender sendArithmetic;
+    MemorySender sendMemory;
+
+    std::optional<detail::ActiveCommandState> active;
+    EventFunctionWrapper progressEvent;
+
+    void evaluate();
+    BackendTask makeTask(const VectorCommand &command) const;
+    const UnitTask &currentTask() const;
+    void finish();
+};
+
+} // namespace gem5::vector_engine
 
 #endif // __CPU_VECTOR_ENGINE_FRONTEND_ARA_SEQUENCER_HH__

@@ -4,3 +4,4 @@ Import("*")
 
 # src/SConscript descubre este archivo al recorrer el árbol de fuentes.
 Source("command_queue.cc")
+Source("ara_sequencer.cc")
