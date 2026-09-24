@@ -2,9 +2,13 @@
 #define __CPU_VECTOR_ENGINE_COMMON_VECTOR_TYPES_HH__
 
 #include <cstdint>
+#include <vector>
 
 namespace gem5::vector_engine
 {
+
+// Bytes en orden creciente de dirección o desplazamiento dentro del grupo.
+using ByteBuffer = std::vector<uint8_t>;
 
 /**
  * Respuesta inmediata a un envío interno. Accepted transfiere una copia

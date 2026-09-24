@@ -30,8 +30,11 @@
 #define __CPU_VECTOR_ENGINE_COMMON_VRF_TYPES_HH__
 
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <vector>
 
+#include "cpu/vector_engine/common/unit_task.hh"
 #include "cpu/vector_engine/common/vector_reg_ref.hh"
 
 namespace gem5::vector_engine
@@ -42,6 +45,103 @@ using BankId = uint32_t;
 
 // Una entrada por byte, con valor 0 o 1; no es una máscara de predicación RVV.
 using ByteEnable = std::vector<uint8_t>;
+
+enum class VrfRequesterKind : uint8_t
+{
+    Lane,
+    Vlsu,
+};
+
+struct VrfRequester
+{
+    VrfRequesterKind kind = VrfRequesterKind::Vlsu;
+    // Lane del emisor, nunca el destino de un acceso VLSU. Para Vlsu queda
+    // vacío; la lane destino se indica al entregar el acceso al LRF.
+    std::optional<LaneId> laneId;
+
+    bool
+    valid() const
+    {
+        return (kind == VrfRequesterKind::Lane && laneId.has_value()) ||
+               (kind == VrfRequesterKind::Vlsu && !laneId);
+    }
+};
+
+inline bool
+operator==(const VrfRequester &lhs, const VrfRequester &rhs)
+{
+    return lhs.kind == rhs.kind && lhs.laneId == rhs.laneId;
+}
+
+using VrfAccessId = uint32_t;
+inline constexpr VrfAccessId InvalidVrfAccessId =
+    std::numeric_limits<VrfAccessId>::max();
+
+/**
+ * Identifica un acceso al VRF dentro de una tarea y un solicitante.
+ * accessId es independiente del requestId de memoria; AraVLSU conserva
+ * ambas claves en su elemento activo hasta recibir la respuesta esperada.
+ */
+struct VrfAccessKey
+{
+    TaskKey task;
+    VrfRequester requester;
+    VrfAccessId accessId = InvalidVrfAccessId;
+
+    bool
+    valid() const
+    {
+        return task.valid() && requester.valid() &&
+               accessId != InvalidVrfAccessId;
+    }
+};
+
+inline bool
+operator==(const VrfAccessKey &lhs, const VrfAccessKey &rhs)
+{
+    return lhs.task == rhs.task && lhs.requester == rhs.requester &&
+           lhs.accessId == rhs.accessId;
+}
+
+inline bool
+operator!=(const VrfAccessKey &lhs, const VrfAccessKey &rhs)
+{
+    return !(lhs == rhs);
+}
+
+// El rango es relativo al grupo reg y cada byte tiene su habilitación.
+// El solicitante debe dirigirlo al LRF dueño de la palabra según el mapper.
+struct VrfAccess
+{
+    VrfAccessKey key;
+    VectorRegRef reg;
+    ByteRange range;
+    ByteEnable byteEnable;
+};
+
+struct VrfReadRequest
+{
+    VrfAccess access;
+};
+
+struct VrfWriteRequest
+{
+    VrfAccess access;
+    ByteBuffer data;
+};
+
+// Una lectura aceptada devuelve los bytes en orden creciente de rango.
+struct ReadResponse
+{
+    VrfAccessKey key;
+    ByteBuffer data;
+};
+
+// Confirma que la escritura ya se aplicó, no sólo que fue aceptada.
+struct WriteAck
+{
+    VrfAccessKey key;
+};
 
 /** Geometría compartida e inmutable durante la vida de los módulos del VRF. */
 struct VrfGeometry

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+Import("*")
+
+Source("ara_vlsu.cc")
+Source("vector_memory_backend.cc")
