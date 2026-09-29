@@ -54,6 +54,10 @@ class AddressMapper
     VrfMapping map(const VectorRegRef &reg, const ByteRange &range,
                    const ByteEnable &byte_enable) const;
 
+    // Capacidad uniforme por banco para los 32 registros arquitectónicos.
+    // El último nivel de filas puede contener posiciones sin mapeo válido.
+    uint64_t rowsPerBank() const;
+
   private:
     const VrfGeometry &vrfGeometry;
 };

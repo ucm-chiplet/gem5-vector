@@ -4,3 +4,5 @@
 Import("*")
 
 Source("address_mapper.cc")
+Source("vector_reg_bank.cc")
+Source("lane_register_file.cc")

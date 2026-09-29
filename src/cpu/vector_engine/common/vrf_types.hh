@@ -143,6 +143,39 @@ struct WriteAck
     VrfAccessKey key;
 };
 
+/**
+ * Frontera LRF--banco: una palabra ya mapeada. El objeto receptor determina
+ * lane y banco; la clave original se conserva hasta la respuesta del LRF.
+ * Máscara y datos tienen laneWordBytes entradas en orden de byte creciente.
+ */
+struct BankReadRequest
+{
+    VrfAccessKey key;
+    uint64_t row = 0;
+    ByteEnable wordByteEnable;
+};
+
+struct BankWriteRequest
+{
+    VrfAccessKey key;
+    uint64_t row = 0;
+    ByteEnable wordByteEnable;
+    ByteBuffer wordData;
+};
+
+// Los bytes deshabilitados se devuelven a cero.
+struct BankReadResponse
+{
+    VrfAccessKey key;
+    ByteBuffer wordData;
+};
+
+// Se emite después de aplicar todos los bytes habilitados de la escritura.
+struct BankWriteAck
+{
+    VrfAccessKey key;
+};
+
 /** Geometría compartida e inmutable durante la vida de los módulos del VRF. */
 struct VrfGeometry
 {

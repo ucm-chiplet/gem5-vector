@@ -52,6 +52,18 @@ AddressMapper::AddressMapper(const VrfGeometry &geometry)
              "VLEN must be a multiple of lane word bytes times lane count");
 }
 
+uint64_t
+AddressMapper::rowsPerBank() const
+{
+    // La geometría validada reparte un número entero de palabras por lane.
+    const uint64_t words_per_lane =
+        uint64_t{NumArchitecturalVectorRegs} * vrfGeometry.vlenBytes /
+        vrfGeometry.laneWordBytes / vrfGeometry.numLanes;
+    const auto banks = vrfGeometry.banksPerLane;
+    // Techo de la división sin sumar banks - 1 al numerador.
+    return words_per_lane / banks + (words_per_lane % banks != 0);
+}
+
 VrfMapping
 AddressMapper::map(const VectorRegRef &reg, const ByteRange &range,
                    const ByteEnable &byte_enable) const
