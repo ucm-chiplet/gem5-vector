@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
 {
@@ -70,8 +71,8 @@ AraSequencer::makeTask(const VectorCommand &command) const
     const auto &config = command.config;
 
     // Precondición: comando validado estructuralmente y admitido.
-    panic_if(!command.command.valid() || !isValid(config.lmul) ||
-                 config.sewBits != 32 || config.masked,
+    panic_if(!command.command.valid() ||
+                 !VectorSupport::supportsConfiguration(config),
              "Invalid admitted configuration");
 
     panic_if(config.vstart >= config.vl,
@@ -80,8 +81,9 @@ AraSequencer::makeTask(const VectorCommand &command) const
     const ElementRange elements{config.vstart, config.vl - config.vstart};
 
     // Calcular antes en 64 bits: ByteRange usa campos de 32 bits.
-    const uint64_t offset = uint64_t{elements.firstElement} * 4;
-    const uint64_t size = uint64_t{elements.elementCount} * 4;
+    const auto element_bytes = VectorSupport::elementBytes(config.sewBits);
+    const uint64_t offset = uint64_t{elements.firstElement} * element_bytes;
+    const uint64_t size = uint64_t{elements.elementCount} * element_bytes;
     const uint64_t end = offset + size;
 
     panic_if(end > std::numeric_limits<uint32_t>::max(),

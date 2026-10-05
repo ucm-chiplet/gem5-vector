@@ -66,8 +66,8 @@ struct MemoryTask
 };
 
 // AraSequencer crea una tarea para [vstart, vl) en la versión inicial.
-// Para elementos de 32 bits, el rango comienza en firstElement * 4 y ocupa
-// elementCount * 4 bytes. Si vstart >= vl, no crea ninguna tarea.
+// El rango comienza en firstElement * elementBytes(SEW) y ocupa
+// elementCount * elementBytes(SEW) bytes. Si vstart >= vl, no crea tareas.
 
 } // namespace gem5::vector_engine
 

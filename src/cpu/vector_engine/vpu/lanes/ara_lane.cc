@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
 {
@@ -51,20 +52,18 @@ AraLane::validateTask(const LaneTask &task) const
     panic_if(!task.key.valid() || task.laneId != laneId ||
                  !task.elements.valid(),
              "Invalid lane fragment identity or elements");
-    panic_if(arithmetic.operation != ArithmeticOperation::Add ||
-                 arithmetic.widthMode != ElementWidthMode::SameWidth ||
-                 arithmetic.signedness != ElementSignedness::NotApplicable,
+    panic_if(!VectorSupport::supportsArithmetic(arithmetic, task.sewBits),
              "Unsupported operation in an admitted lane fragment");
     const auto *second_source =
         std::get_if<VectorRegRef>(&arithmetic.secondOperand);
-    panic_if((!second_source &&
-              !std::holds_alternative<RegVal>(arithmetic.secondOperand)) ||
-                 task.secondVectorSourceRange.has_value() !=
-                     (second_source != nullptr),
+    panic_if(task.secondVectorSourceRange.has_value() !=
+                 (second_source != nullptr),
              "Lane fragment has inconsistent second operand");
 
-    const uint64_t offset = uint64_t{task.elements.firstElement} * 4;
-    const uint64_t size = uint64_t{task.elements.elementCount} * 4;
+    const auto element_bytes = VectorSupport::elementBytes(task.sewBits);
+    const uint64_t offset =
+        uint64_t{task.elements.firstElement} * element_bytes;
+    const uint64_t size = uint64_t{task.elements.elementCount} * element_bytes;
     panic_if(offset + size > std::numeric_limits<uint32_t>::max() ||
                  size > mapper.geometry().laneWordBytes,
              "Lane fragment exceeds one word or its byte range overflows");
@@ -129,6 +128,7 @@ AraLane::acceptTask(const LaneTask &task)
     state.bundle =
         ExecutionBundle{task.key,
                         task.arithmetic.operation,
+                        task.sewBits,
                         task.elements,
                         task.arithmetic.destination,
                         task.destinationRange,
@@ -144,8 +144,9 @@ AraLane::acceptTask(const LaneTask &task)
             VrfReadRequest{makeAccess(*source, *task.secondVectorSourceRange)},
             task.key, AccessRole::Rhs};
     } else {
-        const auto scalar = static_cast<uint32_t>(
-            std::get<RegVal>(task.arithmetic.secondOperand));
+        const auto scalar = static_cast<uint32_t>(std::get<RegVal>(
+                                task.arithmetic.secondOperand)) &
+                            VectorSupport::elementMask(task.sewBits);
         std::fill(state.bundle.rhs.begin(), state.bundle.rhs.end(), scalar);
         state.rhsReady = true;
     }
@@ -274,13 +275,18 @@ AraLane::recvVrfReadResponse(const ReadResponse &response)
         auto &values = i == 0 ? state.bundle.lhs : state.bundle.rhs;
         auto &ready = i == 0 ? state.lhsReady : state.rhsReady;
         panic_if(ready, "Lane operand was already received");
+        const auto element_bytes =
+            VectorSupport::elementBytes(state.task.sewBits);
         for (std::size_t element = 0; element < values.size(); ++element) {
             uint32_t value = 0;
-            for (unsigned byte = 0; byte < 4; ++byte) {
+            for (unsigned byte = 0; byte < element_bytes; ++byte) {
                 const unsigned shift =
-                    8 *
-                    (targetByteOrder == ByteOrder::little ? byte : 3 - byte);
-                value |= uint32_t{response.data[element * 4 + byte]} << shift;
+                    8 * (targetByteOrder == ByteOrder::little
+                             ? byte
+                             : element_bytes - 1 - byte);
+                value |=
+                    uint32_t{response.data[element * element_bytes + byte]}
+                    << shift;
             }
             values[element] = value;
         }
@@ -299,7 +305,8 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
              "Unexpected lane ALU result");
     auto &state = *active;
     const auto &task = state.task;
-    panic_if(result.key != task.key || result.elements != task.elements ||
+    panic_if(result.key != task.key || result.sewBits != task.sewBits ||
+                 result.elements != task.elements ||
                  result.destination != task.arithmetic.destination ||
                  result.destinationRange != task.destinationRange ||
                  result.values.size() != task.elements.elementCount ||
@@ -308,11 +315,13 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
              "Lane ALU result does not match its pending fragment");
     state.result = result;
     ByteBuffer data(task.destinationRange.size);
+    const auto element_bytes = VectorSupport::elementBytes(task.sewBits);
     for (std::size_t element = 0; element < result.values.size(); ++element) {
-        for (unsigned byte = 0; byte < 4; ++byte) {
-            const unsigned shift =
-                8 * (targetByteOrder == ByteOrder::little ? byte : 3 - byte);
-            data[element * 4 + byte] =
+        for (unsigned byte = 0; byte < element_bytes; ++byte) {
+            const unsigned shift = 8 * (targetByteOrder == ByteOrder::little
+                                            ? byte
+                                            : element_bytes - 1 - byte);
+            data[element * element_bytes + byte] =
                 static_cast<uint8_t>(result.values[element] >> shift);
         }
     }

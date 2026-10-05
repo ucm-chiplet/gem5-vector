@@ -7,6 +7,7 @@
 #include <variant>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
 {
@@ -48,23 +49,21 @@ AraVLSU::validateTask(const MemoryTask &task) const
     const auto &memory = task.memory;
     panic_if(!unit.valid() || unit.unit != VectorUnitClass::Vlsu,
              "Invalid memory task identity or unit");
-    panic_if(!isValid(config.lmul) || config.sewBits != 32 || config.masked ||
+    panic_if(!VectorSupport::supportsConfiguration(config) ||
                  !unit.elements.fitsWithin(config.vstart, config.vl),
              "Invalid memory task configuration or active elements");
-    panic_if(
-        (memory.direction != MemoryDirection::Load &&
-         memory.direction != MemoryDirection::Store) ||
-            !std::holds_alternative<UnitStrideAddress>(memory.addressing) ||
-            memory.elementWidthBits != 32 || memory.fieldCount != 1 ||
-            memory.faultOnlyFirst,
-        "Unsupported operation in an admitted memory task");
+    panic_if(!VectorSupport::supportsMemory(memory, config.sewBits),
+             "Unsupported operation in an admitted memory task");
     panic_if(task.requestorId == Request::invldRequestorId,
              "Memory task has no requestor identity");
 
     // Comprobar en 64 bits antes de usar rangos de bytes de 32 bits evita
-    // aceptar un rango que se haya truncado al multiplicar por cuatro.
-    const uint64_t offset = uint64_t{unit.elements.firstElement} * 4;
-    const uint64_t size = uint64_t{unit.elements.elementCount} * 4;
+    // aceptar un rango truncado al multiplicar por el tamaño de elemento.
+    const auto element_bytes =
+        VectorSupport::elementBytes(memory.elementWidthBits);
+    const uint64_t offset =
+        uint64_t{unit.elements.firstElement} * element_bytes;
+    const uint64_t size = uint64_t{unit.elements.elementCount} * element_bytes;
     const uint64_t end = offset + size;
     panic_if(end > std::numeric_limits<uint32_t>::max() ||
                  task.dataRange.offset != offset ||
@@ -77,8 +76,8 @@ AraVLSU::validateTask(const MemoryTask &task) const
     const uint64_t capacity =
         exponent >= 0 ? vlen_bytes << exponent : vlen_bytes >> -exponent;
     const unsigned registers = exponent > 0 ? 1U << exponent : 1U;
-    panic_if(uint64_t{config.vl} * 4 > capacity || end > capacity ||
-                 !memory.dataReg.naturallyAligned() ||
+    panic_if(uint64_t{config.vl} * element_bytes > capacity ||
+                 end > capacity || !memory.dataReg.naturallyAligned() ||
                  memory.dataReg.regCount != registers,
              "Memory task exceeds its architectural register group");
 }
@@ -117,15 +116,19 @@ AraVLSU::prepareElement()
     request.elementIndex = state.nextElement;
     // vstart limita qué elementos se ejecutan; no desplaza la base del vector.
     // La máscara aplica el ancho del objetivo a la suma sin signo.
-    request.dataRange = ByteRange{state.nextElement * 4, 4};
+    const auto element_bytes =
+        VectorSupport::elementBytes(state.task.memory.elementWidthBits);
+    request.dataRange =
+        ByteRange{state.nextElement * element_bytes, element_bytes};
     request.virtualAddress =
-        (state.task.memory.base + Addr{state.nextElement} * 4) & addressMask;
-    request.size = 4;
-    request.byteEnable.assign(4, 1);
+        (state.task.memory.base + Addr{state.nextElement} * element_bytes) &
+        addressMask;
+    request.size = element_bytes;
+    request.byteEnable.assign(element_bytes, 1);
     request.pc = state.task.pc;
     request.requestorId = state.task.requestorId;
-    // El mapper es la única fuente del reparto por lane. La geometría del
-    // baseline garantiza que estos cuatro bytes caben en una palabra de VRF.
+    // El mapper es la única fuente del reparto por lane. La geometría
+    // garantiza que el elemento cabe en una palabra de VRF.
     const auto mapping =
         mapper.map(request.registerRef, request.dataRange, request.byteEnable);
     panic_if(mapping.size() != 1 ||
@@ -251,7 +254,7 @@ AraVLSU::recvVrfReadResponse(const ReadResponse &response)
              "Unexpected VLSU VRF read response");
     auto &element = *active->element;
     panic_if(response.key != element.vrfAccess.key ||
-                 response.data.size() != 4,
+                 response.data.size() != element.request.size,
              "VLSU VRF read response has wrong identity or size");
     // Capturar los bytes una vez: un retry posterior del backend no requiere
     // releer el registro ni permite cambiar el valor que se almacenará.
@@ -286,7 +289,8 @@ AraVLSU::recvMemoryResponse(const VectorMemoryResponse &response)
     switch (response.status) {
         case MemoryResponseStatus::LoadData:
             panic_if(request.direction != MemoryDirection::Load ||
-                         response.data.size() != 4 || response.fault,
+                         response.data.size() != request.size ||
+                         response.fault,
                      "Invalid load response");
             // Los metadatos de destino proceden de la petición conservada.
             // Todavía falta escribir estos bytes en el LRF y recibir su ack.
@@ -304,8 +308,8 @@ AraVLSU::recvMemoryResponse(const VectorMemoryResponse &response)
             break;
         case MemoryResponseStatus::Fault:
             // El backend sólo responde Fault cuando ha cerrado sus accesos.
-            // El fault puede apuntar a un fragmento dentro de los cuatro
-            // bytes; la resta enmascarada contempla el ancho del objetivo.
+            // El fault puede apuntar a un fragmento dentro del elemento;
+            // la resta enmascarada contempla el ancho del objetivo.
             panic_if(!response.data.empty() || !response.fault ||
                          response.fault->fault == NoFault ||
                          !response.fault->address ||

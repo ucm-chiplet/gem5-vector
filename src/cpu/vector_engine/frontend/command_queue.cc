@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
 {
@@ -34,69 +35,10 @@ CommandQueue::CommandQueue(
         fatal_if(!isValid(*it), "Invalid supported LMUL");
         fatal_if(std::find(supportedLmuls.begin(), it, *it) != it,
                  "Duplicate supported LMUL");
-        fatal_if(maxElements(*it) == 0,
+        fatal_if(VectorSupport::maxElements(
+                     vlenBytes, *it, VectorSupport::elementWidths.back()) == 0,
                  "Supported LMUL cannot hold a 32-bit element");
     }
-}
-
-uint64_t
-CommandQueue::maxElements(VectorLmul lmul) const
-{
-    // LMUL codifica un exponente de dos. Se aplica antes de dividir para
-    // evitar truncar VLEN/SEW prematuramente; no se usa coma flotante.
-    // Los 64 bits contienen VLEN en bits y el mayor LMUL representable.
-    const int exponent = static_cast<int>(lmul);
-    const uint64_t vlen_bits = uint64_t{vlenBytes} * 8;
-
-    if (exponent >= 0)
-        return (vlen_bits << exponent) / 32;
-
-    return vlen_bits / (uint64_t{32} << -exponent);
-}
-
-std::optional<RejectionReason>
-CommandQueue::checkSupport(const VectorCommand &command) const
-{
-    // La interfaz CPU ya ha validado identidad, enums, alternativas,
-    // grupos LMUL/EMUL y metadatos. Aquí se filtra el soporte implementado.
-    const auto &config = command.config;
-
-    const bool supported_lmul =
-        std::find(supportedLmuls.begin(), supportedLmuls.end(),
-                  config.lmul) != supportedLmuls.end();
-
-    if (config.sewBits != 32 || config.masked || !supported_lmul)
-        return RejectionReason::UnsupportedConfiguration;
-
-    if (config.vl > maxElements(config.lmul))
-        return RejectionReason::UnsupportedConfiguration;
-
-    // vl == 0 y vstart >= vl son admisibles. El sequencer los completará
-    // sin crear tareas; admisión no ejecuta ni finaliza esos comandos.
-    if (const auto *arithmetic =
-            std::get_if<ArithmeticCommand>(&command.payload)) {
-        if (arithmetic->operation != ArithmeticOperation::Add ||
-            arithmetic->widthMode != ElementWidthMode::SameWidth ||
-            arithmetic->signedness !=
-                ElementSignedness::NotApplicable ||
-            std::holds_alternative<int64_t>(
-                arithmetic->secondOperand)) {
-            return RejectionReason::UnsupportedOperation;
-        }
-    } else if (const auto *memory =
-                   std::get_if<MemoryCommand>(&command.payload)) {
-        if (!std::holds_alternative<UnitStrideAddress>(
-                memory->addressing) ||
-            memory->elementWidthBits != 32 ||
-            memory->fieldCount != 1 ||
-            memory->faultOnlyFirst) {
-            return RejectionReason::UnsupportedConfiguration;
-        }
-    } else {
-        return RejectionReason::InvalidPayload;
-    }
-
-    return std::nullopt;
 }
 
 bool
@@ -122,8 +64,10 @@ CommandQueue::requestGrant(const VectorCommand &command)
 {
     // Los rechazos permanentes preceden al examen de capacidad: una cola
     // llena no debe convertir un descriptor no soportado en un Stall.
-    if (const auto reason = checkSupport(command))
+    if (const auto reason =
+            VectorSupport::checkCommand(command, vlenBytes, supportedLmuls)) {
         return GrantResult::rejected(*reason);
+    }
 
     if (contains(command.command))
         return GrantResult::rejected(RejectionReason::DuplicateCommand);

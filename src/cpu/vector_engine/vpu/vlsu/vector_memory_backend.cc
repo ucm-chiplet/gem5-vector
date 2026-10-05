@@ -8,6 +8,7 @@
 
 #include "base/logging.hh"
 #include "cpu/thread_context.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 #include "mem/page_table.hh"
 #include "sim/full_system.hh"
 #include "sim/process.hh"
@@ -102,16 +103,18 @@ VectorMemoryBackend::validateRequest(const VectorMemoryRequest &request) const
     panic_if(request.direction != MemoryDirection::Load &&
                  request.direction != MemoryDirection::Store,
              "Invalid vector memory direction");
-    panic_if(request.size != 4 || !request.registerRef.valid() ||
-                 !request.dataRange.valid() || request.dataRange.size != 4 ||
-                 uint64_t{request.elementIndex} * 4 !=
+    panic_if(!VectorSupport::supportsElementBytes(request.size) ||
+                 !request.registerRef.valid() || !request.dataRange.valid() ||
+                 request.dataRange.size != request.size ||
+                 uint64_t{request.elementIndex} * request.size !=
                      request.dataRange.offset ||
                  request.virtualAddress > addressMask ||
-                 request.byteEnable != ByteEnable(4, 1),
+                 request.byteEnable != ByteEnable(request.size, 1),
              "Invalid vector memory element descriptor");
-    panic_if(request.storeData.size() !=
-                 (request.direction == MemoryDirection::Store ? 4 : 0),
-             "Invalid vector memory store buffer");
+    panic_if(
+        request.storeData.size() !=
+            (request.direction == MemoryDirection::Store ? request.size : 0),
+        "Invalid vector memory store buffer");
 }
 
 TransferResult

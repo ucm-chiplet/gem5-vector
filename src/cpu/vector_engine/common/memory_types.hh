@@ -34,15 +34,15 @@ struct VectorMemoryRequest
     // Destino de carga o fuente de store; dataRange es relativo al grupo.
     VectorRegRef registerRef;
     ByteRange dataRange;
-    // Índice absoluto: la dirección unit-stride es base + elementIndex * 4.
+    // Índice absoluto: dirección unit-stride = base + elementIndex * size.
     uint32_t elementIndex = 0;
     // Lane propietaria según AddressMapper, no identidad del emisor VLSU.
     LaneId laneId = 0;
     Addr virtualAddress = 0;
     uint32_t size = 0;
-    // Vacío en carga; cuatro bytes ya capturados del VRF en store.
+    // Vacío en carga; size bytes ya capturados del VRF en store.
     ByteBuffer storeData;
-    // Cuatro entradas a uno en el baseline; no es la máscara de predicación.
+    // size entradas a uno; no es la máscara de predicación.
     ByteEnable byteEnable;
     // Metadatos originales de CPU; contextId viaja dentro de taskKey.
     Addr pc = 0;
@@ -58,7 +58,7 @@ enum class MemoryResponseStatus : uint8_t
 
 /**
  * Única respuesta terminal de una petición aceptada, sin fragmentos en vuelo.
- * LoadData lleva cuatro bytes y ningún fault; StoreAck no lleva datos ni
+ * LoadData lleva los bytes del elemento y ningún fault; StoreAck sin datos ni
  * fault. Fault sólo lleva causa, dirección virtual e índice del elemento.
  * La respuesta de carga aún debe convertirse en un writeback al VRF.
  */

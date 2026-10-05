@@ -18,9 +18,11 @@ struct ExecutionBundle
 {
     LaneFragmentKey key;
     ArithmeticOperation operation = ArithmeticOperation::Invalid;
+    uint16_t sewBits = 0;
     ElementRange elements;
     VectorRegRef destination;
     ByteRange destinationRange;
+    // Contenedores de patrones de bits; sólo los sewBits bajos son activos.
     std::vector<uint32_t> lhs;
     std::vector<uint32_t> rhs;
 };
@@ -28,6 +30,7 @@ struct ExecutionBundle
 struct ExecutionResult
 {
     LaneFragmentKey key;
+    uint16_t sewBits = 0;
     ElementRange elements;
     VectorRegRef destination;
     ByteRange destinationRange;
@@ -35,7 +38,7 @@ struct ExecutionResult
 };
 
 /**
- * ALU funcional de 32 bits con capacidad para un bundle. Copia los operandos
+ * ALU entera de 16/32 bits con capacidad para un bundle. Copia los operandos
  * y reserva el resultado al aceptar; responde en una evaluación posterior.
  * El evento garantiza progreso, no modela una latencia de hardware Ara.
  * El propietario y el receptor sobreviven al módulo, hasta completar drain.

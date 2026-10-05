@@ -34,6 +34,7 @@
 #include <variant>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
 {
@@ -68,22 +69,18 @@ TaskDistributor::validateTask(const ArithmeticTask &task) const
 
     panic_if(!unit.valid() || unit.unit != VectorUnitClass::Lanes,
              "Invalid arithmetic task identity or unit");
-    panic_if(!isValid(config.lmul) || config.sewBits != 32 || config.masked ||
+    panic_if(!VectorSupport::supportsConfiguration(config) ||
                  !unit.elements.fitsWithin(config.vstart, config.vl),
              "Invalid arithmetic task configuration or active elements");
-    panic_if(arithmetic.operation != ArithmeticOperation::Add ||
-                 arithmetic.widthMode != ElementWidthMode::SameWidth ||
-                 arithmetic.signedness != ElementSignedness::NotApplicable,
+    panic_if(!VectorSupport::supportsArithmetic(arithmetic, config.sewBits),
              "Unsupported operation in an admitted arithmetic task");
 
     const auto *second_source =
         std::get_if<VectorRegRef>(&arithmetic.secondOperand);
-    panic_if(!second_source &&
-                 !std::holds_alternative<RegVal>(arithmetic.secondOperand),
-             "Arithmetic task requires a vector or scalar second operand");
-
-    const uint64_t offset = uint64_t{unit.elements.firstElement} * 4;
-    const uint64_t size = uint64_t{unit.elements.elementCount} * 4;
+    const auto element_bytes = VectorSupport::elementBytes(config.sewBits);
+    const uint64_t offset =
+        uint64_t{unit.elements.firstElement} * element_bytes;
+    const uint64_t size = uint64_t{unit.elements.elementCount} * element_bytes;
     const uint64_t end = offset + size;
     panic_if(end > std::numeric_limits<uint32_t>::max() ||
                  task.destinationRange.offset != offset ||
@@ -95,7 +92,7 @@ TaskDistributor::validateTask(const ArithmeticTask &task) const
     const uint64_t effective_bytes = exponent >= 0
                                          ? uint64_t{vlen_bytes} << exponent
                                          : uint64_t{vlen_bytes} >> -exponent;
-    panic_if(uint64_t{config.vl} * 4 > effective_bytes ||
+    panic_if(uint64_t{config.vl} * element_bytes > effective_bytes ||
                  end > effective_bytes,
              "Arithmetic task exceeds effective LMUL capacity");
 
@@ -121,6 +118,8 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
 
     const auto &arithmetic = task.arithmetic;
     const auto &range = task.destinationRange;
+    const auto element_bytes =
+        VectorSupport::elementBytes(task.config.sewBits);
     const ByteEnable byte_enable(range.size, 1);
     std::vector<VrfMapping> mappings;
     mappings.push_back(mapper.map(arithmetic.destination, range, byte_enable));
@@ -152,8 +151,8 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
             end = std::min(end, mapped.originalRange.end());
         }
 
-        panic_if(offset % 4 || end % 4 || end <= offset ||
-                     lane >= state.pendingByLane.size(),
+        panic_if(offset % element_bytes || end % element_bytes ||
+                     end <= offset || lane >= state.pendingByLane.size(),
                  "Mapped fragment does not contain whole lane elements");
         panic_if(state.fragments.size() >= InvalidLaneFragmentId,
                  "Lane fragment identifiers exhausted");
@@ -164,8 +163,10 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
         LaneTask fragment;
         fragment.key = LaneFragmentKey{task.task.key, fragment_id};
         fragment.laneId = lane;
+        fragment.sewBits = task.config.sewBits;
         fragment.arithmetic = arithmetic;
-        fragment.elements = ElementRange{offset / 4, (end - offset) / 4};
+        fragment.elements = ElementRange{offset / element_bytes,
+                                         (end - offset) / element_bytes};
         fragment.destinationRange = fragment_range;
         fragment.vectorSourceRange = fragment_range;
         if (mappings.size() == 3) {

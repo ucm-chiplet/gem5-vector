@@ -78,6 +78,8 @@ struct LaneTask
 {
     LaneFragmentKey key;
     LaneId laneId = 0;
+    // Copia de SEW del comando, conservada hasta el resultado de ejecución.
+    uint16_t sewBits = 0;
     ArithmeticCommand arithmetic;
     ElementRange elements;
     ByteRange destinationRange;

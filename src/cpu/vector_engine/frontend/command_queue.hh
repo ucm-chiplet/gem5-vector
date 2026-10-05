@@ -164,12 +164,7 @@ class CommandQueue : public VpuCommandEndpoint
 
     detail::CommandQueueState state;
 
-    // Precondición: LMUL válido; el baseline usa elementos de 32 bits.
-    uint64_t maxElements(VectorLmul lmul) const;
     bool contains(CommandKey command) const;
-
-    std::optional<RejectionReason> checkSupport(
-        const VectorCommand &command) const;
 };
 
 } // namespace gem5::vector_engine

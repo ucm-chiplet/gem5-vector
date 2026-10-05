@@ -107,7 +107,7 @@ class VectorMemoryBackend
     {
         VectorMemoryBackend &backend;
         const std::size_t index;
-        // Posición de este fragmento dentro del buffer lógico de cuatro bytes.
+        // Posición de este fragmento dentro del buffer lógico del elemento.
         const uint32_t offset;
         // La dirección física sólo es válida tras una traducción correcta.
         RequestPtr request;
