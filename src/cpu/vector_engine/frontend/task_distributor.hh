@@ -104,6 +104,7 @@ class TaskDistributor
         std::vector<FragmentState> fragments;
         std::vector<std::deque<LaneFragmentId>> pendingByLane;
         std::size_t unfinishedFragments = 0;
+        FpExceptionFlags fpFlags = 0;
     };
 
     ClockedObject &owner;

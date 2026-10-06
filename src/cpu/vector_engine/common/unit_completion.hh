@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "cpu/vector_engine/common/fp_types.hh"
 #include "cpu/vector_engine/common/unit_task.hh"
 #include "cpu/vector_engine/interface/vector_completion.hh"
 
@@ -58,6 +59,8 @@ struct UnitCompletion
     // TaskDistributor sólo devuelve Success en la versión inicial.
     // AraSequencer exige que fault esté ausente en una respuesta Success.
     std::optional<FaultInfo> fault;
+    // OR de los flags de todas las lanes; memoria y enteros devuelven cero.
+    FpExceptionFlags fpFlags = 0;
 };
 
 } // namespace gem5::vector_engine

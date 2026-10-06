@@ -4,3 +4,4 @@ Import("*")
 
 Source("ara_lane.cc")
 Source("alu.cc")
+Source("fpu.cc")

@@ -29,6 +29,9 @@
 #ifndef __CPU_VECTOR_ENGINE_COMMON_BACKEND_TASK_HH__
 #define __CPU_VECTOR_ENGINE_COMMON_BACKEND_TASK_HH__
 
+#include <optional>
+
+#include "cpu/vector_engine/common/fp_types.hh"
 #include "cpu/vector_engine/common/unit_task.hh"
 #include "cpu/vector_engine/common/vector_reg_ref.hh"
 #include "cpu/vector_engine/interface/vector_command.hh"
@@ -46,6 +49,9 @@ struct ArithmeticTask
     VectorConfig config;
     ArithmeticCommand arithmetic;
     ByteRange destinationRange;
+    // Sólo para operaciones FP. El productor suministra frm ya resuelto;
+    // la interfaz CPU--VPU actual todavía no transporta este contexto.
+    std::optional<FpExecutionContext> fpContext = std::nullopt;
 };
 
 /**

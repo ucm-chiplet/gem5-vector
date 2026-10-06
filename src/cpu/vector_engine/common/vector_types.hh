@@ -77,12 +77,14 @@ operator!=(const VectorConfig &lhs, const VectorConfig &rhs)
 
 /**
  * Operación que MinorCPU describe y TaskDistributor entrega a las lanes.
- * La ALU usa Add en la versión inicial; no necesita volver a decodificar.
+ * Add selecciona aritmética entera; FloatAdd selecciona la FPU del backend.
+ * Ninguna unidad necesita volver a decodificar instrucciones.
  */
 enum class ArithmeticOperation : uint8_t
 {
     Invalid,
     Add,
+    FloatAdd,
 };
 
 /**

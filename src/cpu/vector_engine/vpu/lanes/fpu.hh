@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#ifndef __CPU_VECTOR_ENGINE_VPU_LANES_ALU_HH__
-#define __CPU_VECTOR_ENGINE_VPU_LANES_ALU_HH__
+#ifndef __CPU_VECTOR_ENGINE_VPU_LANES_FPU_HH__
+#define __CPU_VECTOR_ENGINE_VPU_LANES_FPU_HH__
 
 #include <functional>
 #include <optional>
@@ -14,21 +14,22 @@ namespace gem5::vector_engine
 {
 
 /**
- * ALU entera de 16/32 bits con capacidad para un bundle. Copia los operandos
- * y reserva el resultado al aceptar; responde en una evaluación posterior.
- * El evento garantiza progreso, no modela una latencia de hardware Ara.
- * El propietario y el receptor sobreviven al módulo, hasta completar drain.
+ * FPU funcional binary16: FloatAdd con redondeo explícito y flags acumulados.
+ * Acepta un bundle, reserva el resultado y responde en un evento posterior.
+ * El evento garantiza progreso; no representa la latencia hardware de Ara.
+ * No accede al VRF, al estado CPU ni a otros módulos de control.
+ * El propietario y el receptor sobreviven a la FPU hasta completar drain.
  */
-class Alu
+class Fpu
 {
   public:
     using ResultSender = std::function<void(const ExecutionResult &)>;
 
-    Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result);
-    ~Alu();
+    Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result);
+    ~Fpu();
 
-    Alu(const Alu &) = delete;
-    Alu &operator=(const Alu &) = delete;
+    Fpu(const Fpu &) = delete;
+    Fpu &operator=(const Fpu &) = delete;
 
     TransferResult acceptBundle(const ExecutionBundle &bundle);
 
@@ -55,4 +56,4 @@ class Alu
 
 } // namespace gem5::vector_engine
 
-#endif // __CPU_VECTOR_ENGINE_VPU_LANES_ALU_HH__
+#endif // __CPU_VECTOR_ENGINE_VPU_LANES_FPU_HH__

@@ -72,7 +72,8 @@ TaskDistributor::validateTask(const ArithmeticTask &task) const
     panic_if(!VectorSupport::supportsConfiguration(config) ||
                  !unit.elements.fitsWithin(config.vstart, config.vl),
              "Invalid arithmetic task configuration or active elements");
-    panic_if(!VectorSupport::supportsArithmetic(arithmetic, config.sewBits),
+    panic_if(!VectorSupport::supportsExecution(arithmetic, config.sewBits,
+                                               task.fpContext),
              "Unsupported operation in an admitted arithmetic task");
 
     const auto *second_source =
@@ -165,6 +166,7 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
         fragment.laneId = lane;
         fragment.sewBits = task.config.sewBits;
         fragment.arithmetic = arithmetic;
+        fragment.fpContext = task.fpContext;
         fragment.elements = ElementRange{offset / element_bytes,
                                          (end - offset) / element_bytes};
         fragment.destinationRange = fragment_range;
@@ -287,10 +289,14 @@ TaskDistributor::recvCompletion(const LaneCompletion &completion)
              "Duplicate lane completion or fragment not issued");
     panic_if(completion.status != UnitCompletionStatus::Success,
              "Arithmetic lane reported an invalid completion status");
+    panic_if(!validFpFlags(completion.fpFlags) ||
+                 (!fragment.task.fpContext && completion.fpFlags != 0),
+             "Lane completion has invalid or unexpected FP flags");
     panic_if(active->unfinishedFragments == 0,
              "Lane fragment completion accounting underflow");
 
     fragment.phase = FragmentPhase::Completed;
+    active->fpFlags |= completion.fpFlags;
     --active->unfinishedFragments;
     wakeup();
 }
@@ -300,8 +306,9 @@ TaskDistributor::finish()
 {
     panic_if(!active || active->unfinishedFragments != 0 || hasPending(),
              "Cannot complete an unfinished arithmetic task");
-    const UnitCompletion completion{
-        active->task.task.key, UnitCompletionStatus::Success, std::nullopt};
+    const UnitCompletion completion{active->task.task.key,
+                                    UnitCompletionStatus::Success,
+                                    std::nullopt, active->fpFlags};
 
     // Liberar antes del callback permite admitir la siguiente tarea.
     active.reset();

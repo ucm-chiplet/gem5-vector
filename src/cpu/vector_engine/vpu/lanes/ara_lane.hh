@@ -10,6 +10,7 @@
 
 #include "cpu/vector_engine/common/lane_completion.hh"
 #include "cpu/vector_engine/vpu/lanes/alu.hh"
+#include "cpu/vector_engine/vpu/lanes/fpu.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
 #include "enums/ByteOrder.hh"
 
@@ -53,7 +54,8 @@ class AraLane
     bool
     isIdle() const
     {
-        return !active && alu.isIdle() && !progressEvent.scheduled();
+        return !active && alu.isIdle() && fpu.isIdle() &&
+               !progressEvent.scheduled();
     }
 
   private:
@@ -110,6 +112,7 @@ class AraLane
     VrfAccessId nextAccessId = 0;
     LaneFragmentId lastFragmentId = InvalidLaneFragmentId;
     Alu alu;
+    Fpu fpu;
     EventFunctionWrapper progressEvent;
 
     void validateTask(const LaneTask &task) const;

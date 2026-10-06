@@ -43,6 +43,8 @@ struct LaneCompletion
 {
     LaneFragmentKey key;
     UnitCompletionStatus status = UnitCompletionStatus::Success;
+    // Publicados después de WriteAck, junto con la finalización del fragmento.
+    FpExceptionFlags fpFlags = 0;
 };
 
 } // namespace gem5::vector_engine

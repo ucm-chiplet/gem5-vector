@@ -42,14 +42,42 @@ VectorSupport::supportsIntegerOperation(ArithmeticOperation operation,
 }
 
 bool
+VectorSupport::supportsFloatingPointOperation(ArithmeticOperation operation,
+                                              uint16_t sew_bits)
+{
+    return operation == ArithmeticOperation::FloatAdd && sew_bits == 16;
+}
+
+bool
 VectorSupport::supportsArithmetic(const ArithmeticCommand &arithmetic,
                                   uint16_t sew_bits)
 {
-    return supportsIntegerOperation(arithmetic.operation, sew_bits) &&
-           arithmetic.widthMode == ElementWidthMode::SameWidth &&
-           arithmetic.signedness == ElementSignedness::NotApplicable &&
-           (std::holds_alternative<VectorRegRef>(arithmetic.secondOperand) ||
-            std::holds_alternative<RegVal>(arithmetic.secondOperand));
+    if (arithmetic.widthMode != ElementWidthMode::SameWidth ||
+        arithmetic.signedness != ElementSignedness::NotApplicable) {
+        return false;
+    }
+    const bool vector_source =
+        std::holds_alternative<VectorRegRef>(arithmetic.secondOperand);
+    if (supportsIntegerOperation(arithmetic.operation, sew_bits)) {
+        return vector_source ||
+               std::holds_alternative<RegVal>(arithmetic.secondOperand);
+    }
+    return supportsFloatingPointOperation(arithmetic.operation, sew_bits) &&
+           vector_source;
+}
+
+bool
+VectorSupport::supportsExecution(
+    const ArithmeticCommand &arithmetic, uint16_t sew_bits,
+    const std::optional<FpExecutionContext> &fp_context)
+{
+    if (!supportsArithmetic(arithmetic, sew_bits)) {
+        return false;
+    }
+    if (supportsIntegerOperation(arithmetic.operation, sew_bits)) {
+        return !fp_context;
+    }
+    return fp_context && isValid(fp_context->roundingMode);
 }
 
 bool
@@ -111,7 +139,11 @@ VectorSupport::checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
     // Rango vacío admisible: el sequencer completa sin emitir tareas.
     if (const auto *arithmetic =
             std::get_if<ArithmeticCommand>(&command.payload)) {
-        if (!supportsArithmetic(*arithmetic, config.sewBits)) {
+        // VectorCommand aún no captura frm ni VectorCompletion devuelve
+        // fflags. Rechazar FP aquí hasta integrar ambos en la frontera CPU;
+        // las tareas internas sí pueden suministrar su contexto explícito.
+        if (!supportsArithmetic(*arithmetic, config.sewBits) ||
+            !supportsIntegerOperation(arithmetic->operation, config.sewBits)) {
             return RejectionReason::UnsupportedOperation;
         }
     } else if (const auto *memory =

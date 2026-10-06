@@ -32,8 +32,8 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
     if (active) {
         return TransferResult::Retry;
     }
-    panic_if(!VectorSupport::supportsIntegerOperation(bundle.operation,
-                                                      bundle.sewBits),
+    panic_if(bundle.fpContext || !VectorSupport::supportsIntegerOperation(
+                                     bundle.operation, bundle.sewBits),
              "Unsupported operation in an admitted ALU bundle");
     const auto element_bytes = VectorSupport::elementBytes(bundle.sewBits);
     const uint64_t offset =

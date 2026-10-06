@@ -33,6 +33,7 @@
 #include <limits>
 #include <optional>
 
+#include "cpu/vector_engine/common/fp_types.hh"
 #include "cpu/vector_engine/common/unit_task.hh"
 #include "cpu/vector_engine/common/vrf_types.hh"
 #include "cpu/vector_engine/interface/vector_command.hh"
@@ -87,6 +88,7 @@ struct LaneTask
 
     // Ausente para vadd.vx: el escalar viaja en arithmetic.secondOperand.
     std::optional<ByteRange> secondVectorSourceRange;
+    std::optional<FpExecutionContext> fpContext = std::nullopt;
 };
 
 } // namespace gem5::vector_engine

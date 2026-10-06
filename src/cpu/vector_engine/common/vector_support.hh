@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 
+#include "cpu/vector_engine/common/fp_types.hh"
 #include "cpu/vector_engine/common/vector_types.hh"
 
 namespace gem5::vector_engine
@@ -34,8 +35,14 @@ class VectorSupport
     static bool supportsConfiguration(const VectorConfig &config);
     static bool supportsIntegerOperation(ArithmeticOperation operation,
                                          uint16_t sew_bits);
+    static bool supportsFloatingPointOperation(ArithmeticOperation operation,
+                                               uint16_t sew_bits);
+    // Capacidades del backend: FloatAdd sólo admite dos fuentes vectoriales.
     static bool supportsArithmetic(const ArithmeticCommand &arithmetic,
                                    uint16_t sew_bits);
+    static bool
+    supportsExecution(const ArithmeticCommand &arithmetic, uint16_t sew_bits,
+                      const std::optional<FpExecutionContext> &fp_context);
     static bool supportsMemory(const MemoryCommand &memory, uint16_t sew_bits);
 
     // Precondición: ancho soportado. La máscara ajusta un patrón de bits
@@ -47,6 +54,7 @@ class VectorSupport
     static uint64_t maxElements(uint32_t vlen_bytes, VectorLmul lmul,
                                 uint16_t sew_bits);
 
+    // Admisión CPU: el contrato actual sólo transporta operaciones enteras.
     // Precondición: descriptor validado estructuralmente por la frontera CPU.
     static std::optional<RejectionReason>
     checkCommand(const VectorCommand &command, uint32_t vlen_bytes,

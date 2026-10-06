@@ -28,6 +28,10 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
           [this](const ExecutionResult &result) {
               recvExecutionResult(result);
           }),
+      fpu(owner, lane_id,
+          [this](const ExecutionResult &result) {
+              recvExecutionResult(result);
+          }),
       progressEvent([this] { evaluate(); },
                     owner.name() + ".lane" + std::to_string(lane_id))
 {
@@ -52,7 +56,8 @@ AraLane::validateTask(const LaneTask &task) const
     panic_if(!task.key.valid() || task.laneId != laneId ||
                  !task.elements.valid(),
              "Invalid lane fragment identity or elements");
-    panic_if(!VectorSupport::supportsArithmetic(arithmetic, task.sewBits),
+    panic_if(!VectorSupport::supportsExecution(arithmetic, task.sewBits,
+                                               task.fpContext),
              "Unsupported operation in an admitted lane fragment");
     const auto *second_source =
         std::get_if<VectorRegRef>(&arithmetic.secondOperand);
@@ -111,7 +116,8 @@ AraLane::acceptTask(const LaneTask &task)
         return TransferResult::Retry;
     }
     validateTask(task);
-    panic_if(!alu.isIdle(), "Idle lane still has an active ALU");
+    panic_if(!alu.isIdle() || !fpu.isIdle(),
+             "Idle lane still has an active execution unit");
     if (accessTask && *accessTask == task.key.task) {
         // TaskDistributor entrega sus fragmentos en orden creciente por lane.
         panic_if(task.key.fragmentId <= lastFragmentId,
@@ -133,7 +139,8 @@ AraLane::acceptTask(const LaneTask &task)
                         task.arithmetic.destination,
                         task.destinationRange,
                         std::vector<uint32_t>(task.elements.elementCount),
-                        std::vector<uint32_t>(task.elements.elementCount)};
+                        std::vector<uint32_t>(task.elements.elementCount),
+                        task.fpContext};
     state.pending[0] = PendingVrfAccess{
         VrfReadRequest{
             makeAccess(task.arithmetic.vectorSource, task.vectorSourceRange)},
@@ -225,17 +232,19 @@ AraLane::evaluate()
             break;
         case Phase::Execute: {
             state.phase = Phase::WaitExecution;
-            const auto result = alu.acceptBundle(state.bundle);
+            const auto result = state.task.fpContext
+                                    ? fpu.acceptBundle(state.bundle)
+                                    : alu.acceptBundle(state.bundle);
             switch (result) {
                 case TransferResult::Accepted:
                     break;
                 case TransferResult::Retry:
                     panic_if(state.phase != Phase::WaitExecution,
-                             "ALU responded to a rejected bundle");
+                             "Execution unit responded to a rejected bundle");
                     state.phase = Phase::Execute;
                     break;
                 default:
-                    panic("Invalid ALU transfer result");
+                    panic("Invalid execution unit transfer result");
             }
             break;
         }
@@ -302,7 +311,7 @@ void
 AraLane::recvExecutionResult(const ExecutionResult &result)
 {
     panic_if(!active || active->phase != Phase::WaitExecution,
-             "Unexpected lane ALU result");
+             "Unexpected lane execution result");
     auto &state = *active;
     const auto &task = state.task;
     panic_if(result.key != task.key || result.sewBits != task.sewBits ||
@@ -310,9 +319,11 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
                  result.destination != task.arithmetic.destination ||
                  result.destinationRange != task.destinationRange ||
                  result.values.size() != task.elements.elementCount ||
-                 state.result || state.pending[0] || state.pending[1] ||
-                 state.pending[2] || !state.lhsReady || !state.rhsReady,
-             "Lane ALU result does not match its pending fragment");
+                 !validFpFlags(result.fpFlags) ||
+                 (!task.fpContext && result.fpFlags != 0) || state.result ||
+                 state.pending[0] || state.pending[1] || state.pending[2] ||
+                 !state.lhsReady || !state.rhsReady,
+             "Lane execution result does not match its pending fragment");
     state.result = result;
     ByteBuffer data(task.destinationRange.size);
     const auto element_bytes = VectorSupport::elementBytes(task.sewBits);
@@ -356,12 +367,13 @@ void
 AraLane::finish()
 {
     panic_if(!active || active->phase != Phase::Finish || !active->result ||
-                 !alu.isIdle() ||
+                 !alu.isIdle() || !fpu.isIdle() ||
                  std::any_of(active->pending.begin(), active->pending.end(),
                              [](const auto &entry) { return bool(entry); }),
              "Cannot finish a lane fragment with pending work");
     const LaneCompletion completion{active->task.key,
-                                    UnitCompletionStatus::Success};
+                                    UnitCompletionStatus::Success,
+                                    active->result->fpFlags};
     // Sólo WriteAck habilita Finish. Se libera la capacidad antes de notificar
     // para que el receptor pueda admitir el siguiente fragmento en el
     // callback.
