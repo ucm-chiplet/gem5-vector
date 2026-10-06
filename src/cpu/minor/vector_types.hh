@@ -67,7 +67,8 @@ struct DecodedArithmeticOp
 {
     vector_engine::ArithmeticOperation operation =
         vector_engine::ArithmeticOperation::Invalid;
-    RegIndex destination = 0;
+    RegIndex destination = 0; // -TODO va a haber que hacer esto std::variant
+                              // para poder escribir en datapath escalar.
     RegIndex vectorSource = 0;
     std::variant<RegIndex, ScalarOperandRef> secondOperand;
 };

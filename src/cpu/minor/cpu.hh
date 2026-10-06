@@ -44,6 +44,8 @@
 #ifndef __CPU_MINOR_CPU_HH__
 #define __CPU_MINOR_CPU_HH__
 
+#include <memory>
+
 #include "base/compiler.hh"
 #include "base/random.hh"
 #include "cpu/base.hh"
@@ -51,7 +53,6 @@
 #include "cpu/minor/stats.hh"
 #include "cpu/simple_thread.hh"
 #include "cpu/vector_engine/interface/cpu_vector_interface.hh"
-#include "cpu/vector_engine/vector_engine.hh"
 #include "enums/ThreadPolicy.hh"
 #include "params/BaseMinorCPU.hh"
 
@@ -83,7 +84,7 @@ typedef SimpleThread MinorThread;
  *      minor::ExecContext objects
  *  created by minor::Execute.
  */
-class MinorCPU : public BaseCPU
+class MinorCPU : public BaseCPU, public vector_engine::CpuCompletionEndpoint
 {
   protected:
     /** pipeline is a container for the clockable pipeline stage objects.
@@ -138,6 +139,8 @@ class MinorCPU : public BaseCPU
     void init() override;
     void startup() override;
     void wakeup(ThreadID tid) override;
+    void accepted(vector_engine::CommandKey command) override;
+    void completed(const vector_engine::VectorCompletion &completion) override;
 
     /** Processor-specific statistics */
     minor::MinorStats stats;
@@ -211,13 +214,19 @@ class MinorCPU : public BaseCPU
   protected:
     /**  Whether supported vector instructions may be offloaded to a VPU. */
     bool vectorOffloadEnabledFlag;
-    vector_engine::VpuCommandEndpoint *vectorEngine;
+    std::unique_ptr<vector_engine::CpuVectorInterface> cpuVectorInterface;
 
   public:
     bool
     isVectorOffloadEnabled() const
     {
-        return vectorOffloadEnabledFlag && vectorEngine != nullptr;
+        return vectorOffloadEnabledFlag && cpuVectorInterface != nullptr;
+    }
+
+    vector_engine::CpuVectorInterface &
+    getCpuVectorInterface()
+    {
+        return *cpuVectorInterface;
     }
 };
 

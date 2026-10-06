@@ -445,7 +445,6 @@ class BaseMinorCPU(BaseCPU):
         "Branch Predictor",
     )
 
-    # -TODO must add the VPU as a variable to the MinorCPU in a near future.
     vectorOffloadEnabled = Param.Bool(
         False,
         "Allow supported vector instructions to be offloaded to a VPU",

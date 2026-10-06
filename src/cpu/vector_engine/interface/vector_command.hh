@@ -23,7 +23,7 @@ namespace gem5::vector_engine
  * sin duplicar esa información en otro campo. El inmediato queda reservado.
  */
 using ArithmeticOperand = std::variant<VectorRegRef, RegVal, int64_t>;
-
+using DestinationOperand = std::variant<VectorRegRef, RegIndex>;
 /**
  * Operación y operandos que MinorCPU entrega a la VPU ya decodificados.
  * AraSequencer los copia a ArithmeticTask para TaskDistributor y las lanes.

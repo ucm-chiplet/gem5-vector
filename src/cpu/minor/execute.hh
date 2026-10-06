@@ -305,6 +305,12 @@ class Execute : public Named
         BranchData &branch, Fault &fault, bool &committed,
         bool &completed_mem_issue);
 
+    vector_engine::VectorConfig
+    captureVectorConfig(ThreadContext *thread) const;
+
+    vector_engine::VectorCommand
+    buildVectorCommand(MinorVectorState &state, ThreadContext *thread) const;
+
     /** Try and commit instructions from the ends of the functional unit
      *  pipelines.
      *  If only_commit_microops is true then only commit upto the
@@ -339,6 +345,9 @@ class Execute : public Named
 
     /** To allow ExecContext to find the LSQ */
     LSQ &getLSQ() { return lsq; }
+
+    void accepted(vector_engine::CommandKey command);
+    void completed(const vector_engine::VectorCompletion &completion);
 
     /** Does the given instruction have the right stream sequence number
      *  to be committed? */

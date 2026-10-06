@@ -50,8 +50,8 @@ isValid(VectorLmul lmul)
  */
 struct VectorConfig
 {
-    uint32_t vl = 0;
-    uint32_t vstart = 0;
+    uint64_t vl = 0;
+    uint64_t vstart = 0;
     uint16_t sewBits = 0;
     VectorLmul lmul = VectorLmul::Invalid;
     bool masked = false;

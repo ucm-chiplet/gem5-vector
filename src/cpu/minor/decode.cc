@@ -38,6 +38,7 @@
 #include "cpu/minor/decode.hh"
 
 #include "arch/generic/decoder.hh"
+#include "arch/riscv/insts/static_inst.hh"
 #include "base/logging.hh"
 #include "base/trace.hh"
 #include "cpu/minor/pipeline.hh"
@@ -52,7 +53,13 @@ namespace minor
 DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
 {
     DecodedVectorOp decoded;
-    // -TODO falta poner registros numerados de 0 a 31
+    /** -TODO faltaría usar/reutilizar la decodificación de la ISA
+     * para hacerlo de una forma más limpia y menos propensa a errores.
+     * por el momento mientras solo hay 4 instrucciones vectoriales definidas
+     * lo dejamos así.
+     * Importante también permitir que se escriba en el datapath escalar ->
+     * necesitamos modificar vector_types y vector_command
+     * */
 
     if (!static_inst->isVector()) {
         decoded.executionClass = VectorExecutionClass::CpuScalar;
@@ -63,18 +70,23 @@ DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
         return decoded;
     }
 
-    // -TODO temporal mientras solo tenemos estas 4 instrucciones definidas.
     const std::string name = static_inst->getName();
-    const bool is_vadd_vv = name == "vadd_vv";
-    const bool is_vadd_vx = name == "vadd_vx";
-    const bool is_vle32 = name == "vle32_v";
-    const bool is_vse32 = name == "vse32_v";
+    const bool is_vadd_vv = (name.find("vadd_vv") != std::string::npos);
+    const bool is_vadd_vx = (name.find("vadd_vx") != std::string::npos);
+    const bool is_vle32 = (name.find("vle32_v") != std::string::npos);
+    const bool is_vse32 = (name.find("vse32_v") != std::string::npos);
 
     if ((!is_vadd_vv && !is_vadd_vx && !is_vle32 && !is_vse32) ||
         !cpu.isVectorOffloadEnabled()) {
         decoded.executionClass = VectorExecutionClass::NativeVector;
         return decoded;
     }
+
+    auto rv_inst =
+        static_cast<const RiscvISA::RiscvStaticInst *>(static_inst.get());
+    uint32_t mach_inst = rv_inst->machInst;
+    bool vm_bit = (mach_inst >> 25) & 1;
+    decoded.masked = (vm_bit == 0);
 
     decoded.executionClass = VectorExecutionClass::VpuOffload;
     if(static_inst->isMemRef()) {
@@ -84,6 +96,8 @@ DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
         if (static_inst->isLoad()) {
             mem_op.direction = vector_engine::MemoryDirection::Load;
             mem_op.dataReg = static_inst->destRegIdx(0).index();
+            panic_if(mem_op.dataReg >= 32,
+                     "VPU Offload: Load dataReg (vd) >= 32"); // ¡Cortafuegos!
             mem_op.base.sourceOperandIndex = 0; // vle32.v dest (src)
         } else if (static_inst->isStore()) {
             mem_op.direction = vector_engine::MemoryDirection::Store;
@@ -94,6 +108,9 @@ DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
                 mem_op.base.sourceOperandIndex = 1;
                 mem_op.dataReg = static_inst->srcRegIdx(0).index();
             }
+            panic_if(
+                mem_op.dataReg >= 32,
+                "VPU Offload: Store dataReg (vs3) >= 32"); // ¡Cortafuegos!
         }
 
         decoded.payload = mem_op;
@@ -102,9 +119,16 @@ DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
         arith_op.operation = vector_engine::ArithmeticOperation::Add; // De momento fijo al solo soportar vadd dentro de aritmeticas
 
         /* Extraemos el índice arquitectónico
-         * del destino (vd) y el primer operando. */
-        arith_op.destination = static_inst->destRegIdx(0).index();
-        arith_op.vectorSource = (static_inst->srcRegIdx(0).classValue()==VecRegClass)?static_inst->srcRegIdx(0).index():static_inst->srcRegIdx(1).index();
+         * del destino (vd). */
+        arith_op.destination =
+            static_inst->destRegIdx(0)
+                .index(); // Está directamente numerado del 0 al 31.
+        arith_op.vectorSource =
+            (static_inst->srcRegIdx(0).classValue() == VecRegClass)
+                ? static_inst->srcRegIdx(0).index()
+                : static_inst->srcRegIdx(1).index();
+        panic_if(arith_op.vectorSource >= 32,
+                 "VPU Offload: Arith vs1 >= 32"); // ¡Cortafuegos!
 
         if (is_vadd_vv) {
             // vv: el segundo operando es otro registro vectorial (vs1).

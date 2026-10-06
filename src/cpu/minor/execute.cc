@@ -38,7 +38,13 @@
 #include "cpu/minor/execute.hh"
 
 #include <functional>
+#include <type_traits>
+#include <variant>
 
+#include "arch/riscv/faults.hh"
+#include "arch/riscv/insts/static_inst.hh"
+#include "arch/riscv/regs/misc.hh"
+#include "arch/riscv/utility.hh"
 #include "cpu/minor/cpu.hh"
 #include "cpu/minor/exec_context.hh"
 #include "cpu/minor/fetch1.hh"
@@ -60,6 +66,132 @@ namespace gem5
 
 namespace minor
 {
+
+// Decodificador para el campo vlmul
+inline vector_engine::VectorLmul
+decodeVlmul(uint8_t vlmul_bits)
+{
+    switch (vlmul_bits) {
+        case 0:
+            return vector_engine::VectorLmul::M1;
+        case 1:
+            return vector_engine::VectorLmul::M2;
+        case 2:
+            return vector_engine::VectorLmul::M4;
+        case 3:
+            return vector_engine::VectorLmul::M8;
+        case 5:
+            return vector_engine::VectorLmul::Mf8;
+        case 6:
+            return vector_engine::VectorLmul::Mf4;
+        case 7:
+            return vector_engine::VectorLmul::Mf2;
+        default:
+            return vector_engine::VectorLmul::Invalid; // Maneja el caso 4
+                                                       // (Reservado)
+    }
+}
+
+vector_engine::VectorConfig
+Execute::captureVectorConfig(ThreadContext *thread) const
+{
+    // We use readMiscRegNoEffect here because we don't want to change the
+    // state of the vector unit when capturing the config.
+    const RegVal vtype = thread->readMiscRegNoEffect(RiscvISA::MISCREG_VTYPE);
+    vector_engine::VectorConfig config;
+    config.vl = thread->readMiscRegNoEffect(RiscvISA::MISCREG_VL);
+    config.vstart = thread->readMiscRegNoEffect(RiscvISA::MISCREG_VSTART);
+
+    config.sewBits = RiscvISA::vtype_SEW(
+        vtype); // vtyope_SEW returns the SEW in bits, which is what we want
+                // for the VectorConfig.
+
+    config.lmul = decodeVlmul(RiscvISA::vtype_vlmul(vtype));
+
+    config.tailAgnostic = (vtype >> 6) & 1;
+    config.maskAgnostic = (vtype >> 7) & 1;
+    return config;
+}
+
+vector_engine::VectorCommand
+Execute::buildVectorCommand(MinorVectorState &state,
+                            ThreadContext *thread) const
+{
+    vector_engine::VectorCommand command;
+    command.command = *state.commandKey;
+    command.pc = state.inst->pc->instAddr();
+    command.config = captureVectorConfig(thread);
+    command.config.masked = state.decoded.masked;
+    command.requestorId = cpu.dataRequestorId();
+
+    panic_if(!state.decoded.payload,
+             "VPU offload instruction has no decoded payload");
+
+    const uint64_t vtype =
+        thread->readMiscRegNoEffect(RiscvISA::MISCREG_VTYPE);
+    // Devuelve el multiplicador de registros por grupo (LMUL) según el vtype.
+    const uint8_t group =
+        static_cast<uint8_t>(RiscvISA::vtype_regs_per_group(vtype));
+
+    // Empaqueta el indice del primer registro y el tamaño del grupo en un
+    // VectorRegRef.
+    const auto make_ref = [group](RegIndex first_reg) {
+        return vector_engine::VectorRegRef{static_cast<uint8_t>(first_reg),
+                                           group};
+    };
+
+    // Obtenemos una referencia limpia al variant (el panic_if previo ya
+    // garantizó que existe)
+    auto &payload_variant = *state.decoded.payload;
+
+    /**  Usamos punteros explícitos con std::get_if para ver si se
+     * trata de una instrucción de memoria o aritmética, y construimos
+     * el comando correspondiente.
+     */
+    if (auto *arith_op = std::get_if<DecodedArithmeticOp>(&payload_variant)) {
+
+        vector_engine::ArithmeticCommand arithmetic;
+        arithmetic.operation = arith_op->operation;
+        // -TODO por el momento solo puede ser destination vectorial.
+        arithmetic.destination = make_ref(arith_op->destination);
+        // Siempre vectorSource va a ser vectorial
+        arithmetic.vectorSource = make_ref(arith_op->vectorSource);
+
+        // -TODO de momento solo puede ser vector o escalar, habría que
+        // modificar decode para aceptar imm también en un futuro próximo
+
+        // As secondOperand: ArithmeticOperand = std::variant<VectorRegRef,
+        // RegVal, int64_t>;
+        if (auto *reg_idx = std::get_if<RegIndex>(&arith_op->secondOperand)) {
+            arithmetic.secondOperand = make_ref(*reg_idx);
+        } else if (auto *scalar = std::get_if<ScalarOperandRef>(
+                       &arith_op->secondOperand)) {
+            arithmetic.secondOperand =
+                thread->getReg(state.inst->staticInst->srcRegIdx(
+                    scalar->sourceOperandIndex) // Leemos el valor del registro
+                                                // escalar
+                );
+        }
+
+        command.payload = arithmetic;
+
+    } else if (auto *mem_op = std::get_if<DecodedMemoryOp>(&payload_variant)) {
+
+        vector_engine::MemoryCommand memory;
+        memory.direction = mem_op->direction;
+        memory.dataReg = make_ref(mem_op->dataReg);
+        memory.base = thread->getReg(state.inst->staticInst->srcRegIdx(
+            mem_op->base.sourceOperandIndex));
+        // -TODO Por el momento solo aceptamos vle y vse que son por definición
+        // unit-stride
+        memory.addressing = vector_engine::UnitStrideAddress{};
+        memory.elementWidthBits = mem_op->elementWidthBits;
+
+        command.payload = memory;
+    }
+
+    return command;
+}
 
 Execute::Execute(const std::string &name_, MinorCPU &cpu_,
                  const BaseMinorCPUParams &params,
@@ -611,8 +743,8 @@ Execute::issue(ThreadID thread_id)
                  * trying to model latency in issue stage for the moment
                  */
 
-                // -TODO No es necesario comprobar aquí dependencias ya que
-                // hasta que no llegue al head of inFlightInst, que es cuando
+                // No es necesario comprobar aquí dependencias ya que
+                // hasta que no llegue al head of inFlightInst, no
                 // se mandaría a la VPU
 
                 fu_index = noCostFUIndex;
@@ -993,6 +1125,42 @@ Execute::doInstCommitAccounting(MinorDynInstPtr inst)
     cpu.probeInstCommit(inst->staticInst, inst->pc->instAddr());
 }
 
+void
+Execute::accepted(vector_engine::CommandKey command)
+{
+    for (auto &thread_info : executeInfo) {
+        if (!thread_info.vpuOffloadStates->empty() &&
+            thread_info.vpuOffloadStates->front().commandKey == command) {
+            auto &state = thread_info.vpuOffloadStates->front();
+            panic_if(state.phase != MinorVectorPhase::Dispatched,
+                     "MinorCPU received an unexpected VPU acceptance");
+            state.phase = MinorVectorPhase::Accepted;
+            return;
+        }
+    }
+
+    panic("MinorCPU received acceptance for an unknown VPU command");
+}
+
+void
+Execute::completed(const vector_engine::VectorCompletion &completion)
+{
+    for (auto &thread_info : executeInfo) {
+        if (!thread_info.vpuOffloadStates->empty() &&
+            thread_info.vpuOffloadStates->front().commandKey ==
+                completion.command) {
+            auto &state = thread_info.vpuOffloadStates->front();
+            panic_if(state.phase != MinorVectorPhase::Accepted,
+                     "MinorCPU received an unexpected VPU completion");
+            state.completion = completion;
+            state.phase = MinorVectorPhase::Completed;
+            return;
+        }
+    }
+
+    panic("MinorCPU received completion for an unknown VPU command");
+}
+
 bool
 Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
     BranchData &branch, Fault &fault, bool &committed,
@@ -1050,41 +1218,58 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
             case MinorVectorPhase::WaitDependencies:
                 if (scoreboard[thread_id].canVPUInstOffload(
                         inst, cpu.curCycle(), cpu.getContext(thread_id))) {
-                    // -TODO ask CpuVectorInterface for commandKey
-                    /**
-                     * vec_state->commandKey = requestCommandKey()
-                     * VectorCommand vec_command;
-                     * Rellenamos vec_command;
-                     * vec_state->command = vec_command;*/
-                    // Avanzamos a WaitGrant
+                    auto &vector_interface = cpu.getCpuVectorInterface();
+                    vec_state->commandKey =
+                        vector_interface.allocateCommandKey(
+                            cpu.getContext(thread_id)->contextId());
+                    vec_state->command = buildVectorCommand(
+                        *vec_state, cpu.getContext(thread_id));
                     vec_state->phase = MinorVectorPhase::WaitGrant;
                 }
                 break;
             case MinorVectorPhase::WaitGrant:
-                /**
-                 * CpuVectorInterface::requestGrant(command)
-                 * Si stall, mantenemos aquí, si grantend, guardamos
-                 * GrantToken, hacemos dispatch de la instrucción y avanzamos a
-                 * Dispatched vec_state->phase = (res==granted) ?
-                 * MinorVectorPhase::Dispatched : MinorVectorPhase::WaitGrant;
-                 */
+                panic_if(!vec_state->commandKey || !vec_state->command,
+                         "VPU offload is missing its command identity");
+                {
+                    auto &vector_interface = cpu.getCpuVectorInterface();
+                    const auto result =
+                        vector_interface.requestGrant(*vec_state->command);
+                    if (result.status == vector_engine::GrantStatus::Granted) {
+                        panic_if(!result.token,
+                                 "Granted VPU command has no grant token");
+                        vec_state->grantToken = result.token;
+                        // Update the phase before dispatch: the VPU may
+                        // answer synchronously through the CPU interface.
+                        vec_state->phase = MinorVectorPhase::Dispatched;
+                        vector_interface.dispatch(*vec_state->grantToken,
+                                                  *vec_state->command);
+                    } else if (result.status ==
+                               vector_engine::GrantStatus::Rejected) {
+                        auto *riscv_inst =
+                            dynamic_cast<RiscvISA::RiscvStaticInst *>(
+                                inst->staticInst.get());
+                        fatal_if(!riscv_inst,
+                                 "VPU offload requires a RISC-V instruction");
+                        fault = std::make_shared<RiscvISA::IllegalInstFault>(
+                            "VPU rejected vector command",
+                            riscv_inst->machInst);
+                        // Saltamos a la rutina de Manejo de Excepciones del SO
+                        fault->invoke(thread, nullptr);
+                        tryToBranch(inst, fault, branch);
+                        completed_inst = true;
+                    }
+                }
                 break;
             case MinorVectorPhase::Dispatched:
-                /**
-                 * CpuVectorInterface::dispatch(grantToken, command), se
-                 * empujan los datos a la VPU -TODO no avanza a accepted aún?
-                 * Donde se queda?, porque sino podría volverse a dispatchear
-                 */
-                break;
             case MinorVectorPhase::Accepted:
-                /**
-                 * Se espera la respuesta final del comando
+                /** Asynchronous wait. We don't do anything here, we will be
+                 * notified through the accepted() and completed() callbacks.
                  */
                 break;
             case MinorVectorPhase::Completed:
                 /**
-                 * Se gestionan excepciones, actualizas registros escalares en
-                 * caso de que sea necesario, borras de inFlightInst...
+                 * -TODO: falta gestionar excepciones, actualizas registros
+                 * escalares en caso de que sea necesario...
                  */
                 completed_inst = true;
                 break;

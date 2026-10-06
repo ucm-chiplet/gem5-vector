@@ -107,6 +107,18 @@ Pipeline::Pipeline(MinorCPU &cpu_, const BaseMinorCPUParams &params) :
 }
 
 void
+Pipeline::accepted(vector_engine::CommandKey command)
+{
+    execute.accepted(command);
+}
+
+void
+Pipeline::completed(const vector_engine::VectorCompletion &completion)
+{
+    execute.completed(completion);
+}
+
+void
 Pipeline::minorTrace() const
 {
     fetch1.minorTrace();

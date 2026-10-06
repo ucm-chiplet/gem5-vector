@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 
 #include "cpu/vector_engine/common/command_key.hh"
 #include "cpu/vector_engine/interface/vector_command.hh"
@@ -144,6 +145,36 @@ class CpuCompletionEndpoint
     virtual void accepted(CommandKey command) = 0;
     // AraSequencer informa del cierre; Minor procesa el resultado o el fallo.
     virtual void completed(const VectorCompletion &completion) = 0;
+};
+
+/** Adaptador bidireccional entre Execute/MinorCPU y la VPU. */
+class CpuVectorInterface : public VpuCommandEndpoint,
+                           public CpuCompletionEndpoint
+{
+  public:
+    explicit CpuVectorInterface(CpuCompletionEndpoint &cpu_endpoint,
+                                VpuCommandEndpoint &vpu_endpoint)
+        : completionEndpoint(cpu_endpoint), vpuEndpoint(vpu_endpoint)
+    {}
+
+    ~CpuVectorInterface() override;
+
+    GrantResult requestGrant(const VectorCommand &command) override;
+    void dispatch(const GrantToken &token,
+                  const VectorCommand &command) override;
+    void accepted(CommandKey command) override;
+    void completed(const VectorCompletion &completion) override;
+
+    CommandKey allocateCommandKey(ContextID contextId);
+
+  private:
+    CpuCompletionEndpoint &completionEndpoint;
+    VpuCommandEndpoint &vpuEndpoint;
+    /** Although we don't currently support SMT, we track
+     * command IDs per context using an unordered_map to
+     * facilitate future expansion. Each context ID has its
+     * own independent counter. */
+    std::unordered_map<ContextID, uint64_t> nextCommandIds;
 };
 
 } // namespace gem5::vector_engine

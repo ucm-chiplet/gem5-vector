@@ -37,12 +37,18 @@
 
 #include "cpu/minor/cpu.hh"
 
+#include <utility>
+
+#include "arch/riscv/faults.hh"
+#include "arch/riscv/isa.hh"
 #include "cpu/minor/dyn_inst.hh"
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/pipeline.hh"
+#include "cpu/vector_engine/vector_engine.hh"
 #include "debug/Drain.hh"
 #include "debug/MinorCPU.hh"
 #include "debug/Quiesce.hh"
+#include "sim/system.hh"
 
 namespace gem5
 {
@@ -51,9 +57,7 @@ MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
     : BaseCPU(params),
       threadPolicy(params.threadPolicy),
       stats(this),
-      vectorOffloadEnabledFlag(params.vectorOffloadEnabled),
-      vectorEngine(static_cast<vector_engine::VpuCommandEndpoint *>(
-          params.vectorEngine))
+      vectorOffloadEnabledFlag(params.vectorOffloadEnabled)
 {
     /* This is only written for one thread at the moment */
     minor::MinorThread *thread;
@@ -74,6 +78,55 @@ MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
         threadContexts.push_back(tc);
     }
 
+    if (params.vectorEngine) {
+        fatal_if(threadContexts.size() != 1,
+                 "MinorCPU vector offload requires one thread context");
+
+        auto *riscv_isa =
+            dynamic_cast<RiscvISA::ISA *>(threadContexts.front()->getIsaPtr());
+        fatal_if(!riscv_isa, "MinorCPU vector offload requires a RISC-V ISA");
+
+        vector_engine::VectorEngine::CpuBinding binding;
+        binding.contextId =
+            threadContexts.front()
+                ->contextId(); // As we only support one thread context, we can
+                               // use the front.
+        binding.vlenBytes = riscv_isa->getVecLenInBytes();
+        binding.addressBits = riscv_isa->rvType() == RiscvISA::RV32
+                                  ? 32
+                                  : 64; // ¿Se puede modificar?
+        binding.byteOrder = system->getGuestByteOrder();
+        binding.resolveContext = [this](ContextID context_id) {
+            for (ThreadContext *context : threadContexts) {
+                if (context->contextId() == context_id) {
+                    return context;
+                }
+            }
+            return static_cast<ThreadContext *>(nullptr);
+        };
+        binding.accessFault = [](Addr address,
+                                 vector_engine::MemoryDirection dir) {
+            if (dir == vector_engine::MemoryDirection::Load) {
+                // Excepción de lectura RISC-V
+                return Fault(std::make_shared<RiscvISA::AddressFault>(
+                    address, RiscvISA::ExceptionCode::LOAD_ACCESS));
+            } else {
+                // Excepción de escritura RISC-V
+                return Fault(std::make_shared<RiscvISA::AddressFault>(
+                    address, RiscvISA::ExceptionCode::STORE_ACCESS));
+            }
+        };
+
+        auto *engine =
+            dynamic_cast<vector_engine::VectorEngine *>(params.vectorEngine);
+        fatal_if(!engine,
+                 "MinorCPU vectorEngine must be a VectorEngine instance");
+
+        cpuVectorInterface =
+            std::make_unique<vector_engine::CpuVectorInterface>(*this,
+                                                                *engine);
+        engine->bindCpu(*cpuVectorInterface, std::move(binding));
+    }
 
     if (params.checker) {
         fatal("The Minor model doesn't support checking (yet)\n");
@@ -95,6 +148,18 @@ MinorCPU::~MinorCPU()
     for (ThreadID thread_id = 0; thread_id < threads.size(); thread_id++) {
         delete threads[thread_id];
     }
+}
+
+// TODO: revisado, todo perfecto
+void
+MinorCPU::accepted(vector_engine::CommandKey command)
+{
+    pipeline->accepted(command);
+}
+void
+MinorCPU::completed(const vector_engine::VectorCompletion &completion)
+{
+    pipeline->completed(completion);
 }
 
 void

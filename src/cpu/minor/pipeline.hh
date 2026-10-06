@@ -139,6 +139,9 @@ class Pipeline : public Ticked
 
     /** To give the activity recorder to the CPU */
     MinorActivityRecorder *getActivityRecorder() { return &activityRecorder; }
+
+    void accepted(vector_engine::CommandKey command);
+    void completed(const vector_engine::VectorCompletion &completion);
 };
 
 } // namespace minor
