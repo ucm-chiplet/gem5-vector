@@ -1135,6 +1135,8 @@ Execute::accepted(vector_engine::CommandKey command)
             panic_if(state.phase != MinorVectorPhase::Dispatched,
                      "MinorCPU received an unexpected VPU acceptance");
             state.phase = MinorVectorPhase::Accepted;
+
+            cpu.wakeupOnEvent(Pipeline::ExecuteStageId);
             return;
         }
     }
@@ -1154,6 +1156,8 @@ Execute::completed(const vector_engine::VectorCompletion &completion)
                      "MinorCPU received an unexpected VPU completion");
             state.completion = completion;
             state.phase = MinorVectorPhase::Completed;
+
+            cpu.wakeupOnEvent(Pipeline::ExecuteStageId);
             return;
         }
     }
@@ -1271,6 +1275,24 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                  * -TODO: falta gestionar excepciones, actualizas registros
                  * escalares en caso de que sea necesario...
                  */
+                if (vec_state->completion->status ==
+                    vector_engine::CompletionStatus::MemoryFault) {
+                    // Extraemos el objeto Fault real que creó el
+                    // VectorMemoryBackend
+                    fault = vec_state->completion->fault->fault;
+
+                    DPRINTF(MinorExecute,
+                            "VPU Offload returned a memory fault: %s\n",
+                            fault->name());
+
+                    // Saltamos a la rutina del SO
+                    fault->invoke(thread, nullptr);
+                    tryToBranch(inst, fault, branch);
+                } else if (vec_state->completion->status !=
+                           vector_engine::CompletionStatus::Success) {
+                    panic("Unexpected completion status from VPU"); // -TODO
+                                                                    // temporal
+                }
                 completed_inst = true;
                 break;
         }
@@ -1612,6 +1634,23 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                 discard_inst = inst->id.streamSeqNum !=
                     ex_info.streamSeqNum || discard;
 
+                // Para evitar que instrucciones vectoriales que ya han sido
+                // enviadas a la VPU sean descartadas.
+                if (discard_inst &&
+                    inst->decodedVectorOp.executionClass ==
+                        VectorExecutionClass::VpuOffload &&
+                    cpu.isVectorOffloadEnabled()) {
+                    auto &vec_state = ex_info.vpuOffloadStates->front();
+                    // Si ya se envió a la VPU, cancelamos el descarte.
+                    if (vec_state.phase == MinorVectorPhase::Dispatched ||
+                        vec_state.phase == MinorVectorPhase::Accepted ||
+                        vec_state.phase == MinorVectorPhase::Completed) {
+                        DPRINTF(MinorExecute,
+                                "Protecting VPU inst from discard: %s\n",
+                                *inst);
+                        discard_inst = false;
+                    }
+                }
                 /* Is this instruction discardable as its streamSeqNum
                  *  doesn't match? */
                 if (!discard_inst) {
