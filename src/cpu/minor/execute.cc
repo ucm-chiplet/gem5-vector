@@ -69,7 +69,7 @@ namespace minor
 
 // Decodificador para el campo vlmul
 inline vector_engine::VectorLmul
-decodeVlmul(uint8_t vlmul_bits)
+decodeVlmul(int64_t vlmul_bits)
 {
     switch (vlmul_bits) {
         case 0:
@@ -80,15 +80,15 @@ decodeVlmul(uint8_t vlmul_bits)
             return vector_engine::VectorLmul::M4;
         case 3:
             return vector_engine::VectorLmul::M8;
-        case 5:
+        case -3:
             return vector_engine::VectorLmul::Mf8;
-        case 6:
+        case -2:
             return vector_engine::VectorLmul::Mf4;
-        case 7:
+        case -1:
             return vector_engine::VectorLmul::Mf2;
         default:
-            return vector_engine::VectorLmul::Invalid; // Maneja el caso 4
-                                                       // (Reservado)
+            return vector_engine::VectorLmul::Invalid; // Maneja el caso
+                                                       // Reservado
     }
 }
 
@@ -728,47 +728,6 @@ Execute::issue(ThreadID thread_id)
             /* Try FU from 0 each instruction */
             fu_index = 0;
 
-            /** As if it's an VPUOfload instruction
-             * it doesn't have to pass through an VPU, thus we don't
-             * have to check whether there is one available.
-             * Fuera de búcle por mayor control y eficiencia*/
-            if (inst->decodedVectorOp.executionClass ==
-                    VectorExecutionClass::VpuOffload &&
-                cpu.isVectorOffloadEnabled()) {
-                DPRINTF(MinorExecute,
-                        "Skipping issue stage as the instruction %s is "
-                        "VPU Offload\n",
-                        *inst);
-                /** Issue VPUOffload insts. to noCostFUIndex as we are not
-                 * trying to model latency in issue stage for the moment
-                 */
-
-                // No es necesario comprobar aquí dependencias ya que
-                // hasta que no llegue al head of inFlightInst, no
-                // se mandaría a la VPU
-
-                fu_index = noCostFUIndex;
-                cpu.activityRecorder->activity();
-
-                scoreboard[thread_id].markupInstDests(
-                    inst, cpu.curCycle() + Cycles(0),
-                    cpu.getContext(thread_id), false);
-
-                inst->fuIndex = noCostFUIndex;
-                inst->extraCommitDelay = Cycles(0);
-                inst->extraCommitDelayExpr = NULL;
-
-                MinorVectorState vector_state;
-                vector_state.inst = inst;
-                vector_state.decoded = inst->decodedVectorOp;
-                vector_state.phase = MinorVectorPhase::WaitDependencies;
-
-                QueuedInst fu_inst(inst);
-                thread.inFlightInsts->push(fu_inst);
-                thread.vpuOffloadStates->push(vector_state);
-
-                issued = true;
-            }
             /* Try and issue a single instruction stepping through the
              *  available FUs */
             do {
@@ -809,6 +768,45 @@ Execute::issue(ThreadID thread_id)
 
                     issued = true;
 
+                } else if (inst->decodedVectorOp.executionClass ==
+                               VectorExecutionClass::VpuOffload &&
+                           cpu.isVectorOffloadEnabled()) {
+                    /** As if it's an VPUOfload instruction
+                     * it doesn't have to pass through an VPU, thus we don't
+                     * have to check whether there is one available.*/
+                    DPRINTF(MinorExecute,
+                            "Skipping issue stage as the instruction %s is "
+                            "VPU Offload\n",
+                            *inst);
+                    /** Issue VPUOffload insts. to noCostFUIndex as we are not
+                     * trying to model latency in issue stage for the moment
+                     */
+
+                    // No es necesario comprobar aquí dependencias ya que
+                    // hasta que no llegue al head of inFlightInst, no
+                    // se mandaría a la VPU
+
+                    fu_index = noCostFUIndex;
+                    cpu.activityRecorder->activity();
+
+                    scoreboard[thread_id].markupInstDests(
+                        inst, cpu.curCycle() + Cycles(0),
+                        cpu.getContext(thread_id), false);
+
+                    inst->fuIndex = noCostFUIndex;
+                    inst->extraCommitDelay = Cycles(0);
+                    inst->extraCommitDelayExpr = NULL;
+
+                    MinorVectorState vector_state;
+                    vector_state.inst = inst;
+                    vector_state.decoded = inst->decodedVectorOp;
+                    vector_state.phase = MinorVectorPhase::WaitDependencies;
+
+                    QueuedInst fu_inst(inst);
+                    thread.inFlightInsts->push(fu_inst);
+                    thread.vpuOffloadStates->push(vector_state);
+
+                    issued = true;
                 } else if (!fu_is_capable || fu->alreadyPushed()) {
                     /* Skip */
                     if (!fu_is_capable) {
@@ -1136,7 +1134,11 @@ Execute::accepted(vector_engine::CommandKey command)
                      "MinorCPU received an unexpected VPU acceptance");
             state.phase = MinorVectorPhase::Accepted;
 
-            cpu.wakeupOnEvent(Pipeline::ExecuteStageId);
+            state.command.reset();
+
+            // cpu.wakeupOnEvent(Pipeline::ExecuteStageId); Commented as rn we
+            // don't actually need to wakeup the cpu when the state changes to
+            // accepted.
             return;
         }
     }
@@ -1271,10 +1273,11 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                  */
                 break;
             case MinorVectorPhase::Completed:
-                /**
-                 * -TODO: falta gestionar excepciones, actualizas registros
-                 * escalares en caso de que sea necesario...
-                 */
+                thread->setMiscReg(RiscvISA::MISCREG_VSTART,
+                                   vec_state->completion->finalVstart);
+
+                ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
+
                 if (vec_state->completion->status ==
                     vector_engine::CompletionStatus::MemoryFault) {
                     // Extraemos el objeto Fault real que creó el
@@ -1286,14 +1289,17 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                             fault->name());
 
                     // Saltamos a la rutina del SO
-                    fault->invoke(thread, nullptr);
-                    tryToBranch(inst, fault, branch);
+                    fault->invoke(thread, inst->staticInst);
                 } else if (vec_state->completion->status !=
                            vector_engine::CompletionStatus::Success) {
                     panic("Unexpected completion status from VPU"); // -TODO
                                                                     // temporal
                 }
+
+                // If fault == NoFault, tryToBranch hará el advancePC()
+                tryToBranch(inst, fault, branch);
                 completed_inst = true;
+                committed = true;
                 break;
         }
 
