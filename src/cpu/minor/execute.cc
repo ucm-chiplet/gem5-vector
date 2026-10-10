@@ -322,6 +322,8 @@ Execute::Execute(const std::string &name_, MinorCPU &cpu_,
         executeInfo[tid].inFUMemInsts = new Queue<QueuedInst,
             ReportTraitsAdaptor<QueuedInst> >(
             name_ + ".inFUMemInsts" + tid_str, "insts", total_slots);
+
+        executeInfo[tid].vpuOffloadStates = new std::queue<MinorVectorState>();
     }
 }
 
@@ -774,24 +776,23 @@ Execute::issue(ThreadID thread_id)
                     /** As if it's an VPUOfload instruction
                      * it doesn't have to pass through an VPU, thus we don't
                      * have to check whether there is one available.*/
-                    DPRINTF(MinorExecute,
-                            "Skipping issue stage as the instruction %s is "
-                            "VPU Offload\n",
-                            *inst);
-                    /** Issue VPUOffload insts. to noCostFUIndex as we are not
-                     * trying to model latency in issue stage for the moment
-                     */
 
-                    // No es necesario comprobar aquí dependencias ya que
-                    // hasta que no llegue al head of inFlightInst, no
-                    // se mandaría a la VPU
+                    /** We check dependencies right here to ensure that the
+                     * instruction can be offloaded to the VPU later. */
+                    if (!scoreboard[thread_id].canVPUInstOffload(
+                            inst, cpu.curCycle(), cpu.getContext(thread_id))) {
+                        DPRINTF(MinorExecute,
+                                "Instruction %s cannot be offloaded to VPU\n",
+                                *inst);
+                        break;
+                    }
 
                     fu_index = noCostFUIndex;
                     cpu.activityRecorder->activity();
 
                     scoreboard[thread_id].markupInstDests(
                         inst, cpu.curCycle() + Cycles(0),
-                        cpu.getContext(thread_id), false);
+                        cpu.getContext(thread_id), true);
 
                     inst->fuIndex = noCostFUIndex;
                     inst->extraCommitDelay = Cycles(0);
@@ -800,7 +801,17 @@ Execute::issue(ThreadID thread_id)
                     MinorVectorState vector_state;
                     vector_state.inst = inst;
                     vector_state.decoded = inst->decodedVectorOp;
-                    vector_state.phase = MinorVectorPhase::WaitDependencies;
+                    vector_state.phase = MinorVectorPhase::ReadyToGrant;
+
+                    if (inst->decodedVectorOp.payload) {
+                        auto *mem_op = std::get_if<DecodedMemoryOp>(
+                            &(*inst->decodedVectorOp.payload));
+                        if (mem_op &&
+                            mem_op->direction ==
+                                vector_engine::MemoryDirection::Store) {
+                            lsq.issuedMemBarrierInst(inst);
+                        }
+                    }
 
                     QueuedInst fu_inst(inst);
                     thread.inFlightInsts->push(fu_inst);
@@ -1211,7 +1222,6 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
         completed_inst = false;
 
         ExecuteThreadInfo &ex_info = executeInfo[thread_id];
-        MinorVectorState *vec_state = &ex_info.vpuOffloadStates->front();
 
         // Por precaución, comprobamos que la instrucción que estamos
         // intentando despachar es la misma que la que está en el head de
@@ -1220,10 +1230,15 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                ex_info.vpuOffloadStates->front().inst->id.execSeqNum ==
                    inst->id.execSeqNum);
 
+        MinorVectorState *vec_state = &ex_info.vpuOffloadStates->front();
+
         switch (vec_state->phase) {
-            case MinorVectorPhase::WaitDependencies:
-                if (scoreboard[thread_id].canVPUInstOffload(
-                        inst, cpu.curCycle(), cpu.getContext(thread_id))) {
+            case MinorVectorPhase::ReadyToGrant: {
+                /** We only need to check if all the store operations are
+                 * completed */
+                bool is_vec_mem = std::holds_alternative<DecodedMemoryOp>(
+                    *vec_state->decoded.payload);
+                if ((!is_vec_mem || lsq.storeBuffer.isDrained())) {
                     auto &vector_interface = cpu.getCpuVectorInterface();
                     vec_state->commandKey =
                         vector_interface.allocateCommandKey(
@@ -1233,6 +1248,7 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                     vec_state->phase = MinorVectorPhase::WaitGrant;
                 }
                 break;
+            }
             case MinorVectorPhase::WaitGrant:
                 panic_if(!vec_state->commandKey || !vec_state->command,
                          "VPU offload is missing its command identity");
@@ -1647,8 +1663,10 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                         VectorExecutionClass::VpuOffload &&
                     cpu.isVectorOffloadEnabled()) {
                     auto &vec_state = ex_info.vpuOffloadStates->front();
-                    // Si ya se envió a la VPU, cancelamos el descarte.
-                    if (vec_state.phase == MinorVectorPhase::Dispatched ||
+                    // Si ya se solicitó key o se envió a la VPU, cancelamos el
+                    // descarte.
+                    if (vec_state.phase == MinorVectorPhase::WaitGrant ||
+                        vec_state.phase == MinorVectorPhase::Dispatched ||
                         vec_state.phase == MinorVectorPhase::Accepted ||
                         vec_state.phase == MinorVectorPhase::Completed) {
                         DPRINTF(MinorExecute,
@@ -1797,6 +1815,15 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                 assert(!states.empty());
                 assert(states.front().inst->id == inst->id);
 
+                if (inst->decodedVectorOp.payload) {
+                    auto *mem_op = std::get_if<DecodedMemoryOp>(
+                        &(*inst->decodedVectorOp.payload));
+                    if (mem_op && mem_op->direction ==
+                                      vector_engine::MemoryDirection::Store) {
+                        lsq.completeMemBarrierInst(inst, false);
+                    }
+                }
+
                 states.pop();
             }
 
@@ -1807,7 +1834,11 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                 lsq.completeMemBarrierInst(inst, committed_inst);
             }
 
-            scoreboard[thread_id].clearInstDests(inst, inst->isMemRef());
+            bool is_vpu_offload = inst->decodedVectorOp.executionClass ==
+                                      VectorExecutionClass::VpuOffload &&
+                                  cpu.isVectorOffloadEnabled();
+            scoreboard[thread_id].clearInstDests(inst, inst->isMemRef() ||
+                                                           is_vpu_offload);
         }
 
         /* Handle per-cycle instruction counting */
@@ -1849,8 +1880,19 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
 bool
 Execute::isInbetweenInsts(ThreadID thread_id) const
 {
+    /** Check whether we are currently in the middle of executing a instruction
+     * in the VPU */
+    bool in_vpu = false;
+    auto &ex_info = executeInfo[thread_id];
+    if (!ex_info.vpuOffloadStates->empty()) {
+        auto phase = ex_info.vpuOffloadStates->front().phase;
+        if (phase != MinorVectorPhase::ReadyToGrant) {
+            in_vpu = true;
+        }
+    }
+
     return executeInfo[thread_id].lastCommitWasEndOfMacroop &&
-        !lsq.accessesInFlight();
+           !lsq.accessesInFlight() && !in_vpu;
 }
 
 void
@@ -1998,22 +2040,13 @@ Execute::evaluate()
                        cpu.isVectorOffloadEnabled()) {
 
                 ThreadID thread_id = head_inst.inst->id.threadId;
+                assert(!executeInfo[thread_id].vpuOffloadStates->empty());
                 MinorVectorState *vec_state =
                     &executeInfo[thread_id].vpuOffloadStates->front();
 
                 switch (vec_state->phase) {
-                    case MinorVectorPhase::WaitDependencies:
-                        /*
-                         * Si faltan operandos escalares, dejamos que el reloj
-                         * se apague. La instrucción escalar que los produzca
-                         * despertará a Execute automáticamente cuando haga
-                         * commit. Solo pedimos tick si ya están listos.
-                         */
-                        if (scoreboard[thread_id].canVPUInstOffload(
-                                head_inst.inst, cpu.curCycle(),
-                                cpu.getContext(thread_id))) {
-                            head_inst_might_commit = true;
-                        }
+                    case MinorVectorPhase::ReadyToGrant:
+                        head_inst_might_commit = true;
                         break;
 
                     case MinorVectorPhase::WaitGrant:
@@ -2344,8 +2377,10 @@ Execute::~Execute()
     for (unsigned int i = 0; i < numFuncUnits; i++)
         delete funcUnits[i];
 
-    for (ThreadID tid = 0; tid < cpu.numThreads; tid++)
+    for (ThreadID tid = 0; tid < cpu.numThreads; tid++) {
         delete executeInfo[tid].inFlightInsts;
+        delete executeInfo[tid].vpuOffloadStates;
+    }
 }
 
 bool

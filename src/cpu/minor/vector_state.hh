@@ -39,13 +39,14 @@ namespace gem5::minor
 {
 
 /** Execute usa estas fases para seguir el envío y la respuesta de la VPU. */
-enum class MinorVectorPhase : uint8_t
+enum class MinorVectorPhase : uint8_t // WaitDependencies sustituido por
+                                      // ReadyToGrant
 {
-    WaitDependencies, // Execute aún no ha capturado los operandos.
-    WaitGrant,        // Conserva el comando ante una respuesta Stall.
-    Dispatched,       // Ha consumido la reserva; espera accepted.
-    Accepted,         // Espera la respuesta final del comando.
-    Completed,        // Debe procesar el resultado o la excepción.
+    ReadyToGrant, // Execute está listo para solicitar un grant.
+    WaitGrant,    // Conserva el comando ante una respuesta Stall.
+    Dispatched,   // Ha consumido la reserva; espera accepted.
+    Accepted,     // Espera la respuesta final del comando.
+    Completed,    // Debe procesar el resultado o la excepción.
 };
 
 /**
@@ -56,7 +57,7 @@ enum class MinorVectorPhase : uint8_t
 struct MinorVectorState
 {
     MinorDynInstPtr inst;
-    MinorVectorPhase phase = MinorVectorPhase::WaitDependencies;
+    MinorVectorPhase phase = MinorVectorPhase::ReadyToGrant;
     DecodedVectorOp decoded;
 
     // Execute asocia con esta clave el comando, la reserva y la respuesta.
