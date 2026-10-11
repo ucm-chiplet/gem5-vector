@@ -47,6 +47,7 @@ enum class VectorExecutionClass : uint8_t
     CpuVectorConfig,
     VpuOffload,
     NativeVector,
+    UnsupportedVector,
 };
 
 /**

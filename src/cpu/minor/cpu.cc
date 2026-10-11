@@ -39,8 +39,12 @@
 
 #include <utility>
 
+#include "config/use_riscv_isa.hh"
+
+#if USE_RISCV_ISA
 #include "arch/riscv/faults.hh"
 #include "arch/riscv/isa.hh"
+#endif
 #include "cpu/minor/dyn_inst.hh"
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/pipeline.hh"
@@ -78,6 +82,9 @@ MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
         threadContexts.push_back(tc);
     }
 
+    fatal_if(vectorOffloadEnabledFlag && !params.vectorEngine,
+             "MinorCPU vector offload requires a vectorEngine");
+#if USE_RISCV_ISA
     if (params.vectorEngine) {
         fatal_if(threadContexts.size() != 1,
                  "MinorCPU vector offload requires one thread context");
@@ -127,6 +134,11 @@ MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
                                                                 *engine);
         engine->bindCpu(*cpuVectorInterface, std::move(binding));
     }
+
+#else
+    fatal_if(vectorOffloadEnabledFlag || params.vectorEngine,
+             "MinorCPU vector offload requires RISC-V support");
+#endif
 
     if (params.checker) {
         fatal("The Minor model doesn't support checking (yet)\n");

@@ -39,10 +39,9 @@ namespace gem5::minor
 {
 
 /** Execute usa estas fases para seguir el envío y la respuesta de la VPU. */
-enum class MinorVectorPhase : uint8_t // WaitDependencies sustituido por
-                                      // ReadyToGrant
+enum class MinorVectorPhase : uint8_t
 {
-    ReadyToGrant, // Execute está listo para solicitar un grant.
+    ReadyToGrant, // Espera commit y el cierre de stores escalares anteriores.
     WaitGrant,    // Conserva el comando ante una respuesta Stall.
     Dispatched,   // Ha consumido la reserva; espera accepted.
     Accepted,     // Espera la respuesta final del comando.
@@ -52,7 +51,6 @@ enum class MinorVectorPhase : uint8_t // WaitDependencies sustituido por
 /**
  * Estado que Execute conserva hasta retirar la instrucción o tratar su fallo.
  * Execute es su propietario, no la instrucción a la que apunta inst.
- * Describe el contrato; las transiciones aún no están conectadas al pipeline.
  */
 struct MinorVectorState
 {
@@ -71,6 +69,16 @@ struct MinorVectorState
 
     // Minor la conserva hasta procesar el retiro o la excepción.
     std::optional<vector_engine::VectorCompletion> completion;
+
+    // Una clave sin reserva no obliga a terminar el intento durante drain.
+    bool
+    mustComplete() const
+    {
+        return grantToken.has_value() ||
+               phase == MinorVectorPhase::Dispatched ||
+               phase == MinorVectorPhase::Accepted ||
+               phase == MinorVectorPhase::Completed;
+    }
 };
 
 } // namespace gem5::minor

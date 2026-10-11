@@ -38,7 +38,12 @@
 #include "cpu/minor/decode.hh"
 
 #include "arch/generic/decoder.hh"
+#include "config/use_riscv_isa.hh"
+
+#if USE_RISCV_ISA
+#include "arch/riscv/faults.hh"
 #include "arch/riscv/insts/static_inst.hh"
+#endif
 #include "base/logging.hh"
 #include "base/trace.hh"
 #include "cpu/minor/pipeline.hh"
@@ -50,102 +55,81 @@ namespace gem5
 namespace minor
 {
 
-DecodedVectorOp Decode::decodeVectorOp(const StaticInstPtr &static_inst)
+DecodedVectorOp
+Decode::decodeVectorOp(const StaticInstPtr &static_inst)
 {
+    panic_if(!static_inst, "Cannot classify a null instruction");
     DecodedVectorOp decoded;
-    /** -TODO faltaría usar/reutilizar la decodificación de la ISA
-     * para hacerlo de una forma más limpia y menos propensa a errores.
-     * por el momento mientras solo hay 4 instrucciones vectoriales definidas
-     * lo dejamos así.
-     * Importante también permitir que se escriba en el datapath escalar ->
-     * necesitamos modificar vector_types y vector_command
-     * */
-
     if (!static_inst->isVector()) {
-        decoded.executionClass = VectorExecutionClass::CpuScalar;
         return decoded;
     }
     if (static_inst->opClass() == OpClass::SimdConfig) {
         decoded.executionClass = VectorExecutionClass::CpuVectorConfig;
         return decoded;
     }
-
-    const std::string name = static_inst->getName();
-    const bool is_vadd_vv = (name.find("vadd_vv") != std::string::npos);
-    const bool is_vadd_vx = (name.find("vadd_vx") != std::string::npos);
-    const bool is_vle32 = (name.find("vle32_v") != std::string::npos);
-    const bool is_vse32 = (name.find("vse32_v") != std::string::npos);
-
-    if ((!is_vadd_vv && !is_vadd_vx && !is_vle32 && !is_vse32) ||
-        !cpu.isVectorOffloadEnabled()) {
+    if (!cpu.isVectorOffloadEnabled()) {
         decoded.executionClass = VectorExecutionClass::NativeVector;
         return decoded;
     }
 
-    auto rv_inst =
-        static_cast<const RiscvISA::RiscvStaticInst *>(static_inst.get());
-    uint32_t mach_inst = rv_inst->machInst;
-    bool vm_bit = (mach_inst >> 25) & 1;
-    decoded.masked = (vm_bit == 0);
+#if USE_RISCV_ISA
+    const std::string name = static_inst->getName();
+    const bool is_vadd_vv = name == "vadd_vv";
+    const bool is_vadd_vx = name == "vadd_vx";
+    const bool is_vle32 = name == "vle32_v";
+    const bool is_vse32 = name == "vse32_v";
+    if (!is_vadd_vv && !is_vadd_vx && !is_vle32 && !is_vse32) {
+        decoded.executionClass = VectorExecutionClass::UnsupportedVector;
+        return decoded;
+    }
 
+    const auto *rv_inst =
+        dynamic_cast<const RiscvISA::RiscvStaticInst *>(static_inst.get());
+    panic_if(!rv_inst, "VPU offload requires a RISC-V instruction");
+    const uint32_t mach_inst = rv_inst->machInst;
+    decoded.masked = !((mach_inst >> 25) & 1);
     decoded.executionClass = VectorExecutionClass::VpuOffload;
-    if(static_inst->isMemRef()) {
-        DecodedMemoryOp mem_op;
-        mem_op.elementWidthBits = 32; // Fijo temporalmente por vle32/vse32
 
-        if (static_inst->isLoad()) {
-            mem_op.direction = vector_engine::MemoryDirection::Load;
-            mem_op.dataReg = static_inst->destRegIdx(0).index();
-            panic_if(mem_op.dataReg >= 32,
-                     "VPU Offload: Load dataReg (vd) >= 32"); // ¡Cortafuegos!
-            mem_op.base.sourceOperandIndex = 0; // vle32.v dest (src)
-        } else if (static_inst->isStore()) {
-            mem_op.direction = vector_engine::MemoryDirection::Store;
-            if (static_inst->srcRegIdx(0).classValue() == IntRegClass) { // Para asegurar que el primer operando es el registro de datos (vs2) y no el registro base (rs1)
-                mem_op.base.sourceOperandIndex = 0;
-                mem_op.dataReg = static_inst->srcRegIdx(1).index();
-            } else{
-                mem_op.base.sourceOperandIndex = 1;
-                mem_op.dataReg = static_inst->srcRegIdx(0).index();
-            }
-            panic_if(
-                mem_op.dataReg >= 32,
-                "VPU Offload: Store dataReg (vs3) >= 32"); // ¡Cortafuegos!
+    if (is_vle32 || is_vse32) {
+        DecodedMemoryOp memory;
+        memory.elementWidthBits = 32;
+        memory.direction = is_vle32 ? vector_engine::MemoryDirection::Load
+                                    : vector_engine::MemoryDirection::Store;
+        if (is_vle32) {
+            memory.dataReg = static_inst->destRegIdx(0).index();
+            memory.base.sourceOperandIndex = 0;
+        } else {
+            const bool base_first =
+                static_inst->srcRegIdx(0).classValue() == IntRegClass;
+            memory.base.sourceOperandIndex = base_first ? 0 : 1;
+            memory.dataReg =
+                static_inst->srcRegIdx(base_first ? 1 : 0).index();
         }
-
-        decoded.payload = mem_op;
+        panic_if(memory.dataReg >= 32,
+                 "VPU memory operand is not an architectural vector register");
+        decoded.payload = memory;
     } else {
-        DecodedArithmeticOp arith_op;
-        arith_op.operation = vector_engine::ArithmeticOperation::Add; // De momento fijo al solo soportar vadd dentro de aritmeticas
-
-        /* Extraemos el índice arquitectónico
-         * del destino (vd). */
-        arith_op.destination =
-            static_inst->destRegIdx(0)
-                .index(); // Está directamente numerado del 0 al 31.
-        arith_op.vectorSource =
-            (static_inst->srcRegIdx(0).classValue() == VecRegClass)
-                ? static_inst->srcRegIdx(0).index()
-                : static_inst->srcRegIdx(1).index();
-        panic_if(arith_op.vectorSource >= 32,
-                 "VPU Offload: Arith vs1 >= 32"); // ¡Cortafuegos!
-
+        DecodedArithmeticOp arithmetic;
+        arithmetic.operation = vector_engine::ArithmeticOperation::Add;
+        arithmetic.destination = static_inst->destRegIdx(0).index();
+        const bool vector_first =
+            static_inst->srcRegIdx(0).classValue() == VecRegClass;
+        arithmetic.vectorSource =
+            static_inst->srcRegIdx(vector_first ? 0 : 1).index();
+        panic_if(arithmetic.vectorSource >= 32,
+                 "VPU arithmetic source is not an architectural register");
         if (is_vadd_vv) {
-            // vv: el segundo operando es otro registro vectorial (vs1).
-            arith_op.secondOperand = static_inst->srcRegIdx(1).index();
-        } else if (is_vadd_vx) {
-            // vx: el segundo operando es un escalar (rs1).
-            ScalarOperandRef scal_ref;
-            scal_ref.sourceOperandIndex =
-                (static_inst->srcRegIdx(0).classValue() == VecRegClass)
-                    ? 1
-                    : 0; // El segundo operando es el que no es vectorial (rs1)
-            arith_op.secondOperand = scal_ref;
+            arithmetic.secondOperand = static_inst->srcRegIdx(1).index();
+        } else {
+            arithmetic.secondOperand =
+                ScalarOperandRef{static_cast<uint32_t>(vector_first ? 1 : 0)};
         }
-
-        decoded.payload = arith_op;
+        decoded.payload = arithmetic;
     }
     return decoded;
+#else
+    panic("VPU offload requires RISC-V support");
+#endif
 }
 
 Decode::Decode(const std::string &name,
@@ -261,13 +245,23 @@ Decode::evaluate()
                 StaticInstPtr static_inst = inst->staticInst;
                 /* Static inst of a macro-op above the output_inst */
                 StaticInstPtr parent_static_inst = NULL;
-                inst->decodedVectorOp = decodeVectorOp(static_inst);
-                DPRINTF(Decode, "Decoded vector instruction: %s as %s\n",
-                        *inst,
-                        inst->decodedVectorOp.executionClass ==
-                                VectorExecutionClass::VpuOffload
-                            ? "VPU offload"
-                            : "Other");
+                if (!inst->isFault()) {
+                    inst->decodedVectorOp = decodeVectorOp(static_inst);
+#if USE_RISCV_ISA
+                    if (inst->decodedVectorOp.executionClass ==
+                        VectorExecutionClass::UnsupportedVector) {
+                        const auto *rv_inst =
+                            dynamic_cast<const RiscvISA::RiscvStaticInst *>(
+                                static_inst.get());
+                        panic_if(!rv_inst,
+                                 "VPU offload requires a RISC-V instruction");
+                        inst->fault =
+                            std::make_shared<RiscvISA::IllegalInstFault>(
+                                "Vector instruction is not supported by VPU",
+                                rv_inst->machInst);
+                    }
+#endif
+                }
                 MinorDynInstPtr output_inst = inst;
 
                 auto *dec_ptr =

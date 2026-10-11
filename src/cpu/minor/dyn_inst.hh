@@ -286,7 +286,6 @@ class MinorDynInst : public RefCounted
     void setMemAccPredicate(bool val) { memAccPredicate = val; }
 
     ~MinorDynInst();
-  
 };
 
 /** Print a summary of the instruction */

@@ -701,9 +701,6 @@ class LSQ : public Named
     /** Is there nothing left in the LSQ */
     bool isDrained();
 
-    /** Are there stores older than the given instruction still in flight? */
-    bool hasPendingStoresBefore(InstSeqNum seq_num) const;
-
     /** May need to be ticked next cycle as one of the queues contains
      *  an actionable transfers or address translation */
     bool needsToTick();

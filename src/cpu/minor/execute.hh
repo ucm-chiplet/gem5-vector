@@ -45,6 +45,7 @@
 #ifndef __CPU_MINOR_EXECUTE_HH__
 #define __CPU_MINOR_EXECUTE_HH__
 
+#include <deque>
 #include <vector>
 
 #include "base/named.hh"
@@ -178,7 +179,7 @@ class Execute : public Named
         Queue<QueuedInst, ReportTraitsAdaptor<QueuedInst> > *inFUMemInsts;
 
         /** To handle VPU Offload state */
-        std::queue<MinorVectorState> *vpuOffloadStates;
+        std::deque<MinorVectorState> vpuOffloadStates;
 
         /** Index that we've completed upto in getInput data.  We can say we're
          *  popInput when this equals getInput()->width() */
@@ -262,6 +263,12 @@ class Execute : public Named
 
     /** Are we between instructions?  Can we be interrupted? */
     bool isInbetweenInsts(ThreadID thread_id) const;
+
+    /** Does the oldest offload have a reservation or unfinished effects? */
+    bool mustCompleteVpuOffload(ThreadID thread_id) const;
+
+    /** Block scalar memory issue behind any older vector store. */
+    bool hasPendingVpuStoreBefore(MinorDynInstPtr inst) const;
 
     /** Act on an interrupt.  Returns true if an interrupt was actually
      *  signalled and invoked */
