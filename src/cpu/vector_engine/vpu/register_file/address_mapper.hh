@@ -29,6 +29,7 @@
 #ifndef __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
 #define __CPU_VECTOR_ENGINE_VPU_REGISTER_FILE_ADDRESS_MAPPER_HH__
 
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/vrf_types.hh"
 
 namespace gem5::vector_engine
@@ -42,7 +43,8 @@ namespace gem5::vector_engine
 class AddressMapper
 {
   public:
-    explicit AddressMapper(const VrfGeometry &geometry);
+    AddressMapper(const VrfGeometry &geometry,
+                  statistics::Group &stats_parent);
     AddressMapper(VrfGeometry &&) = delete;
 
     const VrfGeometry &
@@ -59,6 +61,8 @@ class AddressMapper
     uint64_t rowsPerBank() const;
 
   private:
+    mutable ModuleStats stats;
+    mutable statistics::Scalar fragments;
     const VrfGeometry &vrfGeometry;
 };
 

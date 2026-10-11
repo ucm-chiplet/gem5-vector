@@ -3,6 +3,7 @@
 #include "cpu/vector_engine/vpu/register_file/lane_register_file.hh"
 
 #include <algorithm>
+#include <string>
 #include <utility>
 
 #include "base/logging.hh"
@@ -14,7 +15,16 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
                                    const AddressMapper &mapper, LaneId lane_id,
                                    ResponsePort lane_responses,
                                    ResponsePort vlsu_responses)
-    : mapper(mapper),
+    : stats(&owner, "lrf" + std::to_string(lane_id), "VRF accesses"),
+      reads(&stats, "reads", statistics::units::Count::get(),
+            "Accepted read accesses"),
+      writes(&stats, "writes", statistics::units::Count::get(),
+             "Accepted write accesses"),
+      readBytes(&stats, "readBytes", statistics::units::Byte::get(),
+                "Enabled bytes in accepted read accesses"),
+      writeBytes(&stats, "writeBytes", statistics::units::Byte::get(),
+                 "Enabled bytes in accepted write accesses"),
+      mapper(mapper),
       laneId(lane_id),
       laneResponses(std::move(lane_responses)),
       vlsuResponses(std::move(vlsu_responses))
@@ -38,7 +48,8 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
             },
             [this, bank_id](const BankWriteAck &ack) {
                 recvBankWriteAck(bank_id, ack);
-            }));
+            },
+            stats));
     }
 }
 
@@ -88,6 +99,7 @@ LaneRegisterFile::read(const VrfReadRequest &request)
     auto mapping = validateAccess(access);
     const auto bank_id = mapping.bankId;
     if (pending[bank_id]) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     // El descriptor y el buffer de retorno existen antes de llamar al banco.
@@ -97,8 +109,16 @@ LaneRegisterFile::read(const VrfReadRequest &request)
     pending[bank_id] =
         PendingAccess{access, std::move(mapping), AccessKind::Read,
                       ByteBuffer(access.range.size, 0)};
+    const auto previous_peak = stats.peakOutstanding.value();
+    stats.accept(
+        0, std::count(access.byteEnable.begin(), access.byteEnable.end(), 1));
     const auto result = banks[bank_id]->read(bank_request);
-    handleTransfer(bank_id, result);
+    if (result == TransferResult::Accepted) {
+        ++reads;
+        readBytes +=
+            std::count(access.byteEnable.begin(), access.byteEnable.end(), 1);
+    }
+    handleTransfer(bank_id, result, previous_peak);
     return result;
 }
 
@@ -111,6 +131,7 @@ LaneRegisterFile::write(const VrfWriteRequest &request)
              "LRF write data does not match its byte range");
     const auto bank_id = mapping.bankId;
     if (pending[bank_id]) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     // Los bytes exteriores al rango quedan a cero y tienen máscara cero.
@@ -121,13 +142,22 @@ LaneRegisterFile::write(const VrfWriteRequest &request)
         access.key, mapping.row, mapping.wordByteEnable, std::move(word_data)};
     pending[bank_id] =
         PendingAccess{access, std::move(mapping), AccessKind::Write, {}};
+    const auto previous_peak = stats.peakOutstanding.value();
+    stats.accept(
+        0, std::count(access.byteEnable.begin(), access.byteEnable.end(), 1));
     const auto result = banks[bank_id]->write(bank_request);
-    handleTransfer(bank_id, result);
+    if (result == TransferResult::Accepted) {
+        ++writes;
+        writeBytes +=
+            std::count(access.byteEnable.begin(), access.byteEnable.end(), 1);
+    }
+    handleTransfer(bank_id, result, previous_peak);
     return result;
 }
 
 void
-LaneRegisterFile::handleTransfer(BankId bank_id, TransferResult result)
+LaneRegisterFile::handleTransfer(BankId bank_id, TransferResult result,
+                                 uint64_t previous_peak)
 {
     switch (result) {
         case TransferResult::Accepted:
@@ -136,6 +166,11 @@ LaneRegisterFile::handleTransfer(BankId bank_id, TransferResult result)
         case TransferResult::Retry:
             panic_if(!pending[bank_id],
                      "VRF bank responded to an access it rejected");
+            stats.withdraw(
+                0,
+                std::count(pending[bank_id]->access.byteEnable.begin(),
+                           pending[bank_id]->access.byteEnable.end(), 1),
+                previous_peak);
             pending[bank_id].reset();
             break;
         default:
@@ -169,6 +204,7 @@ LaneRegisterFile::recvBankReadResponse(BankId bank_id,
     std::copy_n(response.wordData.begin() + slot->mapping.byteOffsetInWord,
                 reply.data.size(), reply.data.begin());
     // Se libera antes de notificar: el solicitante puede emitir otro acceso.
+    stats.complete();
     slot.reset();
     responsePort(reply.key.requester).sendRead(reply);
 }
@@ -183,6 +219,7 @@ LaneRegisterFile::recvBankWriteAck(BankId bank_id, const BankWriteAck &ack)
                  slot->mapping.bankId != bank_id,
              "VRF bank write acknowledgement has wrong identity or direction");
     const WriteAck reply{ack.key};
+    stats.complete();
     slot.reset();
     responsePort(reply.key.requester).sendWriteAck(reply);
 }

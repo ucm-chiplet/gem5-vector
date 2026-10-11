@@ -67,7 +67,36 @@ VectorMemoryBackend::VectorMemoryBackend(ClockedObject &owner,
                                          ContextResolver resolve_context,
                                          AccessFaultFactory access_fault,
                                          ResponseSender send_response)
-    : owner(owner),
+    : stats(&owner, "memory", "logical memory requests"),
+      loads(&stats, "loads", statistics::units::Count::get(),
+            "Accepted logical load requests"),
+      stores(&stats, "stores", statistics::units::Count::get(),
+             "Accepted logical store requests"),
+      fragmentsCreated(&stats, "fragmentsCreated",
+                       statistics::units::Count::get(),
+                       "Physical fragments created before translation"),
+      translations(&stats, "translations", statistics::units::Count::get(),
+                   "Physical fragment translation requests started"),
+      translationFaults(&stats, "translationFaults",
+                        statistics::units::Count::get(),
+                        "Physical fragment translations reporting fault"),
+      accessFaults(&stats, "accessFaults", statistics::units::Count::get(),
+                   "Physical packet responses reporting access error"),
+      sendAttempts(&stats, "sendAttempts", statistics::units::Count::get(),
+                   "Physical sendTimingReq attempts including retries"),
+      packetsSent(&stats, "packetsSent", statistics::units::Count::get(),
+                  "Physical packets accepted by timing port"),
+      packetBytes(&stats, "packetBytes", statistics::units::Byte::get(),
+                  "Bytes in packets accepted by timing port"),
+      packetResponses(&stats, "packetResponses",
+                      statistics::units::Count::get(),
+                      "Physical packet responses including errors"),
+      portRetries(&stats, "portRetries", statistics::units::Count::get(),
+                  "Physical sendTimingReq attempts rejected by port"),
+      retryNotifications(&stats, "retryNotifications",
+                         statistics::units::Count::get(),
+                         "recvReqRetry notifications received"),
+      owner(owner),
       resolveContext(std::move(resolve_context)),
       accessFault(std::move(access_fault)),
       sendResponse(std::move(send_response)),
@@ -121,6 +150,7 @@ TransferResult
 VectorMemoryBackend::acceptRequest(const VectorMemoryRequest &request)
 {
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     validateRequest(request);
@@ -136,6 +166,12 @@ VectorMemoryBackend::acceptRequest(const VectorMemoryRequest &request)
     // puede reutilizar sus objetos al volver de esta llamada.
     active = std::make_unique<TransactionState>();
     active->request = request;
+    if (request.direction == MemoryDirection::Load) {
+        ++loads;
+    } else {
+        ++stores;
+    }
+    stats.accept(1, request.size);
     active->context = context;
     active->data = request.direction == MemoryDirection::Store
                        ? request.storeData
@@ -172,6 +208,7 @@ VectorMemoryBackend::makeFragments()
             logical.taskKey.command.contextId);
         active->fragments.push_back(std::make_unique<FragmentState>(
             *this, active->fragments.size(), offset, std::move(request)));
+        ++fragmentsCreated;
         offset += size;
     }
 }
@@ -227,6 +264,7 @@ VectorMemoryBackend::evaluate()
         // fase y contador antes de llamar, sin sobrescribirlos al retornar.
         fragment.phase = Phase::Translating;
         ++active->pendingTranslations;
+        ++translations;
         active->context->getMMUPtr()->translateTiming(
             fragment.request, active->context, &fragment, translationMode());
         // finishTranslation programa progreso incluso si responde al instante.
@@ -264,6 +302,7 @@ VectorMemoryBackend::finishTranslation(FragmentState &fragment,
     --active->pendingTranslations;
     ++active->nextTranslation;
     if (fault != NoFault) {
+        ++translationFaults;
         recordFault(fragment, fault);
     } else {
         panic_if(!request->hasPaddr() || request->isLocalAccess(),
@@ -302,7 +341,11 @@ VectorMemoryBackend::sendFragment(FragmentState &fragment)
     PacketPtr packet = fragment.retryPacket;
     fragment.retryPacket = nullptr;
     fragment.phase = Phase::Sending;
+    ++sendAttempts;
+    const auto packet_size = fragment.request->getSize();
     if (port.sendTimingReq(packet)) {
+        ++packetsSent;
+        packetBytes += packet_size;
         if (fragment.phase == Phase::Sending) {
             fragment.phase = Phase::WaitResponse;
         }
@@ -311,6 +354,7 @@ VectorMemoryBackend::sendFragment(FragmentState &fragment)
                  "Memory responded to a rejected vector packet");
         // El puerto no adquirió el paquete. Conservar exactamente este objeto
         // y sus datos hasta que recvReqRetry permita un nuevo intento.
+        ++portRetries;
         fragment.retryPacket = packet;
         fragment.phase = Phase::WaitRetry;
     }
@@ -326,6 +370,7 @@ VectorMemoryBackend::recvReqRetry()
              "Vector memory retry without a rejected packet");
     // El aviso autoriza un intento nuevo, no un sondeo periódico. Si vuelve
     // a fallar el envío, se esperará otro aviso con el mismo paquete.
+    ++retryNotifications;
     fragment.phase = Phase::Ready;
     wakeup();
 }
@@ -349,7 +394,9 @@ VectorMemoryBackend::recvTimingResp(PacketPtr packet)
                  packet->getSize() != fragment.request->getSize(),
              "Duplicate or mismatched vector memory packet response");
 
+    ++packetResponses;
     if (packet->isError()) {
+        ++accessFaults;
         // Un error del puerto se convierte en un fault del objetivo. Los de
         // traducción ya llegan como Fault directamente desde la MMU.
         const Fault fault = accessFault(fragment.request->getVaddr(),
@@ -428,6 +475,7 @@ VectorMemoryBackend::finish()
     // Liberar capacidad antes del callback permite una nueva petición en él.
     // completed conserva la transacción anterior hasta que el callback vuelva;
     // la respuesta lleva su propia copia de los datos y del fault.
+    stats.complete(active->fault.has_value());
     auto completed = std::move(active);
     sendResponse(response);
 }

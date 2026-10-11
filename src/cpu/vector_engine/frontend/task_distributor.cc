@@ -43,7 +43,19 @@ TaskDistributor::TaskDistributor(ClockedObject &owner,
                                  const AddressMapper &mapper,
                                  LaneSender send_lane,
                                  CompletionSender send_completion)
-    : owner(owner),
+    : stats(&owner, "distributor", "arithmetic tasks"),
+      fragmentsCreated(&stats, "fragmentsCreated",
+                       statistics::units::Count::get(),
+                       "Lane fragments created for accepted tasks"),
+      fragmentsAccepted(&stats, "fragmentsAccepted",
+                        statistics::units::Count::get(),
+                        "Lane fragments accepted; excludes retry"),
+      fragmentsCompleted(&stats, "fragmentsCompleted",
+                         statistics::units::Count::get(),
+                         "Lane fragment completions received"),
+      laneRetries(&stats, "laneRetries", statistics::units::Count::get(),
+                  "Failed fragment admission attempts at lanes"),
+      owner(owner),
       mapper(mapper),
       sendLane(std::move(send_lane)),
       sendCompletion(std::move(send_completion)),
@@ -197,11 +209,14 @@ TransferResult
 TaskDistributor::acceptTask(const ArithmeticTask &task)
 {
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
 
     validateTask(task);
     active = makeDistribution(task);
+    fragmentsCreated += active->fragments.size();
+    stats.accept(task.task.elements.elementCount, task.destinationRange.size);
     wakeup();
     return TransferResult::Accepted;
 }
@@ -252,6 +267,7 @@ TaskDistributor::evaluate()
         fragment.phase = FragmentPhase::Sending;
         switch (sendLane(fragment.task)) {
             case TransferResult::Accepted:
+                ++fragmentsAccepted;
                 if (fragment.phase == FragmentPhase::Sending) {
                     fragment.phase = FragmentPhase::Accepted;
                 }
@@ -259,6 +275,7 @@ TaskDistributor::evaluate()
                 break;
 
             case TransferResult::Retry:
+                ++laneRetries;
                 panic_if(fragment.phase != FragmentPhase::Sending,
                          "A lane completed a fragment that it rejected");
                 fragment.phase = FragmentPhase::Pending;
@@ -295,6 +312,7 @@ TaskDistributor::recvCompletion(const LaneCompletion &completion)
     panic_if(active->unfinishedFragments == 0,
              "Lane fragment completion accounting underflow");
 
+    ++fragmentsCompleted;
     fragment.phase = FragmentPhase::Completed;
     active->fpFlags |= completion.fpFlags;
     --active->unfinishedFragments;
@@ -311,6 +329,7 @@ TaskDistributor::finish()
                                     std::nullopt, active->fpFlags};
 
     // Liberar antes del callback permite admitir la siguiente tarea.
+    stats.complete();
     active.reset();
     sendCompletion(completion);
 }

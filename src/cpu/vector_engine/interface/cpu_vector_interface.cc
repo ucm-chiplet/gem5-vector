@@ -29,9 +29,25 @@
 #include "cpu/vector_engine/interface/cpu_vector_interface.hh"
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
 {
+
+CpuVectorInterface::CpuVectorInterface(CpuCompletionEndpoint &cpu_endpoint,
+                                       VpuCommandEndpoint &vpu_endpoint,
+                                       statistics::Group &stats_parent)
+    : stats(&stats_parent, "vectorInterface", "dispatched vector commands"),
+      keysAllocated(&stats, "keysAllocated", statistics::units::Count::get(),
+                    "Command identities allocated, including ungranted work"),
+      grants(&stats, "grants", statistics::units::Count::get(),
+             "Command reservations granted by the VPU"),
+      acceptedNotifications(&stats, "acceptedNotifications",
+                            statistics::units::Count::get(),
+                            "FIFO acceptance callbacks received from VPU"),
+      completionEndpoint(cpu_endpoint),
+      vpuEndpoint(vpu_endpoint)
+{}
 
 CpuVectorInterface::~CpuVectorInterface() = default;
 
@@ -40,25 +56,44 @@ CpuVectorInterface::requestGrant(const VectorCommand &command)
 {
     panic_if(!command.command.valid(),
              "CpuVectorInterface received an invalid CommandKey");
-    return vpuEndpoint.requestGrant(command);
+    const auto result = vpuEndpoint.requestGrant(command);
+    switch (result.status) {
+        case GrantStatus::Granted:
+            ++grants;
+            break;
+        case GrantStatus::Stall:
+            ++stats.retries;
+            break;
+        case GrantStatus::Rejected:
+            ++stats.rejected;
+            break;
+    }
+    return result;
 }
 
 void
 CpuVectorInterface::dispatch(const GrantToken &token,
                              const VectorCommand &command)
 {
+    const auto count = command.config.vl > command.config.vstart
+                           ? command.config.vl - command.config.vstart
+                           : 0;
+    stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
+                                              command.config.sewBits));
     vpuEndpoint.dispatch(token, command);
 }
 
 void
 CpuVectorInterface::accepted(CommandKey command)
 {
+    ++acceptedNotifications;
     completionEndpoint.accepted(command);
 }
 
 void
 CpuVectorInterface::completed(const VectorCompletion &completion)
 {
+    stats.complete(completion.status != CompletionStatus::Success);
     completionEndpoint.completed(completion);
 }
 
@@ -72,6 +107,7 @@ CpuVectorInterface::allocateCommandKey(ContextID contextId)
     panic_if(next_id == CommandKey::InvalidCommandId,
              "CpuVectorInterface command IDs exhausted");
 
+    ++keysAllocated;
     return CommandKey{next_id++,
                       contextId}; // Increment next_id for the context
 }

@@ -17,21 +17,38 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
                  LaneId lane_id, ByteOrder target_byte_order,
                  ReadSender send_read, WriteSender send_write,
                  CompletionSender send_completion)
-    : owner(owner),
+    : stats(&owner, "lane" + std::to_string(lane_id), "lane fragments"),
+      vrfReads(&stats, "vrfReads", statistics::units::Count::get(),
+               "Operand read accesses accepted by local VRF"),
+      vrfWrites(&stats, "vrfWrites", statistics::units::Count::get(),
+                "Writeback accesses accepted by local VRF"),
+      vrfReadRetries(&stats, "vrfReadRetries", statistics::units::Count::get(),
+                     "Operand read attempts rejected by local VRF"),
+      vrfWriteRetries(&stats, "vrfWriteRetries",
+                      statistics::units::Count::get(),
+                      "Writeback attempts rejected by local VRF"),
+      executionRetries(&stats, "executionRetries",
+                       statistics::units::Count::get(),
+                       "Bundle attempts rejected by execution unit"),
+      owner(owner),
       mapper(mapper),
       laneId(lane_id),
       targetByteOrder(target_byte_order),
       sendRead(std::move(send_read)),
       sendWrite(std::move(send_write)),
       sendCompletion(std::move(send_completion)),
-      alu(owner, lane_id,
+      alu(
+          owner, lane_id,
           [this](const ExecutionResult &result) {
               recvExecutionResult(result);
-          }),
-      fpu(owner, lane_id,
+          },
+          stats),
+      fpu(
+          owner, lane_id,
           [this](const ExecutionResult &result) {
               recvExecutionResult(result);
-          }),
+          },
+          stats),
       progressEvent([this] { evaluate(); },
                     owner.name() + ".lane" + std::to_string(lane_id))
 {
@@ -113,6 +130,7 @@ TransferResult
 AraLane::acceptTask(const LaneTask &task)
 {
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     validateTask(task);
@@ -130,6 +148,7 @@ AraLane::acceptTask(const LaneTask &task)
     active.emplace();
     auto &state = *active;
     state.task = task;
+    stats.accept(task.elements.elementCount, task.destinationRange.size);
     // Los dos slots y sus buffers existen antes de emitir cualquier lectura.
     state.bundle =
         ExecutionBundle{task.key,
@@ -201,9 +220,19 @@ AraLane::sendAccess(AccessRole role)
                             : sendRead(std::get<VrfReadRequest>(request));
     switch (result) {
         case TransferResult::Accepted:
+            if (role == AccessRole::Destination) {
+                ++vrfWrites;
+            } else {
+                ++vrfReads;
+            }
             // No recrear un slot que una respuesta síncrona ya consumió.
             break;
         case TransferResult::Retry:
+            if (role == AccessRole::Destination) {
+                ++vrfWriteRetries;
+            } else {
+                ++vrfReadRetries;
+            }
             panic_if(!slot || slot->phase != AccessPhase::Waiting,
                      "LRF responded to a lane access it rejected");
             slot->phase = AccessPhase::Prepared;
@@ -239,6 +268,7 @@ AraLane::evaluate()
                 case TransferResult::Accepted:
                     break;
                 case TransferResult::Retry:
+                    ++executionRetries;
                     panic_if(state.phase != Phase::WaitExecution,
                              "Execution unit responded to a rejected bundle");
                     state.phase = Phase::Execute;
@@ -377,6 +407,7 @@ AraLane::finish()
     // Sólo WriteAck habilita Finish. Se libera la capacidad antes de notificar
     // para que el receptor pueda admitir el siguiente fragmento en el
     // callback.
+    stats.complete();
     active.reset();
     sendCompletion(completion);
 }

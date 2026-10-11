@@ -8,6 +8,7 @@
 
 #include "cpu/vector_engine/common/backend_task.hh"
 #include "cpu/vector_engine/common/memory_types.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/unit_completion.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
 #include "sim/clocked_object.hh"
@@ -111,6 +112,17 @@ class AraVLSU
         std::optional<FaultInfo> fault;
     };
 
+    ModuleStats stats;
+    statistics::Scalar loadTasks;
+    statistics::Scalar storeTasks;
+    statistics::Scalar loadElements;
+    statistics::Scalar storeElements;
+    statistics::Scalar loadBytes;
+    statistics::Scalar storeBytes;
+    statistics::Scalar memoryRequests;
+    statistics::Scalar memoryRetries;
+    statistics::Scalar vrfReadRetries;
+    statistics::Scalar vrfWriteRetries;
     ClockedObject &owner;
     const AddressMapper &mapper;
     Addr addressMask;

@@ -3,3 +3,4 @@
 Import("*")
 
 Source("vector_support.cc")
+Source("module_stats.cc")

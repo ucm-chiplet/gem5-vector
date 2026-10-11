@@ -16,7 +16,17 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
                            uint32_t vlen_bytes,
                            ArithmeticSender send_arithmetic,
                            MemorySender send_memory)
-    : owner(owner),
+    : stats(&owner, "sequencer", "commands"),
+      arithmeticCommands(&stats, "arithmeticCommands",
+                         statistics::units::Count::get(),
+                         "Arithmetic commands started"),
+      loadCommands(&stats, "loadCommands", statistics::units::Count::get(),
+                   "Vector load commands started"),
+      storeCommands(&stats, "storeCommands", statistics::units::Count::get(),
+                    "Vector store commands started"),
+      emptyCommands(&stats, "emptyCommands", statistics::units::Count::get(),
+                    "Commands completed without creating a backend task"),
+      owner(owner),
       queue(queue),
       completionEndpoint(completion_endpoint),
       vlenBytes(vlen_bytes),
@@ -146,8 +156,22 @@ AraSequencer::evaluate()
 
         active.emplace();
         active->command = *command;
+        if (std::holds_alternative<ArithmeticCommand>(command->payload)) {
+            ++arithmeticCommands;
+        } else if (std::get<MemoryCommand>(command->payload).direction ==
+                   MemoryDirection::Load) {
+            ++loadCommands;
+        } else {
+            ++storeCommands;
+        }
+        const auto count = command->config.vl > command->config.vstart
+                               ? command->config.vl - command->config.vstart
+                               : 0;
+        stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
+                                                  command->config.sewBits));
 
         if (command->config.vstart >= command->config.vl) {
+            ++emptyCommands;
             finish();
             return;
         }
@@ -182,6 +206,7 @@ AraSequencer::evaluate()
             return;
 
         case TransferResult::Retry:
+            ++stats.retries;
             panic_if(active->completion.has_value(),
                      "A unit completed a task that it rejected");
 
@@ -266,6 +291,7 @@ AraSequencer::finish()
     }
 
     // Preparar todo el estado antes del callback externo.
+    stats.complete(completion.status != CompletionStatus::Success);
     queue.releaseHead(completion.command);
     active.reset();
 

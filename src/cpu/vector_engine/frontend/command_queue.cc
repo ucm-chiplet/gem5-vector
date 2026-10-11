@@ -10,12 +10,18 @@
 namespace gem5::vector_engine
 {
 
-CommandQueue::CommandQueue(
-    std::size_t queue_depth,
-    uint32_t vlen_bytes,
-    const std::vector<VectorLmul> &supported_lmuls,
-    CpuCompletionEndpoint &completion_endpoint)
-    : queueDepth(queue_depth),
+CommandQueue::CommandQueue(statistics::Group &stats_parent,
+                           std::size_t queue_depth, uint32_t vlen_bytes,
+                           const std::vector<VectorLmul> &supported_lmuls,
+                           CpuCompletionEndpoint &completion_endpoint)
+    : stats(&stats_parent, "queue", "command reservations"),
+      capacityStalls(&stats, "capacityStalls", statistics::units::Count::get(),
+                     "Grant attempts stalled by full queue"),
+      drainStalls(&stats, "drainStalls", statistics::units::Count::get(),
+                  "Grant attempts stalled while draining"),
+      dispatched(&stats, "dispatched", statistics::units::Count::get(),
+                 "Reserved commands inserted into the FIFO"),
+      queueDepth(queue_depth),
       vlenBytes(vlen_bytes),
       supportedLmuls(supported_lmuls),
       completionEndpoint(completion_endpoint)
@@ -23,15 +29,12 @@ CommandQueue::CommandQueue(
     // Errores estáticos de configuración: no son backpressure ni rechazos
     // de instrucciones. VectorEngine validará además la geometría global
     // y la coincidencia de VLEN con Minor cuando se integre el coprocesador.
-    fatal_if(queueDepth == 0,
-             "CommandQueue requires at least one entry");
-    fatal_if(vlenBytes == 0,
-             "CommandQueue requires a nonzero VLEN");
+    fatal_if(queueDepth == 0, "CommandQueue requires at least one entry");
+    fatal_if(vlenBytes == 0, "CommandQueue requires a nonzero VLEN");
     fatal_if(supportedLmuls.empty(),
              "CommandQueue requires at least one supported LMUL");
 
-    for (auto it = supportedLmuls.begin();
-         it != supportedLmuls.end(); ++it) {
+    for (auto it = supportedLmuls.begin(); it != supportedLmuls.end(); ++it) {
         fatal_if(!isValid(*it), "Invalid supported LMUL");
         fatal_if(std::find(supportedLmuls.begin(), it, *it) != it,
                  "Duplicate supported LMUL");
@@ -47,13 +50,15 @@ CommandQueue::contains(CommandKey command) const
     // La clave completa incluye el contexto. Se recorre el estado vivo
     // para no mantener una segunda tabla que deba sincronizarse con él.
     for (const auto &entry : state.reservations) {
-        if (entry.second.descriptor.command == command)
+        if (entry.second.descriptor.command == command) {
             return true;
+        }
     }
 
     for (const auto &queued : state.commands) {
-        if (queued.command == command)
+        if (queued.command == command) {
             return true;
+        }
     }
 
     return false;
@@ -66,52 +71,59 @@ CommandQueue::requestGrant(const VectorCommand &command)
     // llena no debe convertir un descriptor no soportado en un Stall.
     if (const auto reason =
             VectorSupport::checkCommand(command, vlenBytes, supportedLmuls)) {
+        ++stats.rejected;
         return GrantResult::rejected(*reason);
     }
 
-    if (contains(command.command))
+    if (contains(command.command)) {
+        ++stats.rejected;
         return GrantResult::rejected(RejectionReason::DuplicateCommand);
+    }
 
     panic_if(occupancy() > queueDepth,
              "CommandQueue capacity invariant violated");
 
     // Stall no crea estado ni consume un ID. El emisor conserva el mismo
     // descriptor para reintentarlo cuando pueda iniciar un offload.
-    if (state.draining || full())
+    if (state.draining || full()) {
+        ++stats.retries;
+        if (state.draining) {
+            ++drainStalls;
+        } else {
+            ++capacityStalls;
+        }
         return GrantResult::stall();
+    }
 
     // El último valor queda reservado como inválido. No se permite que
     // el contador desborde y vuelva a hacer válido un token antiguo.
-    panic_if(
-        state.nextReservationId == GrantToken::InvalidReservationId,
-        "CommandQueue reservation IDs exhausted");
+    panic_if(state.nextReservationId == GrantToken::InvalidReservationId,
+             "CommandQueue reservation IDs exhausted");
 
-    const GrantToken token{
-        state.nextReservationId,
-        command.command
-    };
+    const GrantToken token{state.nextReservationId, command.command};
 
     const auto result = state.reservations.emplace(
-        token.reservationId,
-        detail::CommandReservation{token, command});
+        token.reservationId, detail::CommandReservation{token, command});
 
     panic_if(!result.second, "Duplicate reservation ID");
 
     ++state.nextReservationId;
+    const auto count = command.config.vl > command.config.vstart
+                           ? command.config.vl - command.config.vstart
+                           : 0;
+    stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
+                                              command.config.sewBits));
 
     // Sólo se reserva capacidad: aún no hay entrada FIFO ni accepted.
     return GrantResult::granted(token);
 }
 
 void
-CommandQueue::dispatch(
-    const GrantToken &token,
-    const VectorCommand &command)
+CommandQueue::dispatch(const GrantToken &token, const VectorCommand &command)
 {
     panic_if(!token.valid(), "Invalid grant token");
 
-    const auto reservation =
-        state.reservations.find(token.reservationId);
+    const auto reservation = state.reservations.find(token.reservationId);
 
     panic_if(reservation == state.reservations.end(),
              "Unknown or already consumed grant token");
@@ -122,8 +134,7 @@ CommandQueue::dispatch(
     panic_if(reservation->second.descriptor != command,
              "Dispatched command differs from reserved command");
 
-    const CommandKey accepted_key =
-        reservation->second.descriptor.command;
+    const CommandKey accepted_key = reservation->second.descriptor.command;
 
     // La plaza ya está reservada: no se consulta full() ni draining.
     // Primero se copia el descriptor y después se consume la reserva.
@@ -134,14 +145,16 @@ CommandQueue::dispatch(
 
     // El receptor puede ejecutar código síncrono. Todo el estado debe
     // estar preparado antes del callback y no se modifica después de él.
+    ++dispatched;
     completionEndpoint.accepted(accepted_key);
 }
 
 std::optional<VectorCommand>
 CommandQueue::front() const
 {
-    if (empty())
+    if (empty()) {
         return std::nullopt;
+    }
 
     return state.commands.front();
 }
@@ -157,14 +170,14 @@ CommandQueue::releaseHead(CommandKey command)
     // Sólo el cierre del comando libera su crédito. Retirarlo al iniciar
     // ejecución permitiría admitir más trabajo del que cuenta la capacidad.
     // La notificación completed corresponde al sequencer y a la interfaz.
+    stats.complete();
     state.commands.pop_front();
 }
 
 void
 CommandQueue::endDrain()
 {
-    panic_if(!isIdle(),
-             "Cannot finish CommandQueue drain with pending work");
+    panic_if(!isIdle(), "Cannot finish CommandQueue drain with pending work");
 
     state.draining = false;
 }

@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "cpu/vector_engine/common/command_key.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/interface/vector_command.hh"
 #include "cpu/vector_engine/interface/vector_completion.hh"
 
@@ -101,13 +102,13 @@ struct GrantResult
     consistent() const
     {
         switch (status) {
-          case GrantStatus::Granted:
-            return token.has_value() && token->valid() &&
-                   !rejectionReason.has_value();
-          case GrantStatus::Stall:
-            return !token.has_value() && !rejectionReason.has_value();
-          case GrantStatus::Rejected:
-            return !token.has_value() && rejectionReason.has_value();
+            case GrantStatus::Granted:
+                return token.has_value() && token->valid() &&
+                       !rejectionReason.has_value();
+            case GrantStatus::Stall:
+                return !token.has_value() && !rejectionReason.has_value();
+            case GrantStatus::Rejected:
+                return !token.has_value() && rejectionReason.has_value();
         }
 
         return false;
@@ -128,8 +129,8 @@ class VpuCommandEndpoint
     virtual GrantResult requestGrant(const VectorCommand &command) = 0;
 
     // MinorCPU entrega el comando reservado; ya no puede recibir Stall.
-    virtual void dispatch(
-        const GrantToken &token, const VectorCommand &command) = 0;
+    virtual void dispatch(const GrantToken &token,
+                          const VectorCommand &command) = 0;
 };
 
 /**
@@ -153,9 +154,8 @@ class CpuVectorInterface : public VpuCommandEndpoint,
 {
   public:
     explicit CpuVectorInterface(CpuCompletionEndpoint &cpu_endpoint,
-                                VpuCommandEndpoint &vpu_endpoint)
-        : completionEndpoint(cpu_endpoint), vpuEndpoint(vpu_endpoint)
-    {}
+                                VpuCommandEndpoint &vpu_endpoint,
+                                statistics::Group &stats_parent);
 
     ~CpuVectorInterface() override;
 
@@ -168,6 +168,10 @@ class CpuVectorInterface : public VpuCommandEndpoint,
     CommandKey allocateCommandKey(ContextID contextId);
 
   private:
+    ModuleStats stats;
+    statistics::Scalar keysAllocated;
+    statistics::Scalar grants;
+    statistics::Scalar acceptedNotifications;
     CpuCompletionEndpoint &completionEndpoint;
     VpuCommandEndpoint &vpuEndpoint;
     /** Although we don't currently support SMT, we track

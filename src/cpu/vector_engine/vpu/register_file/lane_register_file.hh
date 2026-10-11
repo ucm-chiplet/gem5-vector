@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/vpu/register_file/vector_reg_bank.hh"
 
 namespace gem5::vector_engine
@@ -68,6 +69,11 @@ class LaneRegisterFile
         ByteBuffer readData;
     };
 
+    ModuleStats stats;
+    statistics::Scalar reads;
+    statistics::Scalar writes;
+    statistics::Scalar readBytes;
+    statistics::Scalar writeBytes;
     const AddressMapper &mapper;
     const LaneId laneId;
     ResponsePort laneResponses;
@@ -76,7 +82,8 @@ class LaneRegisterFile
     std::vector<std::optional<PendingAccess>> pending;
 
     MappedVrfFragment validateAccess(const VrfAccess &access) const;
-    void handleTransfer(BankId bank_id, TransferResult result);
+    void handleTransfer(BankId bank_id, TransferResult result,
+                        uint64_t previous_peak);
     void recvBankReadResponse(BankId bank_id,
                               const BankReadResponse &response);
     void recvBankWriteAck(BankId bank_id, const BankWriteAck &ack);

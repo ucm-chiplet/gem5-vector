@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "cpu/vector_engine/common/lane_completion.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/vpu/lanes/alu.hh"
 #include "cpu/vector_engine/vpu/lanes/fpu.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
@@ -99,6 +100,12 @@ class AraLane
         std::array<std::optional<PendingVrfAccess>, 3> pending;
     };
 
+    ModuleStats stats;
+    statistics::Scalar vrfReads;
+    statistics::Scalar vrfWrites;
+    statistics::Scalar vrfReadRetries;
+    statistics::Scalar vrfWriteRetries;
+    statistics::Scalar executionRetries;
     ClockedObject &owner;
     const AddressMapper &mapper;
     const LaneId laneId;

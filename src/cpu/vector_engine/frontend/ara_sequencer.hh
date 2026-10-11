@@ -34,6 +34,7 @@
 #include <variant>
 
 #include "cpu/vector_engine/common/backend_task.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/unit_completion.hh"
 #include "cpu/vector_engine/frontend/command_queue.hh"
 #include "sim/clocked_object.hh"
@@ -112,6 +113,11 @@ class AraSequencer
   private:
     using BackendTask = std::variant<ArithmeticTask, MemoryTask>;
 
+    ModuleStats stats;
+    statistics::Scalar arithmeticCommands;
+    statistics::Scalar loadCommands;
+    statistics::Scalar storeCommands;
+    statistics::Scalar emptyCommands;
     ClockedObject &owner;
     CommandQueue &queue;
     CpuCompletionEndpoint &completionEndpoint;

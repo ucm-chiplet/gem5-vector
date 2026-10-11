@@ -33,6 +33,7 @@
 
 #include "base/logging.hh"
 #include "cpu/thread_context.hh"
+#include "cpu/vector_engine/common/vector_support.hh"
 #include "cpu/vector_engine/frontend/ara_sequencer.hh"
 #include "cpu/vector_engine/frontend/command_queue.hh"
 #include "cpu/vector_engine/frontend/task_distributor.hh"
@@ -51,15 +52,13 @@ namespace gem5::vector_engine
 VpuParameters
 VectorEngine::makeConfiguration(const Params &params)
 {
-    VpuParameters config{
-        {params.vlen_bytes, params.lane_word_bytes, params.num_lanes,
-         params.banks_per_lane},
-        {},
-        params.command_queue_entries,
-        params.lane_task_entries,
-        params.operand_buffer_entries_per_source,
-        params.result_buffer_entries
-    };
+    VpuParameters config{{params.vlen_bytes, params.lane_word_bytes,
+                          params.num_lanes, params.banks_per_lane},
+                         {},
+                         params.command_queue_entries,
+                         params.lane_task_entries,
+                         params.operand_buffer_entries_per_source,
+                         params.result_buffer_entries};
 
     // VLEN RVV es una potencia de dos, hasta 65536 bits. Este baseline
     // requiere al menos un elemento de 32 bits en cada palabra de lane.
@@ -87,11 +86,12 @@ VectorEngine::makeConfiguration(const Params &params)
                  "VectorEngine LMUL exponent must be in [-3, 3]");
         const auto lmul = static_cast<VectorLmul>(exponent);
         fatal_if(std::find(config.supportedLmuls.begin(),
-                           config.supportedLmuls.end(), lmul) !=
-                     config.supportedLmuls.end(),
+                           config.supportedLmuls.end(),
+                           lmul) != config.supportedLmuls.end(),
                  "VectorEngine has a duplicate supported LMUL");
         const uint64_t effective_bytes = exponent >= 0
-            ? uint64_t{bytes} << exponent : uint64_t{bytes} >> -exponent;
+                                             ? uint64_t{bytes} << exponent
+                                             : uint64_t{bytes} >> -exponent;
         fatal_if(effective_bytes < 4,
                  "VectorEngine supported LMUL cannot hold a 32-bit element");
         config.supportedLmuls.push_back(lmul);
@@ -107,10 +107,15 @@ VectorEngine::makeConfiguration(const Params &params)
  */
 VectorEngine::VectorEngine(const Params &params)
     : ClockedObject(params),
+      stats(this, "commands", "dispatched vector commands"),
+      interconnectStats(this, "interconnect"),
+      interconnectEnabled(&interconnectStats, "enabled",
+                          statistics::units::Count::get(),
+                          "Zero: inter-lane transport is not implemented"),
       vpuParameters(makeConfiguration(params)),
       addressBits(params.address_bits),
       targetByteOrder(params.target_byte_order),
-      mapper(vpuParameters.vrf),
+      mapper(vpuParameters.vrf, *this),
       // Revisa si todos los módulos han terminado durante drain.
       drainEvent([this] { checkDrain(); }, name() + ".drain")
 {
@@ -118,7 +123,7 @@ VectorEngine::VectorEngine(const Params &params)
     // hasta completar el cableado, conectar la CPU y recibir dispatch.
     CpuCompletionEndpoint &completion_endpoint = *this;
     commandQueue = std::make_unique<CommandQueue>(
-        vpuParameters.commandQueueEntries, vpuParameters.vrf.vlenBytes,
+        *this, vpuParameters.commandQueueEntries, vpuParameters.vrf.vlenBytes,
         vpuParameters.supportedLmuls, completion_endpoint);
 
     sequencer = std::make_unique<AraSequencer>(
@@ -164,9 +169,7 @@ VectorEngine::VectorEngine(const Params &params)
                     vlsu->recvVrfReadResponse(response);
                 },
                 // En una carga, el VRF confirma la escritura a la VLSU.
-                [this](const WriteAck &ack) {
-                    vlsu->recvVrfWriteAck(ack);
-                }}));
+                [this](const WriteAck &ack) { vlsu->recvVrfWriteAck(ack); }}));
 
         lanes.push_back(std::make_unique<AraLane>(
             *this, mapper, lane_id, targetByteOrder,
@@ -324,10 +327,17 @@ VectorEngine::requestGrant(const VectorCommand &command)
     requireCpuBinding();
     if (!command.command.valid() ||
         command.command.contextId != cpuBinding.contextId) {
+        ++stats.rejected;
         return GrantResult::rejected(RejectionReason::InvalidIdentity);
     }
     // La validación estructural completa pertenece a CpuVectorInterface.
-    return commandQueue->requestGrant(command);
+    const auto result = commandQueue->requestGrant(command);
+    if (result.status == GrantStatus::Stall) {
+        ++stats.retries;
+    } else if (result.status == GrantStatus::Rejected) {
+        ++stats.rejected;
+    }
+    return result;
 }
 
 /**
@@ -338,6 +348,11 @@ void
 VectorEngine::dispatch(const GrantToken &token, const VectorCommand &command)
 {
     requireCpuBinding();
+    const auto count = command.config.vl > command.config.vstart
+                           ? command.config.vl - command.config.vstart
+                           : 0;
+    stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
+                                              command.config.sewBits));
     commandQueue->dispatch(token, command);
     sequencer->wakeup();
 }
@@ -361,6 +376,7 @@ void
 VectorEngine::completed(const VectorCompletion &completion)
 {
     requireCpuBinding();
+    stats.complete(completion.status != CompletionStatus::Success);
     cpuEndpoint->completed(completion);
 }
 

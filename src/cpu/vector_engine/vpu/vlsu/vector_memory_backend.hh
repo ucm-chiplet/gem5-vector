@@ -10,6 +10,7 @@
 
 #include "arch/generic/mmu.hh"
 #include "cpu/vector_engine/common/memory_types.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "mem/packet.hh"
 #include "mem/port.hh"
 #include "sim/clocked_object.hh"
@@ -152,6 +153,19 @@ class VectorMemoryBackend
         {}
     };
 
+    ModuleStats stats;
+    statistics::Scalar loads;
+    statistics::Scalar stores;
+    statistics::Scalar fragmentsCreated;
+    statistics::Scalar translations;
+    statistics::Scalar translationFaults;
+    statistics::Scalar accessFaults;
+    statistics::Scalar sendAttempts;
+    statistics::Scalar packetsSent;
+    statistics::Scalar packetBytes;
+    statistics::Scalar packetResponses;
+    statistics::Scalar portRetries;
+    statistics::Scalar retryNotifications;
     ClockedObject &owner;
     Addr addressMask;
     ContextResolver resolveContext;

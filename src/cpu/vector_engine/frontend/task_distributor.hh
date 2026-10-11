@@ -37,6 +37,7 @@
 
 #include "cpu/vector_engine/common/backend_task.hh"
 #include "cpu/vector_engine/common/lane_completion.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
@@ -107,6 +108,11 @@ class TaskDistributor
         FpExceptionFlags fpFlags = 0;
     };
 
+    ModuleStats stats;
+    statistics::Scalar fragmentsCreated;
+    statistics::Scalar fragmentsAccepted;
+    statistics::Scalar fragmentsCompleted;
+    statistics::Scalar laneRetries;
     ClockedObject &owner;
     const AddressMapper &mapper;
     LaneSender sendLane;

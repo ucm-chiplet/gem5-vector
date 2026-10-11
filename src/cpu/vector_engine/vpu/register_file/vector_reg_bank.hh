@@ -7,6 +7,7 @@
 #include <optional>
 #include <variant>
 
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
@@ -34,7 +35,8 @@ class VectorRegBank
 
     VectorRegBank(ClockedObject &owner, const AddressMapper &mapper,
                   LaneId lane_id, BankId bank_id, ReadSender send_read,
-                  WriteAckSender send_write_ack);
+                  WriteAckSender send_write_ack,
+                  statistics::Group &stats_parent);
     ~VectorRegBank();
 
     VectorRegBank(const VectorRegBank &) = delete;
@@ -56,6 +58,11 @@ class VectorRegBank
         ByteBuffer readData;
     };
 
+    ModuleStats stats;
+    statistics::Scalar reads;
+    statistics::Scalar writes;
+    statistics::Scalar readBytes;
+    statistics::Scalar writeBytes;
     ClockedObject &owner;
     const VrfGeometry &geometry;
     const LaneId laneId;

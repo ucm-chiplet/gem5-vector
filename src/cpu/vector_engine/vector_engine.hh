@@ -93,7 +93,11 @@ class VectorEngine : public ClockedObject,
     void dispatch(const GrantToken &token,
                   const VectorCommand &command) override;
 
-    const VpuParameters &configuration() const { return vpuParameters; }
+    const VpuParameters &
+    configuration() const
+    {
+        return vpuParameters;
+    }
     bool isIdle() const;
     DrainState drain() override;
     void drainResume() override;
@@ -104,6 +108,9 @@ class VectorEngine : public ClockedObject,
 
   private:
     // Declarados antes que los consumidores para sobrevivir a sus vistas.
+    ModuleStats stats;
+    statistics::Group interconnectStats;
+    statistics::Scalar interconnectEnabled;
     const VpuParameters vpuParameters;
     const unsigned addressBits;
     const ByteOrder targetByteOrder;

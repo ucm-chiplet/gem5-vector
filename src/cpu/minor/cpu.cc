@@ -131,7 +131,8 @@ MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
 
         cpuVectorInterface =
             std::make_unique<vector_engine::CpuVectorInterface>(*this,
-                                                                *engine);
+                                                                *engine,
+                                                                *this);
         engine->bindCpu(*cpuVectorInterface, std::move(binding));
     }
 

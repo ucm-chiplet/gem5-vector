@@ -36,8 +36,12 @@
 namespace gem5::vector_engine
 {
 
-AddressMapper::AddressMapper(const VrfGeometry &geometry)
-    : vrfGeometry(geometry)
+AddressMapper::AddressMapper(const VrfGeometry &geometry,
+                             statistics::Group &stats_parent)
+    : stats(&stats_parent, "mapper", "software mapping calls"),
+      fragments(&stats, "fragments", statistics::units::Count::get(),
+                "VRF word fragments returned by software mapping calls"),
+      vrfGeometry(geometry)
 {
     fatal_if(!geometry.vlenBytes || !geometry.laneWordBytes ||
                  !geometry.numLanes || !geometry.banksPerLane,
@@ -108,6 +112,9 @@ AddressMapper::map(const VectorRegRef &reg, const ByteRange &range,
         consumed += size;
     }
 
+    stats.accept(0, range.size);
+    fragments += mapping.size();
+    stats.complete();
     return mapping;
 }
 

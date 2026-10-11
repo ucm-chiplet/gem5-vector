@@ -75,8 +75,23 @@ static_assert(FpInvalid == softfloat_flag_invalid);
 
 } // anonymous namespace
 
-Fpu::Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result)
-    : owner(owner),
+Fpu::Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
+         statistics::Group &stats_parent)
+    : stats(&stats_parent, "fpu", "floating-point bundles"),
+      inexactBundles(&stats, "inexactBundles", statistics::units::Count::get(),
+                     "Completed bundles reporting inexact"),
+      underflowBundles(&stats, "underflowBundles",
+                       statistics::units::Count::get(),
+                       "Completed bundles reporting underflow"),
+      overflowBundles(&stats, "overflowBundles",
+                      statistics::units::Count::get(),
+                      "Completed bundles reporting overflow"),
+      divideByZeroBundles(&stats, "divideByZeroBundles",
+                          statistics::units::Count::get(),
+                          "Completed bundles reporting divide by zero"),
+      invalidBundles(&stats, "invalidBundles", statistics::units::Count::get(),
+                     "Completed bundles reporting invalid operation"),
+      owner(owner),
       sendResult(std::move(send_result)),
       executeEvent([this] { execute(); },
                    owner.name() + ".lane" + std::to_string(lane_id) + ".fpu")
@@ -93,6 +108,7 @@ TransferResult
 Fpu::acceptBundle(const ExecutionBundle &bundle)
 {
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     panic_if(!VectorSupport::supportsFloatingPointOperation(bundle.operation,
@@ -115,6 +131,7 @@ Fpu::acceptBundle(const ExecutionBundle &bundle)
 
     active.emplace();
     active->bundle = bundle;
+    stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
     active->result =
         ExecutionResult{bundle.key,
                         bundle.sewBits,
@@ -147,7 +164,14 @@ Fpu::execute()
         active->result.fpFlags =
             static_cast<FpExceptionFlags>(softfloat_exceptionFlags);
     }
+    const auto flags = active->result.fpFlags;
+    inexactBundles += bool(flags & FpInexact);
+    underflowBundles += bool(flags & FpUnderflow);
+    overflowBundles += bool(flags & FpOverflow);
+    divideByZeroBundles += bool(flags & FpDivideByZero);
+    invalidBundles += bool(flags & FpInvalid);
     auto result = std::move(active->result);
+    stats.complete();
     active.reset();
     sendResult(result);
 }

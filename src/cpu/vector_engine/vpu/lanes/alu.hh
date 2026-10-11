@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "cpu/vector_engine/common/execution_types.hh"
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
 
@@ -24,7 +25,8 @@ class Alu
   public:
     using ResultSender = std::function<void(const ExecutionResult &)>;
 
-    Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result);
+    Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
+        statistics::Group &stats_parent);
     ~Alu();
 
     Alu(const Alu &) = delete;
@@ -45,6 +47,9 @@ class Alu
         ExecutionResult result;
     };
 
+    ModuleStats stats;
+    statistics::Scalar elements16;
+    statistics::Scalar elements32;
     ClockedObject &owner;
     ResultSender sendResult;
     std::optional<ExecutionState> active;

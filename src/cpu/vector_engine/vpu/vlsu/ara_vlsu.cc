@@ -16,7 +16,29 @@ AraVLSU::AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
                  unsigned address_bits, MemorySender send_memory,
                  ReadSender send_read, WriteSender send_write,
                  CompletionSender send_completion)
-    : owner(owner),
+    : stats(&owner, "vlsu", "memory tasks"),
+      loadTasks(&stats, "loadTasks", statistics::units::Count::get(),
+                "Accepted vector load tasks"),
+      storeTasks(&stats, "storeTasks", statistics::units::Count::get(),
+                 "Accepted vector store tasks"),
+      loadElements(&stats, "loadElements", statistics::units::Count::get(),
+                   "Loaded elements after VRF write acknowledgement"),
+      storeElements(&stats, "storeElements", statistics::units::Count::get(),
+                    "Stored elements after memory acknowledgement"),
+      loadBytes(&stats, "loadBytes", statistics::units::Byte::get(),
+                "Bytes loaded and written back to VRF"),
+      storeBytes(&stats, "storeBytes", statistics::units::Byte::get(),
+                 "Bytes stored and acknowledged by memory"),
+      memoryRequests(&stats, "memoryRequests", statistics::units::Count::get(),
+                     "Logical requests accepted by memory backend"),
+      memoryRetries(&stats, "memoryRetries", statistics::units::Count::get(),
+                    "Logical request attempts rejected by backend"),
+      vrfReadRetries(&stats, "vrfReadRetries", statistics::units::Count::get(),
+                     "Store read attempts rejected by local VRF"),
+      vrfWriteRetries(&stats, "vrfWriteRetries",
+                      statistics::units::Count::get(),
+                      "Load writeback attempts rejected by local VRF"),
+      owner(owner),
       mapper(mapper),
       sendMemory(std::move(send_memory)),
       sendRead(std::move(send_read)),
@@ -87,11 +109,18 @@ AraVLSU::acceptTask(const MemoryTask &task)
 {
     // Retry no reserva recursos ni conserva referencias a la tarea recibida.
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     validateTask(task);
     active.emplace();
     active->task = task;
+    if (task.memory.direction == MemoryDirection::Load) {
+        ++loadTasks;
+    } else {
+        ++storeTasks;
+    }
+    stats.accept(task.task.elements.elementCount, task.dataRange.size);
     active->nextElement = task.task.elements.firstElement;
     wakeup();
     return TransferResult::Accepted;
@@ -175,10 +204,20 @@ AraVLSU::handleTransfer(TransferResult result, Phase send, Phase wait)
 {
     switch (result) {
         case TransferResult::Accepted:
+            if (send == Phase::SendMemory) {
+                ++memoryRequests;
+            }
             // Una respuesta síncrona puede haber avanzado ya la fase.
             // No restaurar WAIT ni sobrescribir el estado de esa respuesta.
             break;
         case TransferResult::Retry:
+            if (send == Phase::SendMemory) {
+                ++memoryRetries;
+            } else if (send == Phase::SendRead) {
+                ++vrfReadRetries;
+            } else {
+                ++vrfWriteRetries;
+            }
             // El receptor rechazó la entrega: conserva el mensaje y vuelve
             // a intentarlo. Responder y rechazar a la vez rompe el contrato.
             panic_if(active->phase != wait,
@@ -228,6 +267,13 @@ AraVLSU::evaluate()
         case Phase::NextElement:
             // Sólo WriteAck o StoreAck habilitan esta fase: ningún efecto
             // pendiente del elemento anterior se solapa con el siguiente.
+            if (state.task.memory.direction == MemoryDirection::Load) {
+                ++loadElements;
+                loadBytes += state.element->request.size;
+            } else {
+                ++storeElements;
+                storeBytes += state.element->request.size;
+            }
             state.element.reset();
             ++state.nextElement;
             if (state.nextElement == state.task.task.elements.end()) {
@@ -346,6 +392,7 @@ AraVLSU::finish()
                                     active->fault};
     // Construir la finalización antes de liberar el estado. Al liberar la
     // capacidad antes del callback se permite admitir una nueva tarea en él.
+    stats.complete(active->fault.has_value());
     active.reset();
     sendCompletion(completion);
 }

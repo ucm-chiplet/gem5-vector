@@ -36,6 +36,7 @@
 #include <optional>
 #include <vector>
 
+#include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/interface/cpu_vector_interface.hh"
 
 namespace gem5::vector_engine::detail
@@ -98,11 +99,10 @@ class CommandQueue : public VpuCommandEndpoint
     // Configuración suministrada por el futuro propietario VectorEngine.
     // supported_lmuls y completion_endpoint deben sobrevivir a la cola;
     // el conjunto de LMUL no puede modificarse durante su vida.
-    CommandQueue(
-        std::size_t queue_depth,
-        uint32_t vlen_bytes,
-        const std::vector<VectorLmul> &supported_lmuls,
-        CpuCompletionEndpoint &completion_endpoint);
+    CommandQueue(statistics::Group &stats_parent, std::size_t queue_depth,
+                 uint32_t vlen_bytes,
+                 const std::vector<VectorLmul> &supported_lmuls,
+                 CpuCompletionEndpoint &completion_endpoint);
 
     // Copiar la cola duplicaría reservas y obligaciones de aceptación.
     CommandQueue(const CommandQueue &) = delete;
@@ -112,9 +112,8 @@ class CommandQueue : public VpuCommandEndpoint
     GrantResult requestGrant(const VectorCommand &command) override;
 
     // Un token válido garantiza espacio, incluso durante drain.
-    void dispatch(
-        const GrantToken &token,
-        const VectorCommand &command) override;
+    void dispatch(const GrantToken &token,
+                  const VectorCommand &command) override;
 
     // Devuelve una copia; consultar no libera capacidad ni inicia ejecución.
     std::optional<VectorCommand> front() const;
@@ -123,30 +122,35 @@ class CommandQueue : public VpuCommandEndpoint
     // de terminar sus tareas, accesos y writebacks pendientes.
     void releaseHead(CommandKey command);
 
-    std::size_t occupancy() const
+    std::size_t
+    occupancy() const
     {
         return state.commands.size() + state.reservations.size();
     }
 
-    bool full() const
+    bool
+    full() const
     {
         return occupancy() == queueDepth;
     }
 
     // FIFO vacía no implica ausencia de reservas pendientes de dispatch.
-    bool empty() const
+    bool
+    empty() const
     {
         return state.commands.empty();
     }
 
     // Describe sólo esta cola; no certifica el drain de toda la VPU.
-    bool isIdle() const
+    bool
+    isIdle() const
     {
         return empty() && state.reservations.empty();
     }
 
     // Cierra la admisión nueva sin cancelar reservas ni comandos aceptados.
-    void beginDrain()
+    void
+    beginDrain()
     {
         state.draining = true;
     }
@@ -155,6 +159,10 @@ class CommandQueue : public VpuCommandEndpoint
     void endDrain();
 
   private:
+    ModuleStats stats;
+    statistics::Scalar capacityStalls;
+    statistics::Scalar drainStalls;
+    statistics::Scalar dispatched;
     const std::size_t queueDepth;
     const uint32_t vlenBytes;
 

@@ -14,8 +14,19 @@ namespace gem5::vector_engine
 VectorRegBank::VectorRegBank(ClockedObject &owner, const AddressMapper &mapper,
                              LaneId lane_id, BankId bank_id,
                              ReadSender send_read,
-                             WriteAckSender send_write_ack)
-    : owner(owner),
+                             WriteAckSender send_write_ack,
+                             statistics::Group &stats_parent)
+    : stats(&stats_parent, "bank" + std::to_string(bank_id),
+            "VRF word accesses"),
+      reads(&stats, "reads", statistics::units::Count::get(),
+            "Accepted read accesses"),
+      writes(&stats, "writes", statistics::units::Count::get(),
+             "Accepted write accesses"),
+      readBytes(&stats, "readBytes", statistics::units::Byte::get(),
+                "Enabled bytes in accepted read accesses"),
+      writeBytes(&stats, "writeBytes", statistics::units::Byte::get(),
+                 "Enabled bytes in accepted write accesses"),
+      owner(owner),
       geometry(mapper.geometry()),
       laneId(lane_id),
       rowCount(mapper.rowsPerBank()),
@@ -65,9 +76,15 @@ VectorRegBank::read(const BankReadRequest &request)
 {
     validateAccess(request.key, request.row, request.wordByteEnable);
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     active = PendingAccess{request, ByteBuffer(geometry.laneWordBytes, 0)};
+    ++reads;
+    readBytes += std::count(request.wordByteEnable.begin(),
+                            request.wordByteEnable.end(), 1);
+    stats.accept(0, std::count(request.wordByteEnable.begin(),
+                               request.wordByteEnable.end(), 1));
     owner.schedule(accessEvent, owner.clockEdge(Cycles(1)));
     return TransferResult::Accepted;
 }
@@ -79,9 +96,15 @@ VectorRegBank::write(const BankWriteRequest &request)
     panic_if(request.wordData.size() != geometry.laneWordBytes,
              "VRF bank write data must contain a complete word");
     if (active) {
+        ++stats.retries;
         return TransferResult::Retry;
     }
     active = PendingAccess{request, {}};
+    ++writes;
+    writeBytes += std::count(request.wordByteEnable.begin(),
+                             request.wordByteEnable.end(), 1);
+    stats.accept(0, std::count(request.wordByteEnable.begin(),
+                               request.wordByteEnable.end(), 1));
     owner.schedule(accessEvent, owner.clockEdge(Cycles(1)));
     return TransferResult::Accepted;
 }
@@ -100,6 +123,7 @@ VectorRegBank::execute()
             }
         }
         // Se libera antes del callback, que puede admitir el siguiente acceso.
+        stats.complete();
         active.reset();
         sendRead(response);
     } else {
@@ -113,6 +137,7 @@ VectorRegBank::execute()
             }
         }
         const BankWriteAck ack{write_request.key};
+        stats.complete();
         active.reset();
         // El ack confirma bytes aplicados; los deshabilitados se conservan.
         sendWriteAck(ack);
