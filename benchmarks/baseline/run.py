@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Build and run the existing functional baseline; keep artifacts local."""
+"""Build and run a functional baseline program; keep artifacts local."""
 
 import argparse
 import csv
@@ -16,11 +16,24 @@ from pathlib import Path
 
 BENCHMARK = Path(__file__).resolve().parent
 REPOSITORY = BENCHMARK.parents[1]
-PASS_MESSAGE = "[SUITE baseline] PASS: 21 baseline cases"
+PROGRAMS = {
+    "baseline": {
+        "pass_message": "[SUITE baseline] PASS: 21 baseline cases",
+        "description": (
+            "Cada modo verifica los 21 casos contra la referencia escalar."
+        ),
+    },
+    "baseline-simple": {
+        "pass_message": "[baseline-simple] PASS: resultado={16,27,38,49}",
+        "description": (
+            "Cada modo verifica A + B + 5: resultado={16,27,38,49}."
+        ),
+    },
+}
 
 
 def read_stats(path):
-    """Read the final gem5 statistics dump, including names and descriptions."""
+    """Read the final gem5 statistics dump with names and descriptions."""
     values = {}
     if not path.is_file():
         return values
@@ -37,6 +50,12 @@ def read_stats(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--program",
+        choices=tuple(PROGRAMS),
+        default="baseline",
+        help="Program to build and run",
+    )
+    parser.add_argument(
         "--gem5", type=Path, default=REPOSITORY / "build/RISCV/gem5.opt"
     )
     parser.add_argument("--cc", help="Override the RISC-V C compiler")
@@ -50,6 +69,8 @@ def main():
         help="Maximum wall-clock seconds per simulation",
     )
     args = parser.parse_args()
+    program = PROGRAMS[args.program]
+    binary = BENCHMARK / "build" / args.program
     gem5 = args.gem5.expanduser().resolve()
     if not gem5.is_file():
         parser.error(f"gem5 no existe: {gem5}")
@@ -60,7 +81,13 @@ def main():
     run_dir = BENCHMARK / "results" / run_name
     run_dir.mkdir(parents=True)
     print(f"Resultados locales: {run_dir}", flush=True)
-    build_command = ["make", "-C", str(BENCHMARK), "-B", "all"]
+    build_command = [
+        "make",
+        "-C",
+        str(BENCHMARK),
+        "-B",
+        f"build/{args.program}",
+    ]
     if args.cc:
         build_command.append(f"CC={args.cc}")
     with (run_dir / "build.log").open("w") as log:
@@ -68,7 +95,8 @@ def main():
             build_command, stdout=log, stderr=subprocess.STDOUT
         ).returncode
     report = {
-        "benchmark": "baseline",
+        "benchmark": args.program,
+        "pass_message": program["pass_message"],
         "scope": "functional; entire program, including scalar checks/logs",
         "build_command": build_command,
         "build_returncode": build_status,
@@ -86,7 +114,7 @@ def main():
             ]
             if mode == "native":
                 command.append("--no-offload")
-            command.append(str(BENCHMARK / "build/baseline"))
+            command.append(str(binary))
             timed_out = False
             with (mode_dir / "simulation.log").open("w") as log:
                 try:
@@ -101,7 +129,7 @@ def main():
                     status = None
                     timed_out = True
             log_text = (mode_dir / "simulation.log").read_text()
-            passed = status == 0 and PASS_MESSAGE in log_text
+            passed = status == 0 and program["pass_message"] in log_text
             stats = read_stats(mode_dir / "stats.txt")
             with (mode_dir / "vpu-statistics.csv").open("w", newline="") as f:
                 writer = csv.writer(f)
@@ -128,11 +156,11 @@ def main():
         json.dumps(report, indent=2, ensure_ascii=False) + "\n"
     )
     summary = [
-        "# Resultado del benchmark baseline",
+        f"# Resultado del benchmark {args.program}",
         "",
         f"Resultado global: **{'PASS' if passed else 'FAIL'}**.",
         "",
-        "Cada modo verifica los 21 casos contra la referencia escalar.",
+        program["description"],
         "Las estadísticas abarcan todo el programa, incluidos los logs;",
         "los ticks no representan una medida calibrada de rendimiento Ara.",
         "",
@@ -148,11 +176,14 @@ def main():
         [
             "",
             "- `build.log`: compilación del benchmark.",
-            "- `offload/`: MinorCPU con VPU; `native/`: RVV nativo de MinorCPU.",
+            "- `offload/`: MinorCPU con VPU; "
+            "`native/`: RVV nativo de MinorCPU.",
             "- `simulation.log`: salida del programa y diagnósticos de gem5.",
-            "- `config.json` / `config.ini`: configuración realmente instanciada.",
+            "- `config.json` / `config.ini`: "
+            "configuración realmente instanciada.",
             "- `stats.txt`: todas las estadísticas con descripción y unidad.",
-            "- `vpu-statistics.csv`: métricas de VPU e interfaz CPU, con ceros.",
+            "- `vpu-statistics.csv`: "
+            "métricas de VPU e interfaz CPU, con ceros.",
             "- `results.json`: comandos, códigos de salida y estadísticas.",
             "",
             "Un CSV vacío en modo native es normal: no se instancia la VPU.",

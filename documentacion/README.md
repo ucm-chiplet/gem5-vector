@@ -14,9 +14,9 @@ siguientes extensiones, consulta el hito 2 y conserva los contratos del hito 1.
 Las ideas de renombramiento, ROB y chaining de los documentos originales
 siguen siendo extensiones futuras.
 
-El [benchmark](../benchmarks/baseline/README.md) explica cómo ejecutar los
-21 casos y leer los resultados. Los resultados, logs, binarios e informes
-generados son locales y están ignorados por Git.
+El [benchmark](../benchmarks/baseline/README.md) explica cómo ejecutar el
+ejemplo simple de cuatro elementos o los 21 casos y leer los resultados.
+Los resultados, logs, binarios e informes generados son locales y están ignorados por Git.
 
 [Interfaces propuestas](<Interfaces propuestas.md>) conserva la entrada
 citada por `AGENTS.md` y remite al documento completo del hito 1.

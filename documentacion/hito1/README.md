@@ -12,7 +12,7 @@ descriptores propios y una sola instrucción activa.
 | [Notas de MinorCPU](cpuSideImportantRemarks.md) | Respuestas actuales y notas históricas de la integración. |
 | [Estadísticas](Estadísticas.md) | Nombres, unidades, condiciones de incremento y relaciones entre módulos. |
 | [Diagrama](graphviz.svg), [fuente Graphviz](graphviz.dot) | Organización de módulos y contratos del baseline. |
-| [Benchmark](../../benchmarks/baseline/README.md) | Ejecución reproducible de los 21 casos y guía de resultados locales. |
+| [Benchmark](../../benchmarks/baseline/README.md) | Ejemplo simple, ejecución de los 21 casos y guía de resultados locales. |
 
 El backend tiene además helpers de 16 bits y una FPU binary16 interna.
 Esto no amplía el soporte del offload de Minor: la frontera actual no
