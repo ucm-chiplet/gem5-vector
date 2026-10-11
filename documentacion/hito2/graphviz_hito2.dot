@@ -1,0 +1,622 @@
+// Copia del baseline: arquitectura objetivo del Hito 2.
+// Render: dot -Tsvg graphviz_hito2.dot -o graphviz_hito2.svg
+// Posiciones y recorridos explícitos: no aplicar un layout automático.
+// nop2 conserva la geometría al usar dot, neato o un visor Graphviz.
+// Lane i aparece en la vista general y se desarrolla en el panel inferior.
+// M y T son referencias al mismo servicio, no instancias adicionales.
+digraph AraLikeGem5Hito2 {
+    graph [layout=nop2, splines=polyline, overlap=true,
+        bgcolor="white", pad=0.25, fontname="DejaVu Sans",
+        fontsize=19, labelloc=t,
+        label="VPU Ara-like · Hito 2\nArquitectura objetivo propuesta"];
+    node [shape=box, style="rounded,filled", fixedsize=true,
+        fontname="DejaVu Sans", fontsize=11, margin="0.08,0.05",
+        color="#355C7D", fontcolor="#17202A", penwidth=1.3];
+    edge [color="#355C7D", penwidth=1.5, arrowsize=0.65,
+        fontname="DejaVu Sans", fontsize=9];
+    subgraph cluster_cpu {
+        graph [label="MinorCPU",
+            fontsize=13,
+            style="rounded,filled", color="#8FB3D9",
+            fillcolor="#EAF3FC", penwidth=1.2,
+            bb="60,1000,635,1125",
+            lp="347,1107"];
+        decode [pos="155,1050!",
+            width=2.01389, height=0.75000,
+            shape="box",
+            label=<
+<B>Decode</B>
+<BR/><FONT POINT-SIZE="10">
+Semántica RVV
+</FONT>
+>,
+            fillcolor="#D7EAFB", color="#355C7D",
+            tooltip="MinorCPU decodifica; la VPU no recibe opcodes ni " +
+                "StaticInst."];
+        execute [pos="350,1050!",
+            width=2.70833, height=0.75000,
+            shape="box",
+            label=<
+<B>Execute / Commit</B>
+<BR/><FONT POINT-SIZE="10">
+Varias instrucciones en vuelo
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Retirada en orden
+</FONT>
+>,
+            fillcolor="#D7EAFB", color="#355C7D",
+            tooltip="Ventana aritmética consecutiva; despacho en orden y " +
+                "finalizaciones retenidas. vsetvli y CSRs permanecen " +
+                "en CPU."];
+        cpu_if [pos="550,1050!",
+            width=2.01389, height=0.75000,
+            shape="box",
+            label=<
+<B>CpuVectorInterface</B>
+<BR/><FONT POINT-SIZE="10">
+Comandos / finalizaciones
+</FONT>
+>,
+            fillcolor="#C9E4FA", color="#355C7D",
+            tooltip="CommandKey, VectorCommand con configuración/contexto " +
+                "FP y VectorCompletion con estado/flags. accepted y " +
+                "completed distintos."];
+    }
+    subgraph cluster_frontend {
+        graph [label="Frontend · concurrencia sin chaining",
+            fontsize=13,
+            style="rounded,filled", color="#88BFA3",
+            fillcolor="#EAF7F0", penwidth=1.2,
+            bb="660,890,1100,1125",
+            lp="880,1107"];
+        queue [pos="750,1050!",
+            width=2.22222, height=0.75000,
+            shape="box",
+            label=<
+<B>CommandQueue · T</B>
+<BR/><FONT POINT-SIZE="10">
+FIFO y créditos
+</FONT>
+>,
+            fillcolor="#D6F0E2", color="#355C7D",
+            tooltip="Admisión con token; accepted tras almacenar. Crédito " +
+                "reservado hasta completed. Consulta OperationTraits " +
+                "(T)."];
+        sequencer [pos="950,1050!",
+            width=2.15278, height=0.75000,
+            shape="box",
+            label=<
+<B>AraSequencer</B>
+<BR/><FONT POINT-SIZE="10">
+Inicio en orden
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Varios comandos activos
+</FONT>
+>,
+            fillcolor="#C6EAD6", color="#355C7D",
+            tooltip="max_active_commands; agregación por CommandKey. " +
+                "Cierre después de todos los writebacks. Sin bypass."];
+        distributor [pos="750,950!",
+            width=2.29167, height=0.75000,
+            shape="box",
+            label=<
+<B>TaskDistributor · M</B>
+<BR/><FONT POINT-SIZE="10">
+Tareas / fragmentos
+</FONT>
+>,
+            fillcolor="#D6F0E2", color="#355C7D",
+            tooltip="ArithmeticTask, UnitCompletion, TaskKey y " +
+                "LaneFragmentKey. Reparto por ancho mediante " +
+                "AddressMapper (M)."];
+        scoreboard [pos="950,950!",
+            width=2.15278, height=0.75000,
+            shape="box",
+            label=<
+<B>Scoreboard</B>
+<BR/><FONT POINT-SIZE="10">
+RAW / WAR / WAW
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Reservas arquitectónicas
+</FONT>
+>,
+            fillcolor="#C6EAD6", color="#19734B",
+            tooltip="Reservas de registros/grupos hasta cierre completo; " +
+                "sin readiness por elemento, renombramiento ni ROB " +
+                "vectorial."];
+    }
+    subgraph cluster_overview {
+        graph [label="Backend · vista general",
+            fontsize=13,
+            style="rounded,filled", color="#D8A85D",
+            fillcolor="#FFFAF0", penwidth=1.2,
+            bb="290,710,1100,855",
+            lp="440,837"];
+        interconnect [pos="410,775!",
+            width=2.63889, height=0.83333,
+            shape="box",
+            label=<
+<B>Interconexión entre lanes</B>
+<BR/><FONT POINT-SIZE="10">
+Crossbar + arbitraje
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Buffers, latencia y ancho
+</FONT>
+>,
+            fillcolor="#D4F0F1", color="#187C80",
+            tooltip="Round-robin por destino; límite de inyección por " +
+                "origen; buffers finitos, contrapresión y bytes/ciclo. " +
+                "TransferKey = TaskKey + transferId."];
+        lane_overview [pos="750,775!",
+            width=2.29167, height=0.83333,
+            shape="box",
+            label=<
+<B>Lane i · × N</B>
+<BR/><FONT POINT-SIZE="10">
+Ejecución + VRF local
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Detalle en el panel inferior
+</FONT>
+>,
+            fillcolor="#FFE6B9", color="#A66300",
+            tooltip="La misma lane que se desarrolla abajo; no es una " +
+                "instancia adicional. LaneTask, Accepted/Retry y " +
+                "LaneCompletion. Progreso independiente."];
+        vlsu [pos="950,775!",
+            width=2.29167, height=0.83333,
+            shape="box",
+            label=<
+<B>AraVLSU · M</B>
+<BR/><FONT POINT-SIZE="10">
+Unit-stride · 8/16/32/64
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Memoria serializada
+</FONT>
+>,
+            fillcolor="#EAD8F3", color="#70458A",
+            tooltip="EEW = SEW inicialmente; un elemento lógico en curso. " +
+                "Lectura de store y writeback de load mediante VRF; " +
+                "avanza con WriteAck/StoreAck. Memoria cierra la " +
+                "ventana aritmética. Consulta AddressMapper (M)."];
+    }
+        remote_lane [pos="410,660!",
+            width=2.63889, height=0.69444,
+            shape="box",
+            label=<
+<B>Lane j ≠ i</B>
+<BR/><FONT POINT-SIZE="10">
+Mismos recursos locales
+</FONT>
+>,
+            fillcolor="#FFF1D9", color="#A66300",
+            tooltip="Cada lane replica LRF, bancos, ALUs y VMFPU. " +
+                "Recepción no equivale a confirmación de escritura " +
+                "(WriteAck)."];
+    subgraph cluster_memory {
+        graph [label="Memoria gem5",
+            fontsize=13,
+            style="rounded,filled", color="#B38CC5",
+            fillcolor="#F5ECFA", penwidth=1.2,
+            bb="830,495,1100,700",
+            lp="990,681"];
+        mem_backend [pos="950,635!",
+            width=2.77778, height=0.83333,
+            shape="box",
+            label=<
+<B>VectorMemoryBackend</B>
+<BR/><FONT POINT-SIZE="10">
+Traducción / fragmentación
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Retry y respuesta terminal
+</FONT>
+>,
+            fillcolor="#E1C9EE", color="#70458A",
+            tooltip="VectorMemoryRequest/Response: TaskKey + requestId. " +
+                "Una respuesta terminal por petición lógica; " +
+                "fragmentación física interna."];
+        gem5_memory [pos="950,545!",
+            width=2.77778, height=0.58333,
+            shape="box",
+            label=<
+<B>TLB / puertos / memoria</B>
+>,
+            fillcolor="#EAD8F3", color="#70458A",
+            tooltip="Request/Packet; respuestas, faults y retry de gem5."];
+    }
+    subgraph cluster_lane_detail {
+        graph [label="Detalle de Lane i · recursos parametrizables",
+            fontsize=13,
+            style="rounded,filled", color="#D8A85D",
+            fillcolor="#FFF1D9", penwidth=1.2,
+            bb="65,90,815,590",
+            lp="440,571"];
+        lane [pos="220,505!",
+            width=2.91667, height=0.75000,
+            shape="box",
+            label=<
+<B>AraLane[i]</B>
+<BR/><FONT POINT-SIZE="10">
+Contextos / operand requester
+</FONT>
+>,
+            fillcolor="#FFE6B9", color="#A66300",
+            tooltip="Varios contextos de fragmento; selección de FU y " +
+                "asociación por clave y papel. Completa después de " +
+                "WriteAck. Red representada arriba."];
+        operands [pos="500,505!",
+            width=2.63889, height=0.75000,
+            shape="box",
+            label=<
+<B>Colas de operandos</B>
+<BR/><FONT POINT-SIZE="10">
+Reserva por fuente / FU
+</FONT>
+>,
+            fillcolor="#FFF6E5", color="#A66300",
+            tooltip="Capacidades finitas; reservar antes de leer. Datos, " +
+                "ancho y contexto viajan en ExecutionBundle."];
+        alu [pos="420,385!",
+            width=1.80556, height=0.63889,
+            shape="box",
+            label=<
+<B>ALUs SIMD · × K · T</B>
+<BR/><FONT POINT-SIZE="10">
+Ancho configurable
+</FONT>
+>,
+            fillcolor="#FFE6B9", color="#A66300",
+            tooltip="Instancias por lane, ancho y ocupación propios. vadd " +
+                "entero 8/16/32/64. Consulta OperationTraits (T)."];
+    subgraph cluster_vmfpu {
+        graph [label="VMFPU · T",
+            fontsize=13,
+            style="rounded,filled", color="#BA6B27",
+            fillcolor="#FFE1BF", penwidth=1.2,
+            bb="540,315,805,465",
+            lp="672,450"];
+        vmfpu_entry [pos="540,432!", shape=point,
+            width=0.035, height=0.035, label="",
+            color="#A66300", fillcolor="#A66300"];
+        vmfpu_issue [pos="665,432!", shape=point,
+            width=0.035, height=0.035, label="",
+            color="#A66300", fillcolor="#A66300"];
+        fpu [pos="580,385!",
+            width=1.04167, height=0.44444,
+            shape="box",
+            label=<
+<B>SIMD FPU</B>
+>,
+            fillcolor="#FFEEDC", color="#BA6B27",
+            tooltip="FP32: suma/multiplicación segmentadas y división " +
+                "multiciclo; redondeo y flags. Se conserva la suma " +
+                "binary16 interna."];
+        mul [pos="665,385!",
+            width=1.04167, height=0.44444,
+            shape="box",
+            label=<
+<B>SIMD Mul</B>
+>,
+            fillcolor="#FFEEDC", color="#BA6B27",
+            tooltip="Multiplicación entera segmentada; primer perfil de 32 " +
+                "bits."];
+        div [pos="750,385!",
+            width=1.04167, height=0.44444,
+            shape="box",
+            label=<
+<B>SIMD Div</B>
+>,
+            fillcolor="#FFEEDC", color="#BA6B27",
+            tooltip="División/resto enteros multiciclo; primer perfil de " +
+                "32 bits."];
+        vmfpu_result [pos="665,315!", shape=point,
+            width=0.035, height=0.035, label="",
+            color="#A66300", fillcolor="#A66300"];
+    }
+        lrf [pos="220,245!",
+            width=2.91667, height=0.83333,
+            shape="box",
+            label=<
+<B>LaneRegisterFile · M</B>
+<BR/><FONT POINT-SIZE="10">
+Arbitraje por banco
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Lecturas / writebacks
+</FONT>
+>,
+            fillcolor="#FFE6B9", color="#A66300",
+            tooltip="Slice local del VRF; round-robin por banco con " +
+                "progreso. VrfAccessKey, ReadResponse, WriteAck/Retry. " +
+                "AddressMapper común (M). El enlace con VLSU se " +
+                "muestra en la vista general."];
+        writeback [pos="500,245!",
+            width=2.91667, height=0.83333,
+            shape="box",
+            label=<
+<B>Colas de resultados</B>
+<BR/><FONT POINT-SIZE="10">
+Créditos por FU
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Retención hasta WriteAck
+</FONT>
+>,
+            fillcolor="#FFF6E5", color="#A66300",
+            tooltip="Reserva antes de ejecutar; ExecutionResult y " +
+                "VrfWriteRequest. Mantener resultado hasta confirmar " +
+                "escritura."];
+        banks [pos="220,145!",
+            width=2.91667, height=0.75000,
+            shape="box",
+            label=<
+<B>Bancos del VRF</B>
+<BR/><FONT POINT-SIZE="10">
+Número, ancho y puertos R/W/RW
+</FONT>
+>,
+            fillcolor="#FFE6B9", color="#A66300",
+            tooltip="Latencia e intervalo de acceso configurables. " +
+                "Concesión por puerto; sin FIFO de solicitudes " +
+                "denegadas."];
+        local_notes [pos="565,145!",
+            width=5.20833, height=0.69444,
+            shape="box",
+            label=<
+<B>Recursos finitos</B>
+<BR/><FONT POINT-SIZE="10">
+Contrapresión · latencia ≠ intervalo de iniciación
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Más ALUs requieren puertos y capacidad de writeback
+</FONT>
+>,
+            fillcolor="#FFF6E5", color="#D8A85D",
+            tooltip="Recursos finitos"];
+    }
+    subgraph cluster_shared {
+        graph [label="Servicios y configuración comunes",
+            fontsize=13,
+            style="rounded,filled", color="#AEB7C2",
+            fillcolor="#F5F6F7", penwidth=1.2,
+            bb="855,90,1100,465",
+            lp="977,449"];
+        mapper [pos="977,390!",
+            width=3.12500, height=1.13889,
+            shape="box",
+            label=<
+<B>M · AddressMapper</B>
+<BR/><FONT POINT-SIZE="10">
+Distribuidor, VRF y VLSU
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Mapeo por bytes / SEW / EEW
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Sin cola ni latencia
+</FONT>
+>,
+            fillcolor="#FFFFFF", color="#A66300",
+            tooltip="Las marcas M remiten a este único servicio " +
+                "compartido. Mapeo por registro/rango/geometría a " +
+                "lane/banco/fila; elemento íntegro por palabra."];
+        support [pos="977,270!",
+            width=3.12500, height=1.13889,
+            shape="box",
+            label=<
+<B>T · OperationTraits</B>
+<BR/><FONT POINT-SIZE="10">
+Admisión y unidades
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Roles / EEW / EMUL / capacidades
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Facilita nuevas instrucciones
+</FONT>
+>,
+            fillcolor="#FFFFFF", color="#19734B",
+            tooltip="VectorSupport: soporte por operación/ancho/formato, " +
+                "clase de unidad y perfil temporal. Las marcas T " +
+                "remiten a este servicio común."];
+        parameters [pos="977,150!",
+            width=3.12500, height=1.13889,
+            shape="box",
+            label=<
+<B>VpuParameters</B>
+<BR/><FONT POINT-SIZE="10">
+Lanes / bancos / puertos / ALUs
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Anchos / colas / temporización
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Validación en VectorEngine
+</FONT>
+>,
+            fillcolor="#FFFFFF", color="#687887",
+            tooltip="SEW básico 8/16/32/64 con soporte por operación; " +
+                "lane_word_bytes, ancho de FU y VLEN distintos. " +
+                "Latencia e intervalo separados."];
+    }
+        legend [pos="580,44!",
+            width=14.02778, height=0.75000,
+            shape="box",
+            label=<
+<B>Flecha doble: envío y retorno · M / T: servicios comunes</B>
+<BR/><FONT POINT-SIZE="10">
+Sin chaining, renombramiento ni issue OoO · Memoria serializada
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+La lane inferior amplía la vista general
+</FONT>
+>,
+            fillcolor="#FFFFFF", color="#FFFFFF",
+            tooltip="Identidad extremo a extremo: CommandKey → TaskKey → " +
+                "LaneFragmentKey. VRF: VrfAccessKey; memoria: TaskKey " +
+                "+ requestId; red: TaskKey + transferId. Drain de " +
+                "reservas, colas, FUs, red, memoria y finalizaciones " +
+                "CPU. future/ inactivo; MASKU/SLDU completa, " +
+                "routers/flits y widening/narrowing fuera de alcance."];
+    decode -> execute [color="#0B4F8A",
+        dir="forward",
+        tooltip="Macro RVV clasificada.",
+        pos="e,252.5,1050 227.5,1050 233.5,1050 239.5,1050 " +
+            "245.5,1050"];
+    execute -> cpu_if [color="#0B4F8A",
+        dir="both",
+        tooltip="requestGrant / dispatch; grant, stall, rejected, " +
+            "accepted y completed.",
+        pos="s,447.5,1050 e,477.5,1050 454.5,1050 " +
+            "459.833,1050 465.167,1050 470.5,1050"];
+    cpu_if -> queue [color="#0B4F8A",
+        dir="both",
+        tooltip="dispatch(token, VectorCommand); " +
+            "grant/stall/rejected/accepted. VectorCompletion " +
+            "vuelve por la misma interfaz lógica.",
+        pos="s,622.5,1050 e,670,1050 629.5,1050 640.667,1050 " +
+            "651.833,1050 663,1050"];
+    queue -> sequencer [color="#19734B",
+        dir="both",
+        tooltip="Admisión en orden; completed y liberación de crédito.",
+        pos="s,830,1050 e,872.5,1050 837,1050 846.5,1050 " +
+            "856,1050 865.5,1050"];
+    sequencer -> scoreboard [color="#19734B",
+        dir="both",
+        tooltip="Consulta/reserva/liberación de registros y grupos " +
+            "arquitectónicos.",
+        pos="s,950,1023 e,950,977 950,1016 950,1005.33 " +
+            "950,994.667 950,984"];
+    sequencer -> distributor [color="#19734B",
+        dir="both",
+        tooltip="ArithmeticTask / UnitCompletion; agregación por " +
+            "TaskKey.",
+        pos="s,900,1023 e,832.5,950 900,1016 900,1010.67 " +
+            "900,1005.33 900,1000 883.333,1000 866.667,1000 " +
+            "850,1000 850,983.333 850,966.667 850,950 " +
+            "846.5,950 843,950 839.5,950"];
+    distributor -> lane_overview [color="#19734B",
+        dir="both",
+        tooltip="LaneTask + LaneFragmentKey; Accepted/Retry y " +
+            "LaneCompletion.",
+        pos="s,750,923 e,750,805 750,916 750,881.333 " +
+            "750,846.667 750,812"];
+    sequencer -> vlsu [color="#70458A",
+        dir="both",
+        tooltip="MemoryTask + TaskKey; Accepted/Retry/UnitCompletion.",
+        pos="s,1027.5,1050 e,1032.5,775 1034.5,1050 " +
+            "1046.33,1050 1058.17,1050 1070,1050 1070,958.333 " +
+            "1070,866.667 1070,775 1059.83,775 1049.67,775 " +
+            "1039.5,775"];
+    vlsu -> lane_overview [color="#70458A",
+        dir="both",
+        tooltip="Acceso al VRF local: lectura de store / writeback de " +
+            "load; VrfAccessKey, respuestas y ack.",
+        pos="s,867.5,775 e,832.5,775 860.5,775 853.5,775 " +
+            "846.5,775 839.5,775"];
+    lane_overview -> interconnect [color="#187C80",
+        dir="both",
+        tooltip="Paquetes / entrega; Accepted o Retry. TaskKey + " +
+            "transferId.",
+        pos="s,667.5,775 e,505,775 660.5,775 611,775 " +
+            "561.5,775 512,775"];
+    interconnect -> remote_lane [color="#187C80",
+        dir="both",
+        tooltip="Rangos, datos y bytes habilitados; recepción y " +
+            "contrapresión.",
+        pos="s,410,745 e,410,685 410,738 410,722.667 " +
+            "410,707.333 410,692"];
+    vlsu -> mem_backend [color="#70458A",
+        dir="both",
+        tooltip="VectorMemoryRequest / VectorMemoryResponse; TaskKey + " +
+            "requestId.",
+        pos="s,910,745 e,910,665 910,738 910,716 910,694 " +
+            "910,672"];
+    mem_backend -> gem5_memory [color="#70458A",
+        dir="both",
+        tooltip="Request/Packet; respuestas, faults y retry.",
+        pos="s,950,605 e,950,566 950,598 950,589.667 " +
+            "950,581.333 950,573"];
+    lane -> operands [color="#A66300",
+        dir="forward",
+        tooltip="Operandos reunidos, ancho y contexto.",
+        pos="e,405,505 325,505 349.333,505 373.667,505 " +
+            "398,505"];
+    lane -> lrf [color="#A66300",
+        dir="both",
+        tooltip="VrfReadRequest; ReadResponse, WriteAck y Retry.",
+        pos="s,220,478 e,220,275 220,471 220,408 220,345 " +
+            "220,282"];
+    operands -> alu [color="#A66300",
+        dir="forward",
+        tooltip="ExecutionBundle; selección semántica de FU.",
+        pos="e,420,408 455,478 443.333,478 431.667,478 " +
+            "420,478 420,457 420,436 420,415"];
+    operands -> vmfpu_entry [color="#A66300",
+        dir="none",
+        tooltip="ExecutionBundle con contexto FP; créditos y " +
+            "contrapresión.",
+        pos="500,478 500,462.667 500,447.333 500,432 " +
+            "513.333,432 526.667,432 540,432"];
+    vmfpu_entry -> vmfpu_issue [color="#A66300",
+        dir="none",
+        tooltip="Coordinación VMFPU: selección de subunidad.",
+        pos="540,432 581.667,432 623.333,432 665,432"];
+    vmfpu_issue -> fpu [color="#A66300",
+        dir="forward",
+        tooltip="Selección SIMD FPU.",
+        pos="e,580,401 665,432 638.859,422.466 " +
+            "612.718,412.932 586.576,403.398"];
+    vmfpu_issue -> mul [color="#A66300",
+        dir="forward",
+        tooltip="Selección SIMD Mul.",
+        pos="e,665,401 665,432 665,424 665,416 665,408"];
+    vmfpu_issue -> div [color="#A66300",
+        dir="forward",
+        tooltip="Selección SIMD Div.",
+        pos="e,750,401 665,432 691.141,422.466 " +
+            "717.282,412.932 743.424,403.398"];
+    fpu -> vmfpu_result [color="#A66300",
+        dir="none",
+        tooltip="Resultado SIMD FPU a la salida común de VMFPU.",
+        pos="580,369 580,361 580,353 580,345 608.333,335 " +
+            "636.667,325 665,315"];
+    mul -> vmfpu_result [color="#A66300",
+        dir="none",
+        tooltip="Resultado SIMD Mul a la salida común de VMFPU.",
+        pos="665,369 665,351 665,333 665,315"];
+    div -> vmfpu_result [color="#A66300",
+        dir="none",
+        tooltip="Resultado SIMD Div a la salida común de VMFPU.",
+        pos="750,369 750,361 750,353 750,345 721.667,335 " +
+            "693.333,325 665,315"];
+    vmfpu_result -> writeback [color="#A66300",
+        dir="forward",
+        tooltip="Una salida externa de VMFPU: ExecutionResult. " +
+            "Recursos y créditos por FU conservados.",
+        pos="e,500,275 665,315 665,307.333 665,299.667 " +
+            "665,292 610,292 555,292 500,292 500,288.667 " +
+            "500,285.333 500,282"];
+    alu -> writeback [color="#A66300",
+        dir="forward",
+        tooltip="ExecutionResult de las ALUs locales.",
+        pos="e,460,275 420,362 420,343 420,324 420,305 " +
+            "433.333,305 446.667,305 460,305 460,297.333 " +
+            "460,289.667 460,282"];
+    writeback -> lrf [color="#A66300",
+        dir="forward",
+        tooltip="VrfWriteRequest; concesión y confirmación de " +
+            "escritura.",
+        pos="e,325,245 395,245 374,245 353,245 332,245"];
+    lrf -> banks [color="#A66300",
+        dir="both",
+        tooltip="Accesos concedidos por puerto; datos y ack.",
+        pos="s,220,215 e,220,172 220,208 220,198.333 " +
+            "220,188.667 220,179"];
+}

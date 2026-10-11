@@ -1,3 +1,34 @@
+# Notas de integración con MinorCPU
+
+## Estado actual
+
+- Minor usa el SimObject `VectorEngine` desde `MinorCPU.py`; los extremos
+  abstractos describen el protocolo C++ y no sustituyen al SimObject.
+- Se puede desactivar offload. La configuración del benchmark usa entonces
+  RVV nativo y no instancia la VPU.
+- `vsetvli` se ejecuta en CPU. Execute captura `vl` y `vtype` del PCState
+  arquitectónico y `vstart` del registro misc correspondiente.
+- Con offload activo, una instrucción vectorial no soportada produce fault;
+  no se mezcla ejecución nativa con el VRF privado de la VPU.
+- Minor posee `CpuVectorInterface`, recibe sus callbacks y los reenvía a
+  Execute. Execute conserva una deque de estados asociada a `inFlightInsts`.
+- Antes del despacho se resuelven dependencias escalares. El comando y su
+  identidad se conservan ante Stall; reserva y finalización son eventos
+  distintos. El estado queda preparado antes de callbacks síncronos.
+- La memoria escalar espera a stores vectoriales anteriores. La memoria
+  vectorial espera a stores escalares anteriores. Drain protege reservas y
+  trabajo despachado, y deja descartar intentos que aún no tienen reserva.
+
+Las responsabilidades están en [Interfaces](<Interfaces propuestas.md>) y
+[Diseño e integración](<Cambios en gem5 v25 versión mejorada.md>).
+La observabilidad de la frontera está en [Estadísticas](Estadísticas.md).
+
+## Notas históricas de desarrollo
+
+Se conservan las preguntas y anotaciones originales siguientes. Expresiones
+como «no descomentada todavía» o «de momento» describen aquella etapa y deben
+leerse junto con el estado actual anterior.
+
 1. En el constructor de cpu vamos a usar VectorEngine o usaremos VpuCommandEndpoint? En el segundo caso, no necesitaríamos un .py, para poderlo pasar desde los archivos de configuración de nuestra simulación?
 
 2. Se puede desactivar el offload y tener una cpuvectorial? Supongo que sí, por eso lo pongo como diferentes atributos de cpu.hh
@@ -29,4 +60,4 @@
     - `Execute::evaluate()`: En la parte donde se comprueba si el head of inFlightInst puede comitearse las comprobaciones difieren en función de la phase en la que se encuentre, e.g. si está en WaitDependencies, se comprueba si los operandos están listos con `canVPUInstOffload`. No es 100% necesario y se podría poner a true siempre pero lo pongo por mayor rendimiento.
     - `Execute::issue()`: Asignamos una UF ficticia como sucede en NoCostInst cuando es VPUOffload para que en cuanto llegue al head of inflightinst pueda lanzarse(si están sus operandos disponibles). No se comprueban dependencias, ya que eso lo haremos en commit. Por último, creamos y guardamos el `MinorVectorState` de nuestra instrucción VPU Offload
     - `Execute::commit()`: DPRINTF para ver que instrucciones son VPUOffload llegan a aquí y cuando (Prescindible though). Se trata como una FU-less instruction, tratando siempre de commitearla y posteriormente, en el `if(try_to_commit)` se comprueba si cumple los requisitos para ejecutar `commitInst`.
-    - `Execute::commitInst()`: Capturamos las instrucciones que vayan a ir a la VPU y las procesamos. De esta manera, capturamos el MinorVectorState de esa instrucción: el state que esté en front deberá de ser matemáticamente el state de la instrucción VPUOffload más antigua en inFlightInst. Posteriormente haremos una cosa u otra en finción de la fase en la que se encuentre (especificado en documentación/Interfaces propuestas.md). Cuando llegue a completed se marcará como completada y borrará de la cola.
+    - `Execute::commitInst()`: Capturamos las instrucciones que vayan a ir a la VPU y las procesamos. De esta manera, capturamos el MinorVectorState de esa instrucción: el state que esté en front deberá de ser matemáticamente el state de la instrucción VPUOffload más antigua en inFlightInst. Posteriormente haremos una cosa u otra en finción de la fase en la que se encuentre (especificado en documentacion/hito1/Interfaces propuestas.md). Cuando llegue a completed se marcará como completada y borrará de la cola.

@@ -20,7 +20,7 @@ literalmente.
 
 ### Contratos del baseline y estado del plan
 
-[[Interfaces propuestas]] es la referencia detallada de campos, invariantes,
+[Interfaces propuestas][interfaces] es la referencia detallada de campos, invariantes,
 propiedad de mensajes y condiciones de finalización. Este documento conserva
 el plan de integración y sus responsabilidades, sin duplicar las estructuras
 internas completas.
@@ -31,11 +31,11 @@ termina después de su writeback; un store, después de su confirmación. No se
 inicia el elemento siguiente antes de cerrar el actual. Drain deja terminar
 el trabajo admitido; el reset con trabajo activo queda fuera del primer hito.
 
-Las tablas de archivos describen destinos del plan, no certifican que estén
-implementados. Ya existen cabeceras básicas en `common/` e `interface/`, pero
-los módulos del frontend y backend aún son armazones vacíos. Las nuevas
-estructuras de tareas, fragmentos, VRF y memoria son contratos documentales
-pendientes de implementación. Esta revisión no modifica el código.
+Las tablas de archivos conservan el plan de diseño original. Actualmente
+están implementados frontend, lanes, ALU, FPU interna, VRF, VLSU, backend de
+memoria e integración con Minor. La interconexión sigue vacía. Las secciones
+de renombramiento, ROB y chaining son extensiones futuras, no código activo.
+El [hito 2](../hito2/README.md) recoge la evolución temporizada propuesta.
 
 ### Configuración y propietarios del estado
 
@@ -53,7 +53,7 @@ capturado por instrucción; no se usa como configuración del hardware.
 | VLSU | `PendingVrfAccess` del elemento activo | Asociar lectura de store o escritura de carga con la petición lógica. |
 | Backend de memoria | `MemoryTransactionState`, `MemoryFragmentState` | Traducción, fragmentación, paquetes, retry, buffers y liberación de objetos de gem5. |
 
-Los campos, invariantes y validadores se detallan en [[Interfaces propuestas]].
+Los campos, invariantes y validadores se detallan en [Interfaces propuestas][interfaces].
 Las estructuras privadas no requieren contenedores ni módulos nuevos por
 defecto. La implementación elegirá sus contenedores manteniendo esas reglas.
 
@@ -102,8 +102,11 @@ inst->isVector()
 && vectorOffloadEnabled
 ```
 
-La modificación debe mantener el comportamiento nativo de gem5 cuando
-`vectorOffloadEnabled = false`.
+La modificación mantiene el comportamiento nativo de gem5 cuando
+`vectorOffloadEnabled = false`. Con offload activado, las instrucciones RVV
+no soportadas se convierten en `IllegalInstFault`, sin ejecutarlas en el banco
+vectorial nativo: éste no está sincronizado con el VRF de la VPU. Decode
+comprueba los faults de fetch antes de clasificar una instrucción.
 
 Decode conserva la clasificación y semántica en `DecodedVectorOp`, asociado
 a la macro. Las referencias vectoriales son números arquitectónicos; las
@@ -204,7 +207,23 @@ La implementación deberá coordinar `Execute::drain`, `isInbetweenInsts`,
 `isDrained` y `DrainAllInsts` con el estado de offload. El criterio conjunto
 incluye pipeline y LSQ de Minor, reservas, tareas, respuestas, writebacks y
 callbacks/eventos con trabajo de la VPU. No basta con vaciar `CommandQueue`.
-Los detalles y la tabla por fase están en [[Interfaces propuestas]].
+Los detalles y la tabla por fase están en [Interfaces propuestas][interfaces].
+
+Execute permite cerrar el offload ya reservado o despachado durante
+`DrainCurrentInst`, aunque se conserve como macroinstrucción. `WaitGrant` sin
+reserva sigue siendo descartable. Las finalizaciones despiertan Execute para
+procesar resultado o fault antes de liberar el estado.
+
+### Orden de memoria escalar y vectorial
+
+Execute bloquea el envío de un acceso escalar a la LSQ si hay un store
+vectorial anterior en su cola de estados de offload. La comprobación cubre el
+envío anticipado y el ordinario. Al cerrar o descartar el estado del store se
+libera el bloqueo. No se marca `vse32.v` como barrera escalar ni se introduce
+una entrada ficticia en el store buffer.
+
+Antes de despachar una instrucción vectorial de memoria desde la cabeza de
+commit, se espera a que el store buffer escalar termine sus stores anteriores.
 
 ### Archivos implicados y reutilización
 
@@ -497,7 +516,7 @@ row           = local_word / banks_per_lane
 
 `VrfGeometry` comparte VLEN, anchura de palabra, número de lanes y bancos.
 Las restricciones de geometría y `MappedVrfFragment` se definen en
-[[Interfaces propuestas]]. Un rango puede producir varios fragmentos; el
+[Interfaces propuestas][interfaces]. Un rango puede producir varios fragmentos; el
 reparto no representa elementos dispersos como un único intervalo contiguo.
 
 Esta regla se implementa una sola vez en `AddressMapper`.
@@ -553,7 +572,7 @@ lectura se comprueba que su cola de operandos pueda recibir la respuesta.
 La frontera LRF--banco conserva `VrfAccessKey`, fila, máscara de palabra y
 datos de escritura. El LRF expande o compacta el rango original y recibe
 `BankReadResponse` o `BankWriteAck`; el banco no reconstruye grupos vectoriales
-ni añade una FIFO. Los formatos se definen en [[Interfaces propuestas]].
+ni añade una FIFO. Los formatos se definen en [Interfaces propuestas][interfaces].
 
 Esta organización sigue el
 [VRF de Ara](https://pulp-platform.github.io/ara/modules/lane/vrf.html).
@@ -624,7 +643,7 @@ perteneciendo al backend; uno aceptado no se modifica ni se destruye en vuelo.
 La respuesta permite consumir datos, retirar el estado de retorno y liberar
 el paquete. La transacción se libera sólo tras cerrar los callbacks y emitir
 la única respuesta lógica. La tabla de propiedad está en
-[[Interfaces propuestas]].
+[Interfaces propuestas][interfaces].
 
 | Archivo | Acción | Vitruvius necesario |
 |---|---|---|
@@ -703,7 +722,7 @@ bytes.
 La primera etapa es documental; las siguientes requieren sus propuestas de
 código y aprobación correspondientes. No se implementan pruebas por defecto.
 
-1. Usar los contratos de [[Interfaces propuestas]]: configuración global,
+1. Usar los contratos de [Interfaces propuestas][interfaces]: configuración global,
    representación CPU, tareas, mensajes, estados privados y reglas de progreso
    y drain. Las estructuras documentadas no se consideran ya implementadas.
 2. Implementar `VpuParameters` y los tipos pendientes; completar validadores
@@ -761,12 +780,18 @@ Emulation (SE)** y su objetivo será comprobar que el flujo básico de
 instrucciones RVV funciona correctamente desde la CPU hasta la VPU y produce el
 resultado arquitectónico esperado.
 
-El benchmark se ejecutará mediante la infraestructura global de `benchmarks/`,
-independiente de `.ia` y de cualquier agente. El punto de entrada seguirá siendo:
+El [benchmark del hito 1](../../benchmarks/baseline/README.md) contiene
+fuentes, Makefile y runner. Desde la raíz del repositorio:
 
 ```bash
-./benchmarks/run_benchmarks.sh
+python3 benchmarks/baseline/run.py
 ```
+
+El runner compila y ejecuta las rutas VPU y nativa, generando un resumen,
+logs separados de compilación/simulación, configuración y estadísticas en
+`benchmarks/baseline/results/<fecha-UTC>/`. Binarios y resultados están
+ignorados por Git. Los resultados históricos siguen disponibles localmente
+en `results/history/`.
 
 La secuencia de instrucciones será la que ya se estableció en el conjunto de
 referencia del proyecto, en este orden:
@@ -791,4 +816,63 @@ estas comprobaciones. Las validaciones temporales, los conflictos de recursos,
 el chaining y el resto de benchmarks se añadirán después de que este flujo
 funcional pase de forma estable.
 
-La propuesta de esta secuencia procede del documento [[Plan de Trabajo, Hitos y Matriz Experimental]] y coincide con el flujo RVV indicado en [[Ara2 - Arquitectura y Plan de Réplica en gem5]].
+La secuencia de referencia es el criterio funcional del hito 1.
+
+### Ejemplo SE para la integración Minor–VPU
+
+`configs/example/riscv_vpu.py` ejecuta un binario RV64 suministrado por el
+usuario, sin descargar ni crear benchmarks. Usa memoria timing, VLEN=256 bits,
+dos lanes, palabras de ocho bytes, dos bancos por lane y LMUL=1. El cableado
+explícito conecta el puerto `mem_side` del coprocesador con el bus del sistema.
+
+```bash
+build/RISCV/gem5.opt configs/example/riscv_vpu.py /ruta/al/benchmark
+build/RISCV/gem5.opt configs/example/riscv_vpu.py --no-offload /ruta/al/benchmark
+```
+
+El modo sin offload utiliza los registros vectoriales nativos; no instancia
+la VPU. El ejemplo devuelve el código del evento de salida de gem5. El
+benchmark debe comprobar sus resultados y devolver un código distinto de cero
+si fallan. La presencia del ejemplo no acredita el cierre funcional del hito.
+
+La validación pendiente del equipo incluye el recorrido completo del baseline,
+store vectorial seguido de load escalar, store escalar seguido de load
+vectorial, varios stores vectoriales pendientes, instrucciones no soportadas,
+faults de fetch y drain antes y después del despacho. Los checkpoints siguen
+sin soporte porque la VPU no serializa todavía su VRF.
+
+Con autorización posterior se añade `benchmarks/baseline/`: 21 casos de suma
+con los cinco opcodes previstos, comprobación escalar tras cada store y
+comprobación de límites. El ejecutable no enlaza libc: el C usa `rv64gc` y
+sólo el ensamblador del kernel habilita RVV. Su `_start` configura `gp` y usa
+las llamadas Linux `write` y `exit`. Esto evita instrucciones RVV adicionales
+en libc y en inicializaciones generadas por el compilador. Los comandos y
+la guía se conserva en el README. Los resultados son locales y no se suben
+a GitHub.
+
+En Execute, los faults de Decode, los rechazos de grant y los fallos al
+iniciar memoria se invocan con `inst->staticInst`, en lugar de un `NULL`
+incondicional. `IllegalInstFault::invokeSE` necesita esa
+instrucción para imprimir el opcode; pasar `NULL` provocaba un segmentation
+fault al rechazar una instrucción vectorial. No se modifica el contrato de
+los faults de fetch que carecen de instrucción.
+
+La validación detecta dos errores adicionales en la construcción de comandos:
+`vl` y `vtype` se capturaban mediante `readMiscRegNoEffect`, pero gem5 mantiene
+la configuración actualizada por `vsetvli` en `RiscvISA::PCState`. Execute
+lee ahora esos campos del PCState arquitectónico, también para dimensionar
+los grupos de registros. El descriptor de memoria unit-stride fija
+`fieldCount = 1`, evitando el rechazo causado por el valor inicial cero.
+
+
+## 13. Observabilidad de los módulos actuales
+
+[Estadísticas del hito 1](Estadísticas.md) define la jerarquía de grupos,
+unidades y condiciones de incremento. Cada módulo distingue admisión,
+finalización, retry y trabajo pendiente. Memoria distingue elementos,
+peticiones lógicas, fragmentos físicos, envíos y respuestas del puerto.
+La instrumentación no cambia los mensajes, el soporte de instrucciones ni
+el calendario de eventos funcionales. Los tiempos expresan el recorrido del
+modelo actual; no representan latencias hardware calibradas de Ara.
+
+[interfaces]: <Interfaces propuestas.md>
