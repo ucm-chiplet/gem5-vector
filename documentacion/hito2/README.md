@@ -5,15 +5,20 @@ El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
 para repetirlo. Los cambios aquí descritos son documentales y no implementan
 los módulos ni la microarquitectura del hito 2.
 
+Su papel dentro de VAMPIRE es aportar recursos finitos y observabilidad
+para el estudio posterior de entrega de datos, RVV+IME y CMOS 2.0. Consulta
+los [objetivos globales](<../Objetivos a medio y largo plazo.md>) antes de
+ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
+
 - [Diseño del hito](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md>):
   objetivos, responsabilidades, contratos y decisiones de arquitectura.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):
   orden, tareas, interfaces, resultados y criterios de cierre por fase.
-- [Plan de evolución: hitos 2 a 5](<Plan de evolución - Hitos 2 a 5.md>):
+- [Plan de evolución: hitos 2 a 5](<../Plan de evolución - Hitos 2 a 5.md>):
   objetivos, fases, dependencias y criterios de cierre de las cuatro etapas.
-- [Resumen de hitos](<Resumen de hitos - Objetivos y alcance.md>):
+- [Resumen de hitos](<../Resumen de hitos - Objetivos y alcance.md>):
   lectura breve de sus objetivos, alcance y límites.
-- [Plan de benchmarks](<Plan de benchmarks.md>): micro-kernels RVV,
+- [Plan de benchmarks](<../Plan de benchmarks.md>): micro-kernels RVV,
   kernels densos BLIS y atención CSA/HCA de DeepSeek V4 Flash.
 - [Diagrama objetivo](graphviz_hito2.svg) y
   [fuente Graphviz](graphviz_hito2.dot): organización propuesta.
@@ -182,7 +187,7 @@ posterior, con su propuesta y validación.
 
 ## Pendientes para después del hito 2
 
-El [plan de evolución](<Plan de evolución - Hitos 2 a 5.md>) distribuye
+El [plan de evolución](<../Plan de evolución - Hitos 2 a 5.md>) distribuye
 los pendientes sin reducir el alcance actual de este hito:
 
 - **Hito 3, completar la arquitectura:** operandos y resultados tipados,
@@ -201,8 +206,9 @@ los pendientes sin reducir el alcance actual de este hito:
   reducciones y auxiliares del perfil; segmentados y compactación. Incluye
   evaluación FP8 y revisión de FP4 para CSA, calidad numérica y perfiles
   temporales; comparación de la organización plana con un modelo acotado
-  de dos clústeres. Se admiten
-  las operaciones de los casos seleccionados, sin exigir todo FP.
+  de dos clústeres como punto inicial parametrizable. Esa comparación es
+  lógica; no demuestra una ventaja planar/3D sin costes tecnológicos.
+  Se admiten las operaciones de los casos seleccionados, sin exigir todo FP.
 - **Hito 5, repertorio e integración HPC/ML:** enteras habituales,
   comparación, selección y máscaras; reducciones adicionales, slides de
   distancia variable, gathers y memoria strided/indexed. Completa formas FP
@@ -212,6 +218,11 @@ los pendientes sin reducir el alcance actual de este hito:
   fault-only-first, repertorios completos RVV o de punto fijo y una familia
   completa de topologías/clústeres. Renombramiento, ROB y equivalencia de
   ciclos con una referencia concreta requieren propuestas específicas.
+
+IME, las plantillas T1/T2/T3 y la exploración tecnológica sí pertenecen a
+los objetivos de medio y largo plazo. Su definición puede avanzar en
+paralelo mediante propuestas específicas; no quedan implementadas por
+cerrar estos hitos ni se añaden a la ejecución activa del 2.
 
 Al cerrar el 2 se documentarán los roles de operandos, tipos de resultado,
 efectos y puntos de ampliación que recibirá el 3. Preparar un contrato no
@@ -230,7 +241,7 @@ La campaña se organiza en tres bloques:
 - **Álgebra lineal densa:** kernels de la biblioteca BLIS.
 - **LLM:** CSA y HCA de DeepSeek V4 Flash como bloques de atención.
 
-El [plan de benchmarks](<Plan de benchmarks.md>) es la referencia común de
+El [plan de benchmarks](<../Plan de benchmarks.md>) es la referencia común de
 selección, fuentes, fichas y reparto por hitos. El 2 evalúa su repertorio;
 el 3 aporta mecanismos de solapamiento, el 4 los perfiles numéricos y
 primeras cargas compatibles, y el 5 completa la integración de la campaña.
@@ -259,5 +270,5 @@ dot -Tsvg graphviz_hito2.dot -o graphviz_hito2.svg
 [rvv]: https://github.com/riscvarchive/riscv-v-spec/blob/v1.0/v-spec.adoc
 [riscv-div]: https://docs.riscv.org/reference/isa/unpriv/m-st-ext.html
 [manual-rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
-[predicacion]: <Plan de evolución - Hitos 2 a 5.md#fase-32-predicación-y-escrituras-parciales>
-[clusters]: <Plan de evolución - Hitos 2 a 5.md#fase-37-preparación-para-clusterización>
+[predicacion]: <../Plan de evolución - Hitos 2 a 5.md#fase-32-predicación-y-escrituras-parciales>
+[clusters]: <../Plan de evolución - Hitos 2 a 5.md#fase-37-preparación-para-clusterización>

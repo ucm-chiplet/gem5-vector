@@ -11,6 +11,13 @@ Ara-like adaptado al proyecto. El nuevo hito 4 incorpora precisión mixta,
 formatos FP para HPC/ML y ampliaciones de datos y evaluación. El hito 5
 completa el repertorio habitual y su uso en kernels HPC y ML.
 
+Estos hitos desarrollan la base de los [objetivos globales][objetivos].
+El propósito es disponer de demanda y de un modelo de entrega de datos
+para comparar RVV+IME, plantillas arquitectónicas y escenarios CMOS 2.0.
+Cerrar el 5 no acredita IME implementada, T1/T2/T3 evaluadas ni una ventaja
+3D. Las líneas de investigación se preparan en paralelo con propuestas
+específicas y criterios de comparación, sin ampliar por ello el hito 2.
+
 | Hito | Resultado principal | Límite que se resuelve después |
 | --- | --- | --- |
 | 2. Consolidación y ampliación del baseline | Anchos, recursos finitos, concurrencia independiente, FPU, memoria por bloques y red modular. | Dependencias por instrucción completa; memoria serializada; sin predicación. |
@@ -29,11 +36,26 @@ Recorrido del documento:
 ## Cómo usar el plan
 
 El [diseño detallado del hito 2][diseno-h2] sigue siendo la referencia de sus
-contratos, módulos y ocho fases. Su [README](README.md) contiene la matriz
+contratos, módulos y ocho fases. Su [README](hito2/README.md) contiene la matriz
 de instrucciones y anchos. Este documento explica la continuidad hacia los
 hitos 3, 4 y 5; no traslada al 3 requisitos ya comprometidos para el 2.
 Para una lectura breve, consulta el [resumen de objetivos y alcance][resumen].
 El [plan de benchmarks][benchmarks] concreta la campaña acordada y sus fichas.
+
+## Relación con los objetivos globales
+
+| Entrega | Qué aporta al estudio VAMPIRE | Objetivos |
+| --- | --- | --- |
+| 2 | Recursos finitos y métricas para explicar servicio del VRF, FUs, memoria y red. | O2, O6. |
+| 3 | Chaining, memoria concurrente y fronteras de clústeres y colectivos reutilizables para futuros caminos IME. | O2, O3. |
+| 4 | Formatos/precisión mixta y primer experimento parametrizable de clústeres, con perfiles numéricos y temporales. | O1, O2, O3, O6. |
+| 5 | Cargas y repertorio RVV seleccionados, con ROI y demanda medida para preparar ports y comparar candidatos. | O1, O2, O6. |
+| Líneas coordinadas | Especificación/ports IME, candidatos T1/T3 y estudio de modo T2, calibración y DSE planar/3D. | O1--O6. |
+
+Las interfaces deben poder ampliarse sin incrustar una red concreta o un
+acceso ilimitado a todos los registros. Esto prepara opciones futuras;
+no habilita anticipadamente residencias de C, cambios de modo o motores
+matriciales en los recorridos activos de 2--5.
 
 En cada fase se indican trabajo, responsabilidades y resultado de cierre.
 Las comprobaciones descritas son sugerencias para que el equipo defina la
@@ -68,6 +90,9 @@ El documento de benchmarks detalla la distribución por hitos. Distingue
 gather de registros y cargas indexed, micro-kernel RVV y kernel interno de
 BLIS, y bloque de atención y modelo completo. Las dimensiones, ROI y
 variantes de ejecución se concretarán antes de implementar las cargas.
+Además de los ports RVV de estos hitos, la línea IME debe comparar versiones
+matriciales con la misma función y datos. Su referencia y estado se
+registran aparte, sin confundir la FMA vectorial con una operación de tile.
 
 ## Decisiones que se mantienen
 
@@ -241,6 +266,9 @@ Separar desde aquí identidad y ubicación de los participantes, siguiendo
 los contratos de preparación para clústeres que integra la fase 3.7.
 El cierre entrega un esquema que representa las familias de 4--5 sin
 forzarlas a dos fuentes del mismo tipo ni implementar sus opcodes aún.
+Se documentarán también los puntos que requeriría un futuro comando IME:
+grupos de A/B/C, fases y propiedad del acumulador. Es una preparación de
+contratos; la semántica y las rutas activas necesitan su propuesta específica.
 
 ### Fase 3.2. Predicación y escrituras parciales
 
@@ -622,11 +650,19 @@ VLEN, repertorio y recursos cuya influencia no se quiera estudiar. La
 propuesta fijará qué es local y qué se comparte; no implica duplicar
 automáticamente VLSU o frontend.
 
+Dos clústeres es el punto inicial para comprobar esas fronteras, no una
+constante arquitectónica ni una partición física final. La configuración
+debe permitir barrer agrupaciones compatibles. L1 designa memoria de primer
+nivel; el escenario debe declarar si es caché u otro tipo de memoria.
+
 El cierre exige equivalencia funcional y métricas comparables de tráfico
 local/remoto, espera y ocupación. Una configuración con dos etiquetas sobre
 el mismo crossbar sin fronteras de recursos no demuestra clusterización.
 No se compromete una familia completa de topologías ni equivalencia exacta
 de ciclos con Ara.
+El control plano/jerárquico de esta fase compara organización lógica. No
+se denomina comparación planar/3D hasta incorporar una partición tecnológica
+y costes calibrados o escenarios de sensibilidad explícitos.
 
 ### Fase 4.8. Consolidación y entrega al hito 5
 
@@ -824,6 +860,29 @@ primer experimento con clústeres. Otros formatos de ML se seleccionan por
 los casos de 4.1, con su semántica y vía de ejecución explícitas. Estas
 exclusiones no aplazan requisitos de las variantes anunciadas como soporte.
 
+## Continuidad de investigación y líneas paralelas
+
+IME, la evaluación de T1/T2/T3 y la exploración CMOS 2.0 forman parte del
+objetivo global. No se cancelan por no estar implementadas al cerrar el 5.
+Tampoco se añaden aquí como fases de código activas de los hitos 2--5.
+
+1. Cerrar la referencia y el subconjunto RVV+IME que usen las cargas. Definir
+   geometría, acumulación y datos de un comando matricial antes de activarlo.
+2. Preparar ports manuales RVV/IME de los kernels seleccionados. BLIS y las
+   etapas de atención deben mantener referencia, entradas y ROI comparables.
+3. Concretar candidatos parametrizables: T1 con FUs compartidas y colectivos;
+   T3 con motor/puente y C residente; T2 con coste de reconfiguración y modo.
+4. Incorporar modelos tecnológicos de memoria, enlaces, energía y área,
+   documentando fuente, incertidumbre y restricciones físicas disponibles.
+5. Explorar carga, arquitectura y tecnología con controles planares justos,
+   sensibilidad y evidencia suficiente para aceptar o rechazar las ventajas.
+
+Estas líneas pueden diseñarse, perfilarse o contrastarse mientras avanza la
+base. Su activación requiere propuestas específicas, no esperar sin motivo
+a implementar todo RVV. Los [objetivos globales][objetivos] fijan criterios,
+fuentes y límites; los hitos adicionales y fechas se definirán al concretar
+esas propuestas.
+
 La implementación de cada fase debe proponer archivos y módulos afectados,
 interfaces, decisiones y alternativas, exclusiones y validación. Si para
 cumplirla aparece una necesidad que amplía el alcance, se presentará antes
@@ -831,7 +890,7 @@ de modificar código. No se reabre el baseline cerrado como fase preliminar.
 
 ## Referencias
 
-- [Diseño detallado del hito 2][diseno-h2] y [resumen](README.md): contratos
+- [Diseño detallado del hito 2][diseno-h2] y [resumen del hito 2](hito2/README.md): contratos
   y repertorio que este plan conserva.
 - [Manual oficial RVV][manual-rvv] y [especificación v1.0][rvv]: referencia
   normativa para definir operaciones y sus restricciones.
@@ -849,8 +908,8 @@ de modificar código. No se reabre el baseline cerrado como fase preliminar.
 - [BLIS][blis], [DeepSeek V4 Flash][flash] e [informe técnico][deepseek]:
   fuentes de las cargas; no sustituyen al manual para definir instrucciones.
 
-[diseno-h2]: <Hito 2 - Concurrencia, FPU, anchos e interconexión.md>
-[cierre-h2]: <Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>
+[diseno-h2]: <hito2/Hito 2 - Concurrencia, FPU, anchos e interconexión.md>
+[cierre-h2]: <hito2/Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>
 [manual-rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
 [rvv]: https://github.com/riscvarchive/riscv-v-spec/blob/v1.0/v-spec.adoc
 [rivec]: https://arxiv.org/abs/2111.01949
@@ -865,3 +924,4 @@ de modificar código. No se reabre el baseline cerrado como fase preliminar.
 [blis]: https://github.com/flame/blis
 [flash]: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
 [deepseek]: https://arxiv.org/html/2606.19348
+[objetivos]: <Objetivos a medio y largo plazo.md>

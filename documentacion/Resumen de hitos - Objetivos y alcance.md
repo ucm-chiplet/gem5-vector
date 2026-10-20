@@ -4,6 +4,11 @@ Este documento resume la planificación. El hito 1 está cerrado; los demás
 describen objetivos de desarrollo, no soporte ya implementado. El
 [plan detallado][plan] desarrolla fases, dependencias y criterios de cierre.
 
+La finalidad está en los [objetivos a medio y largo plazo][objetivos]:
+estudiar entrega de datos en RVV+IME y comparar organizaciones candidatas
+y escenarios CMOS 2.0 con controles planares. Los hitos 2--5 construyen la
+base; no agotan ese resultado de investigación.
+
 La campaña acordada tiene tres bloques: **micro-kernels RVV**, kernels de
 álgebra lineal densa de **BLIS** y los bloques de atención **CSA/HCA de
 DeepSeek V4 Flash**. El [plan de benchmarks][benchmarks] concreta sus fichas
@@ -49,7 +54,8 @@ Incluye resultados escalares/máscaras, ejecución colectiva, faults precisos
 y preparación para agrupar lanes en clústeres dentro de una VPU.
 
 **Límite de cierre:** una organización inicial de un grupo utiliza las
-interfaces preparadas. El experimento con dos clústeres pertenece al 4.
+interfaces preparadas. El experimento parametrizable de clústeres pertenece
+al 4 y sus tamaños iniciales no fijan la arquitectura final.
 
 ## Hito 4: precisión mixta y ampliaciones para HPC/ML
 
@@ -64,6 +70,8 @@ campos, compactación y los auxiliares necesarios para sus casos ejecutables.
 Evalúa FP8 y revisa FP4 del indexador CSA con representación y ruta explícitas.
 Incluye calidad numérica, perfiles temporales y comparación de una
 organización plana con un primer modelo acotado de dos clústeres.
+Ese control estudia organización lógica; la comparación planar/3D requiere
+además particiones y costes tecnológicos explícitos.
 
 **Límite de cierre:** micro-kernels de precisión/geometría, kernels BLIS
 compatibles y referencias por etapas de CSA/HCA. La integración de los
@@ -87,5 +95,18 @@ evidencia numérica y temporal; no equivale a completar RVV ni a soportar
 cualquier framework ni a ejecutar el LLM completo. Los casos ejecutables
 del 4 ya deben tener sus dependencias resueltas antes de empezar este hito.
 
+## Medio y largo plazo: continuidad del proyecto
+
+En paralelo se caracterizan las cargas y se preparan ports RVV/IME. Quedan
+propuestas específicas para IME y sus tiles, T1 con FUs compartidas, T2
+SIMD/sistólica y T3 con motor dedicado y C residente. Se priorizan estudios
+T1/T3 y costes de modo T2 según los perfiles y datos disponibles.
+
+Después se incorporan modelos tecnológicos calibrados y una exploración
+conjunta de carga, arquitectura y tecnología. Los tamaños son parámetros;
+las ventajas 3D deben demostrarse o rechazarse, no darse por supuestas.
+Estas líneas no reciben aquí números de hito ni fechas cerradas.
+
 [plan]: <Plan de evolución - Hitos 2 a 5.md>
 [benchmarks]: <Plan de benchmarks.md>
+[objetivos]: <Objetivos a medio y largo plazo.md>

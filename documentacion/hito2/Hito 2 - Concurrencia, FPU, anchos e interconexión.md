@@ -29,6 +29,12 @@ y kernels. El [resumen de hitos][resumen-hitos] ofrece una lectura breve.
 El 3 también preparará las interfaces para agrupar lanes en clústeres dentro
 de una VPU; el 4 recoge un primer experimento con dos clústeres.
 
+Los [objetivos globales de VAMPIRE][objetivos] sitúan este hito como base
+para estudiar entrega de datos, RVV+IME y arquitecturas/escenarios CMOS 2.0.
+Las restricciones siguientes son de esta entrega, no exclusiones del
+proyecto a largo plazo. La interconexión y los recursos deben permanecer
+parametrizables: el crossbar y los tamaños iniciales son puntos de partida.
+
 Para seguir el documento:
 
 - Empieza por las secciones 1--4 para conocer objetivos, límites y módulos.
@@ -1682,10 +1688,14 @@ pendiente. Los criterios siguientes se refieren a las ampliaciones del hito 2.
 La equivalencia funcional no demuestra fidelidad de ciclos con Ara. Los
 experimentos iniciales estudiarán tendencias y recursos del modelo; una
 calibración contra RTL o mediciones necesita referencias y perfiles propios.
+Para estudiar CMOS 2.0 harán falta además costes tecnológicos y un control
+planar comparable. El diagrama de este hito no representa las plantillas
+IME futuras ni acredita su implementación.
 
-[plan-evolucion]: <Plan de evolución - Hitos 2 a 5.md>
-[resumen-hitos]: <Resumen de hitos - Objetivos y alcance.md>
-[benchmarks]: <Plan de benchmarks.md>
+[plan-evolucion]: <../Plan de evolución - Hitos 2 a 5.md>
+[resumen-hitos]: <../Resumen de hitos - Objetivos y alcance.md>
+[benchmarks]: <../Plan de benchmarks.md>
+[objetivos]: <../Objetivos a medio y largo plazo.md>
 
 ## 16. Decisiones y alternativas descartadas
 

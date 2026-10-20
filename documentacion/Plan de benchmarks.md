@@ -5,6 +5,11 @@ genéricas de ejemplos de kernels del plan anterior. Concreta qué se quiere
 evaluar; no implementa ni ejecuta pruebas. El baseline del hito 1 permanece
 cerrado. La distribución del desarrollo está en el [plan de hitos][plan].
 
+Esta campaña atiende los [objetivos globales][objetivos] O1 y O6: obtener
+demanda real y referencias reproducibles para estudiar entrega de datos,
+RVV+IME y candidatos arquitectónicos. El rendimiento de una carga aislada
+no demuestra por sí solo una ventaja CMOS 2.0.
+
 | Bloque confirmado | Alcance de la campaña |
 | --- | --- |
 | Micro-kernels RVV | Loads/stores unit-stride, strided e indexed; gathers, máscaras, reducciones, permutaciones, widening, LMUL, configuración `vsetvl` y tratamiento del tail. |
@@ -71,6 +76,9 @@ Antes de implementar o ejecutar, fijar:
   para aislar la VPU, sin convertirlo en una limitación de BLIS.
 - Referencia numérica, tolerancia, operaciones de coma flotante contadas y
   métricas de recursos. Una rutina escalar de respaldo se identifica.
+- Para un port IME, kernel de origen, cambios de algoritmo/layout, geometría
+  de tiles, formatos y subconjunto de la extensión. El port se identifica
+  como adaptación de BLIS y conserva una referencia RVV comparable.
 
 El hito 4 utiliza kernels BLIS que quepan en su perfil para estudiar FMA,
 precisión, geometría y recursos. El 5 completa la selección de operaciones,
@@ -138,7 +146,42 @@ reducciones, permutaciones y funciones de biblioteca. Si falta una
 instrucción necesaria, se incorpora a la matriz con su propuesta; una
 lista de familias RVV no acredita por sí sola soporte del bloque.
 
-## 4. Distribución por hitos
+La línea IME debe identificar qué etapas de CSA/HCA se transforman en
+operaciones matriciales y qué trabajo sigue siendo RVV/escalar. No se
+etiqueta el bloque completo como IME por acelerar una de sus multiplicaciones.
+El port y sus datos se versionarán y declararán la referencia de la extensión.
+
+## 4. Caracterización, ports RVV/IME y demanda de datos
+
+La presentación de objetivos plantea caracterización mediante RAVE/QEMU y
+ports manuales en paralelo al desarrollo gem5. Antes de reutilizar perfiles
+o trazas, fijar versión, formato, captura de instrucciones/valores/rangos y
+lo que realmente representa cada evento. Esta documentación no certifica
+que esas herramientas o ports estén implementados en este repositorio.
+
+Registrar instrucciones y formas, distribución de `vl`, SEW/LMUL,
+reutilización de operandos y C, patrones de acceso y tamaño de los datos.
+Relacionar esos perfiles con demanda de bancos, FUs, memoria y red. La
+reutilización debe medirse en la ROI, no deducirse sólo del nombre GEMM.
+
+Para comparar versiones RVV e IME, mantener función, entradas, formato y
+criterio numérico o declarar la diferencia. Registrar geometría de tiles,
+lambda, layout y trabajo residual RVV/escalar del port. El número de
+instrucciones de cada versión puede cambiar: se compara también trabajo
+útil, datos movidos y costes de adaptación/materialización.
+
+El objetivo de captura de tráfico es distinguir datos locales a lane/motor,
+dentro de un clúster y globales/entre clústeres. Separar payload útil,
+tráfico de protocolo, lecturas repetidas y tráfico en cada enlace. Los
+bytes por destino de un multicast y los byte-saltos son métricas distintas;
+su regla de contabilidad debe figurar en la ficha.
+
+Un cálculo analítico de tráfico, una traza funcional y una simulación
+temporizada tienen distinto alcance. Sus resultados se etiquetan y no se
+presentan como validación de hardware. Un contraste con otra plataforma o
+hardware real necesita una correspondencia de configuración explícita.
+
+## 5. Distribución por hitos
 
 | Hito | Papel de los benchmarks |
 | --- | --- |
@@ -146,12 +189,16 @@ lista de familias RVV no acredita por sí sola soporte del bloque.
 | 3 | Casos de predicación, chaining y varias instrucciones de memoria en vuelo; infraestructura colectiva y fronteras preparadas para clústeres. |
 | 4 | Micro-kernels de precisión mixta/widening y reducciones FP; primeros kernels seleccionados de BLIS; formatos y referencias por etapas CSA/HCA; comparación plana/dos clústeres. |
 | 5 | Completar micro-kernels del perfil, integración BLIS e integración de CSA/HCA con las dependencias de cada ROI resueltas. |
+| Líneas coordinadas | Caracterización, ports RVV/IME, plantillas candidatas y sus perfiles; calibración y DSE posteriores con comparaciones equivalentes. |
 
 No se exige ejecutar CSA/HCA completo en el 4 si necesita indexed/gathers o
 selección del 5. Sus referencias y experimentos de formatos se distinguen
 de los casos que sí deben ejecutarse al cerrar el 4.
+La integración RVV del 5 no acredita la implementación IME ni la evaluación
+de T1/T2/T3. Los ports se preparan en paralelo y se ejecutan en cada modelo
+cuando su subconjunto y sus interfaces hayan sido aprobados e implementados.
 
-## 5. Ficha y criterios de evaluación
+## 6. Ficha y criterios de evaluación
 
 Cada benchmark tendrá una ficha antes de su implementación, con:
 
@@ -170,6 +217,9 @@ Cada benchmark tendrá una ficha antes de su implementación, con:
    trabajo de selección/compresión incluido y no sólo la atención final.
 8. Hito/fase, dependencias pendientes y estado: referencia, adaptación,
    ejecutable o comprobado. Un caso no soportado no se registra como pasado.
+9. Objetivo O1--O6, plantilla y escenario: control planar o partición 3D,
+   costes tecnológicos usados y fuente de calibración, cuando correspondan.
+   Separar recursos lógicos constantes y recursos aumentados bajo presupuesto.
 
 Los tamaños y el método de ejecución en gem5 se acordarán para que cada ROI
 sea manejable y representativa del mecanismo estudiado. RiVEC y TSVC siguen
@@ -186,3 +236,4 @@ actualiza documentación: no crea pruebas, scripts ni adaptaciones de código.
 [flash]: https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
 [deepseek]: https://arxiv.org/html/2606.19348
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
+[objetivos]: <Objetivos a medio y largo plazo.md>
