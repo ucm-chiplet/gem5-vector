@@ -37,11 +37,6 @@
 <text text-anchor="middle" x="380" y="-551.02" font-family="DejaVu Sans" font-size="13.00">Detalle de Lane i · recursos parametrizables</text>
 </g>
 <g id="clust6" class="cluster">
-<title>cluster_vmfpu</title>
-<path fill="#ffe1bf" stroke="#ba6b27" stroke-width="1.2" d="M492,-298C492,-298 733,-298 733,-298 739,-298 745,-304 745,-310 745,-310 745,-436 745,-436 745,-442 739,-448 733,-448 733,-448 492,-448 492,-448 486,-448 480,-442 480,-436 480,-436 480,-310 480,-310 480,-304 486,-298 492,-298"/>
-<text text-anchor="middle" x="612" y="-430.02" font-family="DejaVu Sans" font-size="13.00">VMFPU · T</text>
-</g>
-<g id="clust7" class="cluster">
 <title>cluster_shared</title>
 <path fill="#f5f6f7" stroke="#aeb7c2" stroke-width="1.2" d="M807,-73C807,-73 1028,-73 1028,-73 1034,-73 1040,-79 1040,-85 1040,-85 1040,-436 1040,-436 1040,-442 1034,-448 1028,-448 1028,-448 807,-448 807,-448 801,-448 795,-442 795,-436 795,-436 795,-85 795,-85 795,-79 801,-73 807,-73"/>
 <text text-anchor="middle" x="917" y="-429.02" font-family="DejaVu Sans" font-size="13.00">Servicios y configuración comunes</text>
@@ -181,11 +176,11 @@
 <!-- vlsu -->
 <g id="node10" class="node">
 <title>vlsu</title>
-<g id="a_node10"><a xlink:title="EEW = SEW inicialmente; un elemento lógico en curso. Lectura de store y writeback de load mediante VRF; avanza con WriteAck/StoreAck. Memoria cierra la ventana aritmética. Consulta AddressMapper (M).">
+<g id="a_node10"><a xlink:title="EEW = SEW; un bloque activo hasta cerrar memoria y VRF. Buffers de carga/store; accesos por palabra y fallback por elemento. Memoria cierra la ventana aritmética. Consulta AddressMapper (M).">
 <path fill="#ead8f3" stroke="#70458a" stroke-width="1.3" d="M960.5,-788C960.5,-788 819.5,-788 819.5,-788 813.5,-788 807.5,-782 807.5,-776 807.5,-776 807.5,-740 807.5,-740 807.5,-734 813.5,-728 819.5,-728 819.5,-728 960.5,-728 960.5,-728 966.5,-728 972.5,-734 972.5,-740 972.5,-740 972.5,-776 972.5,-776 972.5,-782 966.5,-788 960.5,-788"/>
 <text text-anchor="start" x="857" y="-764.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">AraVLSU · M</text>
 <text text-anchor="start" x="834.88" y="-754" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Unit&#45;stride · 8/16/32/64</text>
-<text text-anchor="start" x="843.88" y="-744" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Memoria serializada</text>
+<text text-anchor="start" x="829.25" y="-744" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Un bloque activo + buffers</text>
 </a>
 </g>
 </g>
@@ -223,18 +218,19 @@
 <!-- interconnect -->
 <g id="node8" class="node">
 <title>interconnect</title>
-<g id="a_node8"><a xlink:title="Round&#45;robin por destino; límite de inyección por origen; buffers finitos, contrapresión y bytes/ciclo. TransferKey = TaskKey + transferId.">
+<g id="a_node8"><a xlink:title="Interfaz común: admisión, Retry, entrega, capacidad, drain y métricas. Topología seleccionada por configuración; consumidores independientes de rutas/arbitraje internos. Crossbar inicial: round&#45;robin por destino, límite por origen, buffers finitos, latencia y bytes/ciclo. TransferKey = TaskKey + transferId. Consumidores obligatorios: vslide1up.vx y vslide1down.vx, 8/16/32/64, sin máscara. Su ejecutor aplica RVV; la red sólo transporta. Otras topologías futuras.">
 <path fill="#d4f0f1" stroke="#187c80" stroke-width="1.3" d="M433,-788C433,-788 267,-788 267,-788 261,-788 255,-782 255,-776 255,-776 255,-740 255,-740 255,-734 261,-728 267,-728 267,-728 433,-728 433,-728 439,-728 445,-734 445,-740 445,-740 445,-776 445,-776 445,-782 439,-788 433,-788"/>
-<text text-anchor="start" x="278.75" y="-764.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Interconexión entre lanes</text>
-<text text-anchor="start" x="305" y="-754" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Crossbar + arbitraje</text>
-<text text-anchor="start" x="293.75" y="-744" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Buffers, latencia y ancho</text>
+<text text-anchor="start" x="286.63" y="-769.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Interconexión modular</text>
+<text text-anchor="start" x="291.5" y="-759" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Crossbar inicial + arbitraje</text>
+<text text-anchor="start" x="288.13" y="-749" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Topologías intercambiables</text>
+<text text-anchor="start" x="288.88" y="-739" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Slide1up / Slide1down · .vx</text>
 </a>
 </g>
 </g>
 <!-- remote_lane -->
 <g id="node11" class="node">
 <title>remote_lane</title>
-<g id="a_node11"><a xlink:title="Cada lane replica LRF, bancos, ALUs y VMFPU. Recepción no equivale a confirmación de escritura (WriteAck).">
+<g id="a_node11"><a xlink:title="Cada lane replica LRF, bancos, ALUs y FPU. Recepción no equivale a confirmación de escritura (WriteAck).">
 <path fill="#fff1d9" stroke="#a66300" stroke-width="1.3" d="M433,-668C433,-668 267,-668 267,-668 261,-668 255,-662 255,-656 255,-656 255,-630 255,-630 255,-624 261,-618 267,-618 267,-618 433,-618 433,-618 439,-618 445,-624 445,-630 445,-630 445,-656 445,-656 445,-662 439,-668 433,-668"/>
 <text text-anchor="start" x="326" y="-644.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Lane j ≠ i</text>
 <text text-anchor="start" x="294.88" y="-634" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Mismos recursos locales</text>
@@ -274,7 +270,7 @@
 <!-- mem_backend -->
 <g id="node12" class="node">
 <title>mem_backend</title>
-<g id="a_node12"><a xlink:title="VectorMemoryRequest/Response: TaskKey + requestId. Una respuesta terminal por petición lógica; fragmentación física interna.">
+<g id="a_node12"><a xlink:title="VectorMemoryRequest/Response: TaskKey + requestId. Una respuesta terminal por bloque lógico; un paquete físico en vuelo, retry y faults. Fragmentación interna.">
 <path fill="#e1c9ee" stroke="#70458a" stroke-width="1.3" d="M978,-648C978,-648 802,-648 802,-648 796,-648 790,-642 790,-636 790,-636 790,-600 790,-600 790,-594 796,-588 802,-588 802,-588 978,-588 978,-588 984,-588 990,-594 990,-600 990,-600 990,-636 990,-636 990,-642 984,-648 978,-648"/>
 <text text-anchor="start" x="825.12" y="-624.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">VectorMemoryBackend</text>
 <text text-anchor="start" x="827.38" y="-614" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Traducción / fragmentación</text>
@@ -341,9 +337,9 @@
 </g>
 </g>
 <!-- lrf -->
-<g id="node23" class="node">
+<g id="node18" class="node">
 <title>lrf</title>
-<g id="a_node23"><a xlink:title="Slice local del VRF; round&#45;robin por banco con progreso. VrfAccessKey, ReadResponse, WriteAck/Retry. AddressMapper común (M). El enlace con VLSU se muestra en la vista general.">
+<g id="a_node18"><a xlink:title="Slice local del VRF; round&#45;robin por banco con progreso. VrfAccessKey, ReadResponse, WriteAck/Retry. AddressMapper común (M). El enlace con VLSU se muestra en la vista general.">
 <path fill="#ffe6b9" stroke="#a66300" stroke-width="1.3" d="M253,-258C253,-258 67,-258 67,-258 61,-258 55,-252 55,-246 55,-246 55,-210 55,-210 55,-204 61,-198 67,-198 67,-198 253,-198 253,-198 259,-198 265,-204 265,-210 265,-210 265,-246 265,-246 265,-252 259,-258 253,-258"/>
 <text text-anchor="start" x="104.5" y="-234.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">LaneRegisterFile · M</text>
 <text text-anchor="start" x="115.37" y="-224" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Arbitraje por banco</text>
@@ -364,10 +360,12 @@
 <!-- alu -->
 <g id="node16" class="node">
 <title>alu</title>
-<g id="a_node16"><a xlink:title="Instancias por lane, ancho y ocupación propios. vadd entero 8/16/32/64. Consulta OperationTraits (T).">
-<path fill="#ffe6b9" stroke="#a66300" stroke-width="1.3" d="M413,-391C413,-391 307,-391 307,-391 301,-391 295,-385 295,-379 295,-379 295,-357 295,-357 295,-351 301,-345 307,-345 307,-345 413,-345 413,-345 419,-345 425,-351 425,-357 425,-357 425,-379 425,-379 425,-385 419,-391 413,-391"/>
-<text text-anchor="start" x="310.12" y="-369.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">ALUs SIMD · × K · T</text>
-<text text-anchor="start" x="315.38" y="-359" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Ancho configurable</text>
+<g id="a_node16"><a xlink:title="Instancias por lane, ancho y ocupación propios. vadd entero 8/16/32/64; multiplicación, división y resto enteros asignados provisionalmente a ALU en 8/16/32/64. Formas .vv y .vx; latencias por concretar en fase 6. Mismo ancho en fuentes y resultado, sin widening ni narrowing. Sin unidades dedicadas Mul/Div. Consulta OperationTraits (T).">
+<path fill="#ffe6b9" stroke="#a66300" stroke-width="1.3" d="M438,-404C438,-404 282,-404 282,-404 276,-404 270,-398 270,-392 270,-392 270,-344 270,-344 270,-338 276,-332 282,-332 282,-332 438,-332 438,-332 444,-332 450,-338 450,-344 450,-344 450,-392 450,-392 450,-398 444,-404 438,-404"/>
+<text text-anchor="start" x="310.12" y="-379.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">ALUs SIMD · × K · T</text>
+<text text-anchor="start" x="288.38" y="-369" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Suma / mul / div / resto enteros</text>
+<text text-anchor="start" x="317.25" y="-359" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">8 / 16 / 32 / 64 bits</text>
+<text text-anchor="start" x="295.5" y="-349" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Perfil por operación y ancho</text>
 </a>
 </g>
 </g>
@@ -375,28 +373,36 @@
 <g id="edge16" class="edge">
 <title>operands&#45;&gt;alu</title>
 <g id="a_edge16"><a xlink:title="ExecutionBundle; selección semántica de FU.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M395,-461C383.33,-461 371.67,-461 360,-461 360,-440 360,-419 360,-398"/>
-<polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="362.28,-399.77 360,-393.27 357.73,-399.77 362.28,-399.77"/>
+<path fill="none" stroke="#a66300" stroke-width="1.5" d="M395,-461C383.33,-461 371.67,-461 360,-461 360,-444.33 360,-427.67 360,-411"/>
+<polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="362.28,-412.77 360,-406.27 357.73,-412.77 362.28,-412.77"/>
 </a>
 </g>
 </g>
-<!-- vmfpu_entry -->
+<!-- fpu -->
 <g id="node17" class="node">
-<title>vmfpu_entry</title>
-<ellipse fill="#a66300" stroke="#a66300" stroke-width="1.3" cx="480" cy="-415" rx="1.26" ry="1.26"/>
+<title>fpu</title>
+<g id="a_node17"><a xlink:title="Sólo vfadd.vv, vfmul.vv y vfdiv.vv FP32 como objetivos. Recibe contexto FP y devuelve flags; no accede al VRF. Progreso independiente de las ALUs, recursos internos FP por concretar. Binary16 interno conservado; Mul/Div/resto enteros asignados a las ALUs.">
+<path fill="#ffeedc" stroke="#ba6b27" stroke-width="1.3" d="M698,-409C698,-409 512,-409 512,-409 506,-409 500,-403 500,-397 500,-397 500,-339 500,-339 500,-333 506,-327 512,-327 512,-327 698,-327 698,-327 704,-327 710,-333 710,-339 710,-339 710,-397 710,-397 710,-403 704,-409 698,-409"/>
+<text text-anchor="start" x="570.87" y="-379.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">FPU SIMD · T</text>
+<text text-anchor="start" x="522.87" y="-369" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Suma / multiplicación / división FP32</text>
+<text text-anchor="start" x="518.75" y="-359" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Redondeo + flags · sólo coma flotante</text>
+<text text-anchor="start" x="544.25" y="-349" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Latencia y créditos propios</text>
+</a>
 </g>
-<!-- operands&#45;&gt;vmfpu_entry -->
+</g>
+<!-- operands&#45;&gt;fpu -->
 <g id="edge17" class="edge">
-<title>operands&#45;&gt;vmfpu_entry</title>
+<title>operands&#45;&gt;fpu</title>
 <g id="a_edge17"><a xlink:title="ExecutionBundle con contexto FP; créditos y contrapresión.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M440,-461C440,-445.67 440,-430.33 440,-415 453.33,-415 466.67,-415 480,-415"/>
+<path fill="none" stroke="#a66300" stroke-width="1.5" d="M490,-461C490,-449 490,-437 490,-425 528.33,-425 566.67,-425 605,-425 605,-422 605,-419 605,-416"/>
+<polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="607.28,-417.77 605,-411.27 602.73,-417.77 607.28,-417.77"/>
 </a>
 </g>
 </g>
 <!-- writeback -->
-<g id="node24" class="node">
+<g id="node19" class="node">
 <title>writeback</title>
-<g id="a_node24"><a xlink:title="Reserva antes de ejecutar; ExecutionResult y VrfWriteRequest. Mantener resultado hasta confirmar escritura.">
+<g id="a_node19"><a xlink:title="Reserva antes de ejecutar; ExecutionResult y VrfWriteRequest. Mantener resultado hasta confirmar escritura.">
 <path fill="#fff6e5" stroke="#a66300" stroke-width="1.3" d="M533,-258C533,-258 347,-258 347,-258 341,-258 335,-252 335,-246 335,-246 335,-210 335,-210 335,-204 341,-198 347,-198 347,-198 533,-198 533,-198 539,-198 545,-204 545,-210 545,-210 545,-246 545,-246 545,-252 539,-258 533,-258"/>
 <text text-anchor="start" x="387.5" y="-234.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Colas de resultados</text>
 <text text-anchor="start" x="404" y="-224" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Créditos por FU</text>
@@ -405,123 +411,27 @@
 </g>
 </g>
 <!-- alu&#45;&gt;writeback -->
-<g id="edge26" class="edge">
+<g id="edge19" class="edge">
 <title>alu&#45;&gt;writeback</title>
-<g id="a_edge26"><a xlink:title="ExecutionResult de las ALUs locales.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M360,-345C360,-326 360,-307 360,-288 373.33,-288 386.67,-288 400,-288 400,-280.33 400,-272.67 400,-265"/>
+<g id="a_edge19"><a xlink:title="ExecutionResult de las ALUs locales.">
+<path fill="none" stroke="#a66300" stroke-width="1.5" d="M360,-332C360,-317.33 360,-302.67 360,-288 373.33,-288 386.67,-288 400,-288 400,-280.33 400,-272.67 400,-265"/>
 <polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="402.28,-266.77 400,-260.27 397.73,-266.77 402.28,-266.77"/>
 </a>
 </g>
 </g>
-<!-- vmfpu_issue -->
-<g id="node18" class="node">
-<title>vmfpu_issue</title>
-<ellipse fill="#a66300" stroke="#a66300" stroke-width="1.3" cx="605" cy="-415" rx="1.26" ry="1.26"/>
-</g>
-<!-- vmfpu_entry&#45;&gt;vmfpu_issue -->
+<!-- fpu&#45;&gt;writeback -->
 <g id="edge18" class="edge">
-<title>vmfpu_entry&#45;&gt;vmfpu_issue</title>
-<g id="a_edge18"><a xlink:title="Coordinación VMFPU: selección de subunidad.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M480,-415C521.67,-415 563.33,-415 605,-415"/>
-</a>
-</g>
-</g>
-<!-- fpu -->
-<g id="node19" class="node">
-<title>fpu</title>
-<g id="a_node19"><a xlink:title="FP32: suma/multiplicación segmentadas y división multiciclo; redondeo y flags. Se conserva la suma binary16 interna.">
-<path fill="#ffeedc" stroke="#ba6b27" stroke-width="1.3" d="M546.83,-384C546.83,-384 493.17,-384 493.17,-384 487.83,-384 482.5,-378.67 482.5,-373.33 482.5,-373.33 482.5,-362.67 482.5,-362.67 482.5,-357.33 487.83,-352 493.17,-352 493.17,-352 546.83,-352 546.83,-352 552.17,-352 557.5,-357.33 557.5,-362.67 557.5,-362.67 557.5,-373.33 557.5,-373.33 557.5,-378.67 552.17,-384 546.83,-384"/>
-<text text-anchor="start" x="493.38" y="-366.43" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">SIMD FPU</text>
-</a>
-</g>
-</g>
-<!-- vmfpu_issue&#45;&gt;fpu -->
-<g id="edge19" class="edge">
-<title>vmfpu_issue&#45;&gt;fpu</title>
-<g id="a_edge19"><a xlink:title="Selección SIMD FPU.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M605,-415C578.86,-405.47 552.72,-395.93 526.58,-386.4"/>
-<polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="529.02,-384.87 522.13,-384.78 527.46,-389.14 529.02,-384.87"/>
-</a>
-</g>
-</g>
-<!-- mul -->
-<g id="node20" class="node">
-<title>mul</title>
-<g id="a_node20"><a xlink:title="Multiplicación entera segmentada; primer perfil de 32 bits.">
-<path fill="#ffeedc" stroke="#ba6b27" stroke-width="1.3" d="M631.83,-384C631.83,-384 578.17,-384 578.17,-384 572.83,-384 567.5,-378.67 567.5,-373.33 567.5,-373.33 567.5,-362.67 567.5,-362.67 567.5,-357.33 572.83,-352 578.17,-352 578.17,-352 631.83,-352 631.83,-352 637.17,-352 642.5,-357.33 642.5,-362.67 642.5,-362.67 642.5,-373.33 642.5,-373.33 642.5,-378.67 637.17,-384 631.83,-384"/>
-<text text-anchor="start" x="578.37" y="-366.43" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">SIMD Mul</text>
-</a>
-</g>
-</g>
-<!-- vmfpu_issue&#45;&gt;mul -->
-<g id="edge20" class="edge">
-<title>vmfpu_issue&#45;&gt;mul</title>
-<g id="a_edge20"><a xlink:title="Selección SIMD Mul.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M605,-415C605,-407 605,-399 605,-391"/>
-<polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="607.28,-392.77 605,-386.27 602.73,-392.77 607.28,-392.77"/>
-</a>
-</g>
-</g>
-<!-- div -->
-<g id="node21" class="node">
-<title>div</title>
-<g id="a_node21"><a xlink:title="División/resto enteros multiciclo; primer perfil de 32 bits.">
-<path fill="#ffeedc" stroke="#ba6b27" stroke-width="1.3" d="M716.83,-384C716.83,-384 663.17,-384 663.17,-384 657.83,-384 652.5,-378.67 652.5,-373.33 652.5,-373.33 652.5,-362.67 652.5,-362.67 652.5,-357.33 657.83,-352 663.17,-352 663.17,-352 716.83,-352 716.83,-352 722.17,-352 727.5,-357.33 727.5,-362.67 727.5,-362.67 727.5,-373.33 727.5,-373.33 727.5,-378.67 722.17,-384 716.83,-384"/>
-<text text-anchor="start" x="665.25" y="-366.43" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">SIMD Div</text>
-</a>
-</g>
-</g>
-<!-- vmfpu_issue&#45;&gt;div -->
-<g id="edge21" class="edge">
-<title>vmfpu_issue&#45;&gt;div</title>
-<g id="a_edge21"><a xlink:title="Selección SIMD Div.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M605,-415C631.14,-405.47 657.28,-395.93 683.42,-386.4"/>
-<polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="682.54,-389.14 687.87,-384.78 680.98,-384.87 682.54,-389.14"/>
-</a>
-</g>
-</g>
-<!-- vmfpu_result -->
-<g id="node22" class="node">
-<title>vmfpu_result</title>
-<ellipse fill="#a66300" stroke="#a66300" stroke-width="1.3" cx="605" cy="-298" rx="1.26" ry="1.26"/>
-</g>
-<!-- fpu&#45;&gt;vmfpu_result -->
-<g id="edge22" class="edge">
-<title>fpu&#45;&gt;vmfpu_result</title>
-<g id="a_edge22"><a xlink:title="Resultado SIMD FPU a la salida común de VMFPU.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M520,-352C520,-344 520,-336 520,-328 548.33,-318 576.67,-308 605,-298"/>
-</a>
-</g>
-</g>
-<!-- mul&#45;&gt;vmfpu_result -->
-<g id="edge23" class="edge">
-<title>mul&#45;&gt;vmfpu_result</title>
-<g id="a_edge23"><a xlink:title="Resultado SIMD Mul a la salida común de VMFPU.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M605,-352C605,-334 605,-316 605,-298"/>
-</a>
-</g>
-</g>
-<!-- div&#45;&gt;vmfpu_result -->
-<g id="edge24" class="edge">
-<title>div&#45;&gt;vmfpu_result</title>
-<g id="a_edge24"><a xlink:title="Resultado SIMD Div a la salida común de VMFPU.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M690,-352C690,-344 690,-336 690,-328 661.67,-318 633.33,-308 605,-298"/>
-</a>
-</g>
-</g>
-<!-- vmfpu_result&#45;&gt;writeback -->
-<g id="edge25" class="edge">
-<title>vmfpu_result&#45;&gt;writeback</title>
-<g id="a_edge25"><a xlink:title="Una salida externa de VMFPU: ExecutionResult. Recursos y créditos por FU conservados.">
-<path fill="none" stroke="#a66300" stroke-width="1.5" d="M605,-298C605,-290.33 605,-282.67 605,-275 550,-275 495,-275 440,-275 440,-271.67 440,-268.33 440,-265"/>
+<title>fpu&#45;&gt;writeback</title>
+<g id="a_edge18"><a xlink:title="ExecutionResult FP con identidad y flags. Créditos independientes de las ALUs; writeback compartido en la lane.">
+<path fill="none" stroke="#a66300" stroke-width="1.5" d="M605,-327C605,-309.67 605,-292.33 605,-275 550,-275 495,-275 440,-275 440,-271.67 440,-268.33 440,-265"/>
 <polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="442.28,-266.77 440,-260.27 437.73,-266.77 442.28,-266.77"/>
 </a>
 </g>
 </g>
 <!-- banks -->
-<g id="node25" class="node">
+<g id="node20" class="node">
 <title>banks</title>
-<g id="a_node25"><a xlink:title="Latencia e intervalo de acceso configurables. Concesión por puerto; sin FIFO de solicitudes denegadas.">
+<g id="a_node20"><a xlink:title="Latencia e intervalo de acceso configurables. Concesión por puerto; sin FIFO de solicitudes denegadas.">
 <path fill="#ffe6b9" stroke="#a66300" stroke-width="1.3" d="M253,-155C253,-155 67,-155 67,-155 61,-155 55,-149 55,-143 55,-143 55,-113 55,-113 55,-107 61,-101 67,-101 67,-101 253,-101 253,-101 259,-101 265,-107 265,-113 265,-113 265,-143 265,-143 265,-149 259,-155 253,-155"/>
 <text text-anchor="start" x="118.37" y="-129.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Bancos del VRF</text>
 <text text-anchor="start" x="81.25" y="-119" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Número, ancho y puertos R/W/RW</text>
@@ -529,9 +439,9 @@
 </g>
 </g>
 <!-- lrf&#45;&gt;banks -->
-<g id="edge28" class="edge">
+<g id="edge21" class="edge">
 <title>lrf&#45;&gt;banks</title>
-<g id="a_edge28"><a xlink:title="Accesos concedidos por puerto; datos y ack.">
+<g id="a_edge21"><a xlink:title="Accesos concedidos por puerto; datos y ack.">
 <path fill="none" stroke="#a66300" stroke-width="1.5" d="M160,-191C160,-181.33 160,-171.67 160,-162"/>
 <polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="157.73,-189.23 160,-195.73 162.28,-189.23 157.73,-189.23"/>
 <polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="162.28,-163.77 160,-157.27 157.73,-163.77 162.28,-163.77"/>
@@ -539,18 +449,18 @@
 </g>
 </g>
 <!-- writeback&#45;&gt;lrf -->
-<g id="edge27" class="edge">
+<g id="edge20" class="edge">
 <title>writeback&#45;&gt;lrf</title>
-<g id="a_edge27"><a xlink:title="VrfWriteRequest; concesión y confirmación de escritura.">
+<g id="a_edge20"><a xlink:title="VrfWriteRequest; concesión y confirmación de escritura.">
 <path fill="none" stroke="#a66300" stroke-width="1.5" d="M335,-228C314,-228 293,-228 272,-228"/>
 <polygon fill="#a66300" stroke="#a66300" stroke-width="1.5" points="273.77,-225.73 267.27,-228 273.77,-230.28 273.77,-225.73"/>
 </a>
 </g>
 </g>
 <!-- local_notes -->
-<g id="node26" class="node">
+<g id="node21" class="node">
 <title>local_notes</title>
-<g id="a_node26"><a xlink:title="Recursos finitos">
+<g id="a_node21"><a xlink:title="Recursos finitos">
 <path fill="#fff6e5" stroke="#d8a85d" stroke-width="1.3" d="M680.5,-153C680.5,-153 329.5,-153 329.5,-153 323.5,-153 317.5,-147 317.5,-141 317.5,-141 317.5,-115 317.5,-115 317.5,-109 323.5,-103 329.5,-103 329.5,-103 680.5,-103 680.5,-103 686.5,-103 692.5,-109 692.5,-115 692.5,-115 692.5,-141 692.5,-141 692.5,-147 686.5,-153 680.5,-153"/>
 <text text-anchor="start" x="461.12" y="-134.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Recursos finitos</text>
 <text text-anchor="start" x="396.25" y="-124" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Contrapresión · latencia ≠ intervalo de iniciación</text>
@@ -559,9 +469,9 @@
 </g>
 </g>
 <!-- mapper -->
-<g id="node27" class="node">
+<g id="node22" class="node">
 <title>mapper</title>
-<g id="a_node27"><a xlink:title="Las marcas M remiten a este único servicio compartido. Mapeo por registro/rango/geometría a lane/banco/fila; elemento íntegro por palabra.">
+<g id="a_node22"><a xlink:title="Las marcas M remiten a este único servicio compartido. Mapeo por registro/rango/geometría a lane/banco/fila; elemento íntegro por palabra.">
 <path fill="#ffffff" stroke="#a66300" stroke-width="1.3" d="M1017.5,-414C1017.5,-414 816.5,-414 816.5,-414 810.5,-414 804.5,-408 804.5,-402 804.5,-402 804.5,-344 804.5,-344 804.5,-338 810.5,-332 816.5,-332 816.5,-332 1017.5,-332 1017.5,-332 1023.5,-332 1029.5,-338 1029.5,-344 1029.5,-344 1029.5,-402 1029.5,-402 1029.5,-408 1023.5,-414 1017.5,-414"/>
 <text text-anchor="start" x="864.5" y="-384.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">M · AddressMapper</text>
 <text text-anchor="start" x="862.25" y="-374" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Distribuidor, VRF y VLSU</text>
@@ -571,9 +481,9 @@
 </g>
 </g>
 <!-- support -->
-<g id="node28" class="node">
+<g id="node23" class="node">
 <title>support</title>
-<g id="a_node28"><a xlink:title="VectorSupport: soporte por operación/ancho/formato, clase de unidad y perfil temporal. Las marcas T remiten a este servicio común.">
+<g id="a_node23"><a xlink:title="VectorSupport: soporte por operación/ancho/formato, clase de unidad y perfil temporal. Las marcas T remiten a este servicio común.">
 <path fill="#ffffff" stroke="#19734b" stroke-width="1.3" d="M1017.5,-294C1017.5,-294 816.5,-294 816.5,-294 810.5,-294 804.5,-288 804.5,-282 804.5,-282 804.5,-224 804.5,-224 804.5,-218 810.5,-212 816.5,-212 816.5,-212 1017.5,-212 1017.5,-212 1023.5,-212 1029.5,-218 1029.5,-224 1029.5,-224 1029.5,-282 1029.5,-282 1029.5,-288 1023.5,-294 1017.5,-294"/>
 <text text-anchor="start" x="866.75" y="-264.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">T · OperationTraits</text>
 <text text-anchor="start" x="869.75" y="-254" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Admisión y unidades</text>
@@ -583,9 +493,9 @@
 </g>
 </g>
 <!-- parameters -->
-<g id="node29" class="node">
+<g id="node24" class="node">
 <title>parameters</title>
-<g id="a_node29"><a xlink:title="SEW básico 8/16/32/64 con soporte por operación; lane_word_bytes, ancho de FU y VLEN distintos. Latencia e intervalo separados.">
+<g id="a_node24"><a xlink:title="SEW básico 8/16/32/64 con soporte por operación; lane_word_bytes, ancho de FU y VLEN distintos. Latencia e intervalo separados. Modelo de interconexión seleccionable, inicialmente crossbar.">
 <path fill="#ffffff" stroke="#687887" stroke-width="1.3" d="M1017.5,-174C1017.5,-174 816.5,-174 816.5,-174 810.5,-174 804.5,-168 804.5,-162 804.5,-162 804.5,-104 804.5,-104 804.5,-98 810.5,-92 816.5,-92 816.5,-92 1017.5,-92 1017.5,-92 1023.5,-92 1029.5,-98 1029.5,-104 1029.5,-104 1029.5,-162 1029.5,-162 1029.5,-168 1023.5,-174 1017.5,-174"/>
 <text text-anchor="start" x="874.62" y="-144.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">VpuParameters</text>
 <text text-anchor="start" x="844.62" y="-134" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Lanes / bancos / puertos / ALUs</text>
@@ -595,13 +505,13 @@
 </g>
 </g>
 <!-- legend -->
-<g id="node30" class="node">
+<g id="node25" class="node">
 <title>legend</title>
-<g id="a_node30"><a xlink:title="Identidad extremo a extremo: CommandKey → TaskKey → LaneFragmentKey. VRF: VrfAccessKey; memoria: TaskKey + requestId; red: TaskKey + transferId. Drain de reservas, colas, FUs, red, memoria y finalizaciones CPU. future/ inactivo; MASKU/SLDU completa, routers/flits y widening/narrowing fuera de alcance.">
+<g id="a_node25"><a xlink:title="Identidad extremo a extremo: CommandKey → TaskKey → LaneFragmentKey. VRF: VrfAccessKey; memoria: TaskKey + requestId; red: TaskKey + transferId. Drain de reservas, colas, FUs, red, memoria y finalizaciones CPU. future/ inactivo; MASKU/SLDU completa, routers/flits y widening/narrowing fuera de alcance.">
 <path fill="#ffffff" stroke="#ffffff" stroke-width="1.3" d="M1013,-54C1013,-54 27,-54 27,-54 21,-54 15,-48 15,-42 15,-42 15,-12 15,-12 15,-6 21,0 27,0 27,0 1013,0 1013,0 1019,0 1025,-6 1025,-12 1025,-12 1025,-42 1025,-42 1025,-48 1019,-54 1013,-54"/>
 <text text-anchor="start" x="369.25" y="-33.05" font-family="DejaVu Sans" font-weight="bold" font-size="11.00" fill="#17202a">Flecha doble: envío y retorno · M / T: servicios comunes</text>
-<text text-anchor="start" x="371.5" y="-23" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Sin chaining, renombramiento ni issue OoO · Memoria serializada</text>
-<text text-anchor="start" x="433.75" y="-13" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">La lane inferior amplía la vista general</text>
+<text text-anchor="start" x="344.12" y="-23" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">Sin chaining ni renombramiento · Memoria: un bloque y un paquete en vuelo</text>
+<text text-anchor="start" x="355" y="-13" font-family="DejaVu Sans" font-size="10.00" fill="#17202a">La lane inferior amplía la vista general · Mul / Div / resto enteros: en ALU</text>
 </a>
 </g>
 </g>

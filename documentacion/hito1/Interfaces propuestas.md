@@ -15,7 +15,7 @@ desconectado.
 ## Estado de esta referencia
 
 Los contratos pertenecen al [hito 1](README.md). Las ampliaciones de
-concurrencia, anchos, VMFPU y transporte entre lanes se describen en el
+concurrencia, anchos, FPU y transporte entre lanes se describen en el
 [hito 2](../hito2/README.md). El benchmark está en
 [benchmarks/baseline](../../benchmarks/baseline/README.md); sus resultados
 permanecen locales y no se versionan.

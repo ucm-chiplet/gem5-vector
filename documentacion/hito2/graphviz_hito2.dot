@@ -1,4 +1,4 @@
-// Copia del baseline: arquitectura objetivo del Hito 2.
+// Arquitectura objetivo del Hito 2: FPU dedicada a coma flotante.
 // Render: dot -Tsvg graphviz_hito2.dot -o graphviz_hito2.svg
 // Posiciones y recorridos explícitos: no aplicar un layout automático.
 // nop2 conserva la geometría al usar dot, neato o un visor Graphviz.
@@ -139,18 +139,27 @@ Reservas arquitectónicas
             width=2.63889, height=0.83333,
             shape="box",
             label=<
-<B>Interconexión entre lanes</B>
+<B>Interconexión modular</B>
 <BR/><FONT POINT-SIZE="10">
-Crossbar + arbitraje
+Crossbar inicial + arbitraje
 </FONT>
 <BR/><FONT POINT-SIZE="10">
-Buffers, latencia y ancho
+Topologías intercambiables
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Slide1up / Slide1down · .vx
 </FONT>
 >,
             fillcolor="#D4F0F1", color="#187C80",
-            tooltip="Round-robin por destino; límite de inyección por " +
-                "origen; buffers finitos, contrapresión y bytes/ciclo. " +
-                "TransferKey = TaskKey + transferId."];
+            tooltip="Interfaz común: admisión, Retry, entrega, capacidad, " +
+                "drain y métricas. Topología seleccionada por configuración; " +
+                "consumidores independientes de rutas/arbitraje internos. " +
+                "Crossbar inicial: round-robin por destino, límite por " +
+                "origen, buffers finitos, latencia y bytes/ciclo. " +
+                "TransferKey = TaskKey + transferId. Consumidores obligatorios: " +
+                "vslide1up.vx y vslide1down.vx, 8/16/32/64, sin máscara. " +
+                "Su ejecutor aplica RVV; la red sólo transporta. " +
+                "Otras topologías futuras."];
         lane_overview [pos="750,775!",
             width=2.29167, height=0.83333,
             shape="box",
@@ -176,14 +185,14 @@ Detalle en el panel inferior
 Unit-stride · 8/16/32/64
 </FONT>
 <BR/><FONT POINT-SIZE="10">
-Memoria serializada
+Un bloque activo + buffers
 </FONT>
 >,
             fillcolor="#EAD8F3", color="#70458A",
-            tooltip="EEW = SEW inicialmente; un elemento lógico en curso. " +
-                "Lectura de store y writeback de load mediante VRF; " +
-                "avanza con WriteAck/StoreAck. Memoria cierra la " +
-                "ventana aritmética. Consulta AddressMapper (M)."];
+            tooltip="EEW = SEW; un bloque activo hasta cerrar memoria y " +
+                "VRF. Buffers de carga/store; accesos por palabra y " +
+                "fallback por elemento. Memoria cierra la ventana " +
+                "aritmética. Consulta AddressMapper (M)."];
     }
         remote_lane [pos="410,660!",
             width=2.63889, height=0.69444,
@@ -195,7 +204,7 @@ Mismos recursos locales
 </FONT>
 >,
             fillcolor="#FFF1D9", color="#A66300",
-            tooltip="Cada lane replica LRF, bancos, ALUs y VMFPU. " +
+            tooltip="Cada lane replica LRF, bancos, ALUs y FPU. " +
                 "Recepción no equivale a confirmación de escritura " +
                 "(WriteAck)."];
     subgraph cluster_memory {
@@ -219,8 +228,8 @@ Retry y respuesta terminal
 >,
             fillcolor="#E1C9EE", color="#70458A",
             tooltip="VectorMemoryRequest/Response: TaskKey + requestId. " +
-                "Una respuesta terminal por petición lógica; " +
-                "fragmentación física interna."];
+                "Una respuesta terminal por bloque lógico; un paquete " +
+                "físico en vuelo, retry y faults. Fragmentación interna."];
         gem5_memory [pos="950,545!",
             width=2.77778, height=0.58333,
             shape="box",
@@ -263,62 +272,48 @@ Reserva por fuente / FU
             tooltip="Capacidades finitas; reservar antes de leer. Datos, " +
                 "ancho y contexto viajan en ExecutionBundle."];
         alu [pos="420,385!",
-            width=1.80556, height=0.63889,
+            width=2.50000, height=1.00000,
             shape="box",
             label=<
 <B>ALUs SIMD · × K · T</B>
 <BR/><FONT POINT-SIZE="10">
-Ancho configurable
+Suma / mul / div / resto enteros
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+8 / 16 / 32 / 64 bits
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Perfil por operación y ancho
 </FONT>
 >,
             fillcolor="#FFE6B9", color="#A66300",
-            tooltip="Instancias por lane, ancho y ocupación propios. vadd " +
-                "entero 8/16/32/64. Consulta OperationTraits (T)."];
-    subgraph cluster_vmfpu {
-        graph [label="VMFPU · T",
-            fontsize=13,
-            style="rounded,filled", color="#BA6B27",
-            fillcolor="#FFE1BF", penwidth=1.2,
-            bb="540,315,805,465",
-            lp="672,450"];
-        vmfpu_entry [pos="540,432!", shape=point,
-            width=0.035, height=0.035, label="",
-            color="#A66300", fillcolor="#A66300"];
-        vmfpu_issue [pos="665,432!", shape=point,
-            width=0.035, height=0.035, label="",
-            color="#A66300", fillcolor="#A66300"];
-        fpu [pos="580,385!",
-            width=1.04167, height=0.44444,
+            tooltip="Instancias por lane, ancho y ocupación propios. " +
+                "vadd entero 8/16/32/64; multiplicación, división y resto " +
+                "enteros asignados provisionalmente a ALU en 8/16/32/64. " +
+                "Formas .vv y .vx; latencias por concretar en fase 6. Mismo ancho " +
+                "en fuentes y resultado, sin widening ni narrowing. Sin unidades " +
+                "dedicadas Mul/Div. Consulta OperationTraits (T)."];
+        fpu [pos="665,385!",
+            width=2.91667, height=1.13889,
             shape="box",
             label=<
-<B>SIMD FPU</B>
+<B>FPU SIMD · T</B>
+<BR/><FONT POINT-SIZE="10">
+Suma / multiplicación / división FP32
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Redondeo + flags · sólo coma flotante
+</FONT>
+<BR/><FONT POINT-SIZE="10">
+Latencia y créditos propios
+</FONT>
 >,
             fillcolor="#FFEEDC", color="#BA6B27",
-            tooltip="FP32: suma/multiplicación segmentadas y división " +
-                "multiciclo; redondeo y flags. Se conserva la suma " +
-                "binary16 interna."];
-        mul [pos="665,385!",
-            width=1.04167, height=0.44444,
-            shape="box",
-            label=<
-<B>SIMD Mul</B>
->,
-            fillcolor="#FFEEDC", color="#BA6B27",
-            tooltip="Multiplicación entera segmentada; primer perfil de 32 " +
-                "bits."];
-        div [pos="750,385!",
-            width=1.04167, height=0.44444,
-            shape="box",
-            label=<
-<B>SIMD Div</B>
->,
-            fillcolor="#FFEEDC", color="#BA6B27",
-            tooltip="División/resto enteros multiciclo; primer perfil de " +
-                "32 bits."];
-        vmfpu_result [pos="665,315!", shape=point,
-            width=0.035, height=0.035, label="",
-            color="#A66300", fillcolor="#A66300"];
-    }
+            tooltip="Sólo vfadd.vv, vfmul.vv y vfdiv.vv FP32 como objetivos. " +
+                "Recibe contexto FP y devuelve flags; no accede al VRF. " +
+                "Progreso independiente de las ALUs, recursos internos " +
+                "FP por concretar. Binary16 interno conservado; " +
+                "Mul/Div/resto enteros asignados a las ALUs."];
         lrf [pos="220,245!",
             width=2.91667, height=0.83333,
             shape="box",
@@ -443,7 +438,8 @@ Validación en VectorEngine
             fillcolor="#FFFFFF", color="#687887",
             tooltip="SEW básico 8/16/32/64 con soporte por operación; " +
                 "lane_word_bytes, ancho de FU y VLEN distintos. " +
-                "Latencia e intervalo separados."];
+                "Latencia e intervalo separados. Modelo de interconexión " +
+                "seleccionable, inicialmente crossbar."];
     }
         legend [pos="580,44!",
             width=14.02778, height=0.75000,
@@ -451,10 +447,10 @@ Validación en VectorEngine
             label=<
 <B>Flecha doble: envío y retorno · M / T: servicios comunes</B>
 <BR/><FONT POINT-SIZE="10">
-Sin chaining, renombramiento ni issue OoO · Memoria serializada
+Sin chaining ni renombramiento · Memoria: un bloque y un paquete en vuelo
 </FONT>
 <BR/><FONT POINT-SIZE="10">
-La lane inferior amplía la vista general
+La lane inferior amplía la vista general · Mul / Div / resto enteros: en ALU
 </FONT>
 >,
             fillcolor="#FFFFFF", color="#FFFFFF",
@@ -556,57 +552,25 @@ La lane inferior amplía la vista general
     operands -> alu [color="#A66300",
         dir="forward",
         tooltip="ExecutionBundle; selección semántica de FU.",
-        pos="e,420,408 455,478 443.333,478 431.667,478 " +
-            "420,478 420,457 420,436 420,415"];
-    operands -> vmfpu_entry [color="#A66300",
-        dir="none",
+        pos="e,420,421 455,478 443.333,478 431.667,478 " +
+            "420,478 420,461.333 420,444.667 420,428"];
+    operands -> fpu [color="#A66300",
+        dir="forward",
         tooltip="ExecutionBundle con contexto FP; créditos y " +
             "contrapresión.",
-        pos="500,478 500,462.667 500,447.333 500,432 " +
-            "513.333,432 526.667,432 540,432"];
-    vmfpu_entry -> vmfpu_issue [color="#A66300",
-        dir="none",
-        tooltip="Coordinación VMFPU: selección de subunidad.",
-        pos="540,432 581.667,432 623.333,432 665,432"];
-    vmfpu_issue -> fpu [color="#A66300",
+        pos="e,665,426 550,478 550,466 550,454 550,442 " +
+            "588.333,442 626.667,442 665,442 665,439 665,436 665,433"];
+    fpu -> writeback [color="#A66300",
         dir="forward",
-        tooltip="Selección SIMD FPU.",
-        pos="e,580,401 665,432 638.859,422.466 " +
-            "612.718,412.932 586.576,403.398"];
-    vmfpu_issue -> mul [color="#A66300",
-        dir="forward",
-        tooltip="Selección SIMD Mul.",
-        pos="e,665,401 665,432 665,424 665,416 665,408"];
-    vmfpu_issue -> div [color="#A66300",
-        dir="forward",
-        tooltip="Selección SIMD Div.",
-        pos="e,750,401 665,432 691.141,422.466 " +
-            "717.282,412.932 743.424,403.398"];
-    fpu -> vmfpu_result [color="#A66300",
-        dir="none",
-        tooltip="Resultado SIMD FPU a la salida común de VMFPU.",
-        pos="580,369 580,361 580,353 580,345 608.333,335 " +
-            "636.667,325 665,315"];
-    mul -> vmfpu_result [color="#A66300",
-        dir="none",
-        tooltip="Resultado SIMD Mul a la salida común de VMFPU.",
-        pos="665,369 665,351 665,333 665,315"];
-    div -> vmfpu_result [color="#A66300",
-        dir="none",
-        tooltip="Resultado SIMD Div a la salida común de VMFPU.",
-        pos="750,369 750,361 750,353 750,345 721.667,335 " +
-            "693.333,325 665,315"];
-    vmfpu_result -> writeback [color="#A66300",
-        dir="forward",
-        tooltip="Una salida externa de VMFPU: ExecutionResult. " +
-            "Recursos y créditos por FU conservados.",
-        pos="e,500,275 665,315 665,307.333 665,299.667 " +
+        tooltip="ExecutionResult FP con identidad y flags. Créditos " +
+            "independientes de las ALUs; writeback compartido en la lane.",
+        pos="e,500,275 665,344 665,326.667 665,309.333 " +
             "665,292 610,292 555,292 500,292 500,288.667 " +
             "500,285.333 500,282"];
     alu -> writeback [color="#A66300",
         dir="forward",
         tooltip="ExecutionResult de las ALUs locales.",
-        pos="e,460,275 420,362 420,343 420,324 420,305 " +
+        pos="e,460,275 420,349 420,334.333 420,319.667 420,305 " +
             "433.333,305 446.667,305 460,305 460,297.333 " +
             "460,289.667 460,282"];
     writeback -> lrf [color="#A66300",

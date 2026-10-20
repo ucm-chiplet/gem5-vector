@@ -25,6 +25,30 @@ documentos relacionados con el cambio. En especial, usa
 `documentacion/Interfaces propuestas.md` para entender las responsabilidades
 de cada interfaz y módulo.
 
+### Referencia normativa para definir operaciones
+
+La semántica de las operaciones debe seguir el manual oficial de RISC-V.
+Para las instrucciones vectoriales de este proyecto, la referencia normativa
+es RVV 1.0, consultable en el
+[manual oficial, edición 20240411][manual-rvv]. La documentación del proyecto
+define el subconjunto y la microarquitectura; no puede cambiar la semántica
+de una instrucción admitida.
+
+Antes de proponer o implementar una operación, consulta su sección del
+manual y registra la edición, sección y enlace usados. Comprueba operandos,
+anchos, grupos, restricciones de codificación y solapamiento, máscaras,
+`vl`, `vstart`, tail, redondeo, flags y excepciones cuando correspondan.
+Distingue los casos cubiertos de los que quedan fuera del alcance; no
+anuncies soporte completo si sólo se admite un subconjunto.
+
+El código de gem5 y Ara pueden ayudar a implementar o contrastar el diseño,
+pero no sustituyen al manual como autoridad semántica. Si una referencia
+del proyecto discrepa del manual, señala la discrepancia y propón corregir
+el documento. La temporización y topología son decisiones del modelo, no
+latencias prescritas por RVV.
+
+[manual-rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
+
 ### Propuesta y aprobación antes de modificar
 
 Antes de crear, borrar o modificar cualquier archivo relacionado con la VPU,
