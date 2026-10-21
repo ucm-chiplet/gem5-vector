@@ -36,7 +36,7 @@ estudia; una distribución de tiempos no sustituye comprobar sus resultados.
 | Máscaras | Lectura y producción de máscaras, densidad/patrón, escrituras parciales y operaciones auxiliares. | Predicación en 3; comparación FP seleccionada en 4; resto del perfil en 5. |
 | Reducciones | Operador, valor inicial, máscara y orden de combinación; distinguir suma FP ordenada/no ordenada. | Infraestructura en 3; perfil FP en 4; enteras y ampliaciones en 5. |
 | Widening | Anchos de fuente/destino, grupos y solapamientos, conversión o cálculo y perfil temporal. | Subconjunto seleccionado en 4. |
-| LMUL | Barrer valores legales del perfil, enteros y fraccionales según SEW/ELEN; registrar grupos y configuraciones rechazadas. | Perfil inicial en 2; geometría mixta en 4; campaña completa acordada en 5. |
+| LMUL | Barrer valores legales del perfil, enteros y fraccionales según SEW/ELEN; registrar grupos y configuraciones rechazadas. | Matriz en 2.1; suma y memoria con grupos enteros y fraccionales en 2.2; geometría mixta en 4; campaña conjunta en 5. |
 | Configuración de longitud | Distinguir `vsetvli`, `vsetivli` y `vsetvl`, capturar AVL/vtype y observar `vl` y dependencias en CPU. | `vsetvli` inicial; completar las formas requeridas en 5. |
 | Tail handling | Longitudes que no llenan el último fragmento y políticas de tail; distinguir tail de máscara y prestart. | En cada hito para sus operaciones; cobertura conjunta en 5. |
 
@@ -44,6 +44,25 @@ El [manual RVV, edición 20240411][rvv], es la referencia de operaciones,
 grupos, configuración, máscara y tail. LMUL y `vsetvl` no son formatos FP.
 No se suman variantes reservadas ni configuraciones incompatibles como
 soporte exigido por el simple hecho de barrer un parámetro.
+
+La fase 2.1 fija el perfil inicial SEW×LMUL. La fase 2.2 debe cerrar suma y
+memoria con `m1/m2/m4/m8` y `mf2/mf4/mf8` en las combinaciones legales de
+esa matriz. Primero se integran grupos enteros y después `mf2`, seguido
+de `mf4/mf8`, todavía con una instrucción activa. Los factores son objetivos
+acordados, no soporte ya acreditado; la matriz exacta se concreta en la
+propuesta de 2.1. Las fases posteriores del 2 conservan el soporte y lo
+extienden a sus operaciones según el formato. El 4 amplía geometría mixta;
+la campaña conjunta del 5 reúne y amplía la evidencia previa. Los ejemplos
+`m1/m2` no limitan el perfil.
+
+Para cada operación separar `tu/ta` (tail, desde el baseline y el hito 2)
+de `mu/ma` (elementos enmascarados, fase 3.2). Conservar valores es válido
+con agnostic; la comprobación no debe exigir que `ta/ma` escriban unos.
+Si se incorpora una optimización, su ahorro se mide aparte de la corrección.
+Para LMUL fraccional incluir el tail del resto del registro contenedor y
+registrar las combinaciones legales, habilitadas y rechazadas, según el
+[reparto del plan](<Plan de evolución - Hitos 2 a 5.md#políticas-tailmáscara-y-perfiles-lmul-por-hito>).
+Son criterios para acordar con el equipo, no pruebas creadas o ejecutadas.
 
 La campaña puede comparar instrucciones independientes y cadenas
 productor--consumidor, distintos límites de comandos/bloques/peticiones y

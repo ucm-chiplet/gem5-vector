@@ -1,4 +1,10 @@
-# Hito 1: VPU funcional e integración con MinorCPU
+# Hito 1: Integración funcional de MinorCPU y VPU
+
+**Objetivo:** ejecutar programas vectoriales desde MinorCPU en modo de
+emulación de procesos (SE), delegando en la VPU las cargas, sumas y stores
+de enteros de 32 bits, con accesos contiguos y una instrucción activa.
+La configuración vectorial se ejecuta en la CPU. Este baseline está
+comprobado y cerrado por el equipo.
 
 El recorrido funcional ejecuta en modo SE `vsetvli`, `vle32.v`, `vadd.vv`,
 `vadd.vx` y `vse32.v`, con enteros de 32 bits, LMUL=1 y memoria unit-stride.
@@ -31,3 +37,27 @@ dot -Tsvg graphviz.dot -o graphviz.svg
 
 La evolución con varias instrucciones activas está en el
 [hito 2](../hito2/README.md).
+
+### Ejemplo al cierre: suma de vectores y operando escalar
+
+Entradas: `a0=N>0`, `a1=A`, `a2=B`, `a3=C` y `a4=K`.
+A, B y C contienen enteros de 32 bits. Se procesa un bloque de `t0`
+elementos, con resultado `C[i] = A[i] + B[i] + K` módulo `2^32`.
+
+```asm
+vsetvli t0, a0, e32, m1, tu, mu
+vle32.v v1, (a1)
+vle32.v v2, (a2)
+vadd.vv v3, v1, v2
+vadd.vx v3, v3, a4
+vse32.v v3, (a3)
+```
+
+Si el bloque tiene cuatro elementos, A=[1,2,3,4], B=[10,20,30,40]
+y K=5 producen C=[16,27,38,49].
+
+Ilustra el recorrido CPU--VPU--memoria. Las instrucciones vectoriales se
+ejecutan de una en una; no se exige solapamiento ni chaining.
+
+Se aplican las [convenciones de lectura y referencias normativas](<../Resumen de hitos - Objetivos y alcance.md#cómo-leer-los-ejemplos>).
+Este fragmento documental no añade una prueba al baseline cerrado.

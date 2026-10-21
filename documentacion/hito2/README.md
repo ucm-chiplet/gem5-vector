@@ -1,4 +1,9 @@
-# Hito 2: arquitectura temporizada y concurrencia
+# Hito 2: Concurrencia aritmética, FP32 y recursos temporizados
+
+**Objetivo:** ejecutar varias instrucciones aritméticas vectoriales
+independientes a la vez, con enteros de 8/16/32/64 bits y coma flotante de
+32 bits (FP32). Modelar la capacidad y los tiempos de colas, bancos,
+unidades de cálculo y red para explicar sus esperas y límites de servicio.
 
 Este hito es un diseño propuesto, organizado en ocho fases de trabajo.
 El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
@@ -27,7 +32,8 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
 El recorrido previsto es:
 
 1. Definir contratos, formatos, estados y capacidades.
-2. Generalizar suma y memoria a 8/16/32/64 bits.
+2. Generalizar suma y memoria a 8/16/32/64 bits con grupos enteros y
+   fraccionales del perfil SEW×LMUL fijado en fase 1.
 3. Temporizar recursos finitos y arbitraje del VRF.
 4. Agrupar memoria unit-stride en bloques con buffers y un bloque activo.
 5. Solapar instrucciones independientes desde Minor hasta las lanes.
@@ -85,6 +91,24 @@ los cuatro anchos enteros de la matriz.
 `vslide1up.vx` y `vslide1down.vx` son objetivos de fase 7 en los cuatro anchos,
 inicialmente sin predicación (`vm=1`). La suma binary16 existente es una
 capacidad interna y no añade offload FP16 a la matriz.
+
+## Políticas tail/máscara y perfil LMUL
+
+El hito 2 debe respetar `tu/ta` en sus operaciones; conservar el tail es
+válido también con `ta`. Se capturan `mu/ma`, y su tratamiento con
+predicación se incorpora en la fase 3.2. Explotar agnostic para ahorrar
+recursos requiere una propuesta específica y no tiene etapa asignada.
+
+La fase 1 fija la matriz inicial SEW×LMUL y la fase 2 debe cerrar suma y
+memoria con `m1/m2/m4/m8` y `mf2/mf4/mf8` en las combinaciones legales
+de ese perfil. Se incorporan primero los grupos enteros y después `mf2`,
+seguido de `mf4/mf8`, con una instrucción activa. Son objetivos acordados;
+la matriz exacta se concreta en la propuesta de implementación de fase 1.
+Las fases posteriores conservan el soporte y lo extienden al repertorio
+añadido según su formato. Los ejemplos `m1/m2` no fijan un límite.
+El 4 amplía geometría mixta y el 5 cierra la campaña conjunta.
+El [plan global](<../Plan de evolución - Hitos 2 a 5.md#políticas-tailmáscara-y-perfiles-lmul-por-hito>)
+detalla garantías, estados de soporte y evidencia por combinación.
 
 ## Cómo operan los distintos anchos
 
@@ -194,6 +218,8 @@ los pendientes sin reducir el alcance actual de este hito:
   predicación, escrituras parciales, disponibilidad por rangos y chaining;
   varias instrucciones de memoria en vuelo, con capacidades separadas para
   comandos, bloques y peticiones; solapamiento con cálculo y faults precisos;
+  progreso escalar con comandos vectoriales pendientes, incluida preparación
+  de operandos para nuevos despachos y control de bucle resuelto;
   contratos y recursos de ejecución colectiva para las familias de 4--5.
   Incluye las variantes con máscara de ambas slide1. Chaining y memoria
   concurrente son objetivos de cierre, no optimizaciones opcionales.
@@ -266,6 +292,14 @@ Para regenerar el diagrama desde esta carpeta:
 ```bash
 dot -Tsvg graphviz_hito2.dot -o graphviz_hito2.svg
 ```
+
+## Ejemplos de ensamblador al cierre
+
+El [plan de evolución](<../Plan de evolución - Hitos 2 a 5.md#ejemplos-al-cierre-enteros-de-16-bits-y-fp32>)
+muestra suma/producto de enteros de 16 bits, slide1down y operaciones FP32
+independientes, con entradas y resultados esperados. El
+[resumen](<../Resumen de hitos - Objetivos y alcance.md#cómo-leer-los-ejemplos>)
+expone la progresión completa de los cinco hitos y sus convenciones.
 
 [rvv]: https://github.com/riscvarchive/riscv-v-spec/blob/v1.0/v-spec.adoc
 [riscv-div]: https://docs.riscv.org/reference/isa/unpriv/m-st-ext.html

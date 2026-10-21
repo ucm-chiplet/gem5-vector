@@ -1,4 +1,4 @@
-# Hito 2: concurrencia, FPU, anchos, interconexión y memoria por bloques
+# Hito 2: Concurrencia aritmética, FP32 y recursos temporizados
 
 Estado: diseño propuesto y plan de trabajo. Revisión documental aprobada el
 20 de octubre de 2026; no autoriza implementar código ni crear pruebas.
@@ -47,18 +47,21 @@ Para seguir el documento:
 
 ## 1. Objetivo y relación con la primera etapa
 
-El segundo hito convierte la VPU funcional Ara-like en un modelo con varias
-instrucciones activas y recursos temporizados. Debe permitir estudiar cómo
-las dependencias, las unidades funcionales, los bancos y la interconexión
-limitan el progreso. La corrección arquitectónica sigue siendo obligatoria.
+Ejecutar varias instrucciones aritméticas vectoriales independientes a la
+vez, con enteros de 8/16/32/64 bits y coma flotante de 32 bits (FP32).
+Modelar la capacidad y los tiempos de colas, bancos, unidades de cálculo y
+red para explicar sus esperas y límites de servicio. La corrección
+arquitectónica sigue siendo obligatoria.
 
 Los objetivos son:
 
-- Solapar instrucciones aritméticas independientes, sin chaining.
+- Solapar instrucciones aritméticas independientes. Un consumidor espera
+  todos los resultados de su productor; usar resultados parciales
+  (chaining) se incorpora en el hito 3.
 - Incorporar una FPU por lane para suma, multiplicación y división FP32.
 - Ampliar la ALU con multiplicación, división y resto enteros, sin añadir
   unidades dedicadas para esas operaciones en esta iteración.
-- Eliminar la dependencia fija de elementos de 32 bits.
+- Admitir elementos enteros de 8, 16, 32 y 64 bits en aritmética y memoria.
 - Agrupar memoria unit-stride en bloques con buffers y accesos al VRF por
   palabra local, conservando una ejecución de memoria serializada.
 - Parametrizar bancos, puertos, anchuras y número de ALUs por lane.
@@ -274,6 +277,43 @@ otros anchos; admisión valida la combinación, sin usar un mínimo fijo de 32.
 Una palabra de 16 bytes aloja cuatro enteros de 32 bits u ocho de 16. El
 distribuidor la divide en bundles según ancho y capacidad de las FUs. El
 número de elementos del vector no se confunde con el ancho SIMD del recurso.
+
+### 5.4. Políticas tail y perfil LMUL del hito 2
+
+Para cada operación admitida deben respetarse `tu/ta` desde este hito,
+incluidos tail parcial y rangos vacíos. `ta` permite conservar el valor
+anterior: admitir agnostic no exige sobrescribirlo ni implementar una
+optimización específica. Se capturan `mu/ma`, pero las operaciones
+predicadas se incorporan en la fase 3.2. Esa fase definirá su tratamiento
+de elementos inactivos y escrituras parciales, preservando las garantías
+de tail. Los destinos de máscara tienen sus reglas propias.
+
+La fase 1 fija la matriz inicial SEW×LMUL. **La fase 2 debe cerrar suma y
+memoria con `m1/m2/m4/m8` y `mf2/mf4/mf8`** para las combinaciones de ese
+perfil legal. Los factores son objetivos acordados, no meros candidatos.
+La matriz exacta por operación, SEW y geometría se concreta en la propuesta
+de código de fase 1; no se exige combinar indiscriminadamente todos los
+anchos con todos los factores. La configuración de referencia del baseline
+sólo habilita `m1`; tipos y parámetros no sustituyen evidencia de ejecución.
+
+En fase 2 se incorporan primero grupos enteros, después `mf2` y finalmente
+`mf4/mf8`, con una instrucción activa. Las fases 3--5 conservan ese soporte
+al temporizar recursos, agrupar memoria y añadir concurrencia. Las fases
+6--7 lo extienden a las operaciones añadidas según su formato y legalidad.
+
+Admisión y mapper comprobarán cada combinación según RVV, incluidos
+SEW/ELEN, VLMAX, alineación y solapamientos. Para los fraccionales, el
+resto del registro contenedor se trata como tail. El scoreboard de este
+hito reserva conservadoramente ese contenedor completo. La geometría con
+EEW/EMUL distintos se amplía en el 4; el 5 completa la campaña conjunta,
+sin aplazar requisitos de combinaciones anunciadas en etapas anteriores.
+
+El [plan global](<../Plan de evolución - Hitos 2 a 5.md#políticas-tailmáscara-y-perfiles-lmul-por-hito>)
+detalla el reparto. Referencia normativa: RVV 1.0, [manual oficial][manual-rvv],
+edición 20240411, secciones **Vector Tail Agnostic and Vector Mask
+Agnostic**, **Vector Register Grouping**, **Mapping for LMUL < 1** y
+**Vector Operands**.
+
 
 ## 6. Concurrencia, dependencias y créditos
 
@@ -1098,7 +1138,7 @@ pruebas. Las comprobaciones sugeridas se acordarán con el equipo.
 | Fase | Resultado que deja preparado |
 | --- | --- |
 | [1. Contratos](#131-fase-1-contratos-y-capacidades) | Datos, soporte, estados, identidades y capacidades coherentes. |
-| [2. Anchos](#132-fase-2-generalización-de-anchos) | Suma y memoria de 8/16/32/64 bits sin transporte fijo a 32 bits. |
+| [2. Anchos](#132-fase-2-generalización-de-anchos) | Suma y memoria de 8/16/32/64 bits con grupos enteros y fraccionales del perfil SEW×LMUL fijado en fase 1. |
 | [3. Recursos](#133-fase-3-recursos-temporizados-y-arbitraje) | Colas, bancos y puertos finitos con contrapresión. |
 | [4. Memoria por bloques](#134-fase-4-memoria-unit-stride-por-bloques) | Buffers y accesos al VRF por palabra, con un bloque activo. |
 | [5. Concurrencia](#135-fase-5-concurrencia-desde-minor-hasta-las-lanes) | Varias instrucciones independientes y retirada ordenada. |
@@ -1134,6 +1174,8 @@ parte de las interfaces existentes, sin ampliar todavía la ejecución.
 3. Establecer una autoridad de soporte en `VectorSupport`, con metadatos
    compartidos cuando convenga. Distinguir combinación ilegal, operación
    no soportada y recurso temporalmente ocupado; sólo el último se reintenta.
+   Fijar la matriz SEW×LMUL de suma y memoria para los factores acordados
+   `m1/m2/m4/m8` y `mf2/mf4/mf8`, con restricciones de SEW/ELEN y geometría.
 4. Especificar reservas, aceptación, inicio, resultado, writeback,
    finalización y retirada. Para cada transición, identificar quién conserva
    el contexto y cuándo libera su crédito. Incluir respuestas síncronas.
@@ -1186,7 +1228,10 @@ continúa por elemento y se mantiene una instrucción activa.
 5. Revisar `AddressMapper` y la validación de geometría: elemento íntegro en
    palabra, divisibilidad, VLEN y grupos efectivos. Cambiar SEW reinterpreta
    los bytes; no redistribuye el VRF ni introduce reshuffle.
-6. Actualizar capacidades por operación/ancho y documentar las combinaciones
+6. Integrar grupos enteros `m1/m2/m4/m8`; después `mf2` y finalmente
+   `mf4/mf8`, según la matriz de fase 1. Resolver límites entre registros,
+   alineación, capacidad efectiva y tail del contenedor fraccionario.
+7. Actualizar capacidades por operación/ancho y documentar las combinaciones
    que se rechazan antes de iniciar trabajo.
 
 **Módulos e interfaces.** El formato acordado atraviesa Minor, comandos,
@@ -1196,10 +1241,18 @@ siendo la única autoridad de ubicación; la ALU interpreta los datos locales.
 **Resultado y cierre.** El mismo camino de suma, carga y store representa
 los cuatro anchos sin asumir 32 bits en un paso intermedio. Las referencias
 arquitectónicas y los bytes ajenos al rango mantienen su significado.
+Los grupos enteros y fraccionales acordados deben recorrer suma, carga y
+store en todas las combinaciones de la matriz de fase 1, con una sola
+instrucción activa. Su soporte funcional no se aplaza hasta la temporización
+o concurrencia; las fases posteriores deben conservarlo y extenderlo a sus
+nuevas operaciones según el formato.
 
 **Comprobación sugerida y límites.** Comparar resultados por ancho, cambios
 de SEW, escalar negativo, rangos vacíos y finales parciales; revisar límites
-de grupos y geometrías inválidas. Admitir enteros de 64 bits no habilita
+de grupos y geometrías inválidas. Incluir cruces entre registros en `m4/m8`
+y conservación del tail del registro contenedor en fraccionales. La
+evidencia se acordará con el equipo antes de crear pruebas.
+Admitir enteros de 64 bits no habilita
 FP64, widening, narrowing ni elementos repartidos entre palabras.
 
 ### 13.3. Fase 3: recursos temporizados y arbitraje
@@ -1653,7 +1706,10 @@ pendiente. Los criterios siguientes se refieren a las ampliaciones del hito 2.
 
 1. Dos instrucciones independientes del programa progresan simultáneamente.
 2. Un consumidor nunca comienza con resultados parciales del productor.
-3. La suma entera y la memoria unit-stride funcionan en 8/16/32/64 bits.
+3. La suma entera y la memoria unit-stride funcionan en 8/16/32/64 bits,
+   con `m1/m2/m4/m8` y `mf2/mf4/mf8` en las combinaciones del perfil fijado
+   en fase 1 y cerrado funcionalmente en fase 2. Las ampliaciones posteriores
+   conservan ese soporte y lo extienden según su formato y legalidad.
 4. `vfadd.vv`, `vfmul.vv` y `vfdiv.vv` FP32 tienen un recorrido completo
    CPU--FPU--VRF--CPU, incluidos redondeo y flags al retirar. FPU y ALUs
    tienen progreso y ocupación independientes.

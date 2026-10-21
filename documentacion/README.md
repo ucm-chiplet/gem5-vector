@@ -19,11 +19,11 @@ una sección o un diagrama no acredita una implementación.
 
 | Hito | Alcance y estado |
 | --- | --- |
-| [Hito 1](hito1/README.md) | VPU funcional, integración MinorCPU, benchmark y estadísticas de los módulos actuales. |
-| [Hito 2](hito2/README.md) | Plan en ocho fases: contratos, anchos, recursos, memoria por bloques, concurrencia, FPU y ALUs, interconexión y cierre. |
-| [Hito 3](<Plan de evolución - Hitos 2 a 5.md#hito-3-completar-el-modelo-ara-like-adaptado>) | Predicación, chaining, memoria concurrente y preparación para clústeres. |
-| [Hito 4](<Plan de evolución - Hitos 2 a 5.md#hito-4-precisión-mixta-y-ampliaciones-para-hpcml>) | Precisión mixta, FP16/BF16/FP32/FP64, ampliaciones de datos y evaluación. |
-| [Hito 5](<Plan de evolución - Hitos 2 a 5.md#hito-5-repertorio-e-integración-de-kernels-hpcml>) | Completar repertorio y bibliotecas e integrar kernels HPC/ML. |
+| [Hito 1: Integración funcional de MinorCPU y VPU](hito1/README.md) | Configuración, cargas, sumas y stores vectoriales de 32 bits, con una instrucción activa. Baseline cerrado. |
+| [Hito 2: Concurrencia aritmética, FP32 y recursos temporizados](hito2/README.md) | Solapar aritmética independiente con enteros de 8/16/32/64 bits y coma flotante de 32 bits; modelar capacidad, tiempos y esperas de los recursos. |
+| [Hito 3: Solapamiento escalar-vectorial, chaining y memoria concurrente](<Plan de evolución - Hitos 2 a 5.md#hito-3-solapamiento-escalar-vectorial-chaining-y-memoria-concurrente>) | Solapar CPU, memoria y cálculo vectorial, consumir resultados parciales, aplicar máscaras y preparar clústeres con excepciones precisas. |
+| [Hito 4: Precisión mixta y evaluación de clústeres](<Plan de evolución - Hitos 2 a 5.md#hito-4-precisión-mixta-y-evaluación-de-clústeres>) | Ejecutar casos científicos y de aprendizaje automático con distintos formatos; medir error numérico y tiempos, y comparar organización plana y dos clústeres. |
+| [Hito 5: Repertorio RVV y ejecución de kernels BLIS y atención](<Plan de evolución - Hitos 2 a 5.md#hito-5-repertorio-rvv-y-ejecución-de-kernels-blis-y-atención>) | Completar las instrucciones vectoriales RISC-V necesarias para ejecutar micro-kernels, álgebra lineal de BLIS y los bloques de atención CSA/HCA seleccionados. |
 
 La campaña de [benchmarks acordados][benchmarks] reúne micro-kernels RVV,
 kernels densos de BLIS y los bloques de atención CSA/HCA de DeepSeek V4
@@ -33,7 +33,9 @@ Para entender el código actual, empieza por el hito 1. Para preparar las
 siguientes extensiones, consulta el hito 2 y conserva los contratos del hito 1.
 El hito 3 tiene como objetivos chaining y varias instrucciones de memoria
 en vuelo, junto con predicación y los contratos que necesita el repertorio
-HPC/ML de 4--5. También prepara la clusterización: agrupar lanes y recursos
+HPC/ML de 4--5. Incluye progreso escalar y despacho de nuevos comandos con
+trabajo vectorial pendiente, preservando dependencias, faults y estado
+arquitectónico. También prepara la clusterización: agrupar lanes y recursos
 locales dentro de una única VPU, con interfaces que separen esa ubicación
 del control global. El 4 recoge un primer experimento con dos clústeres.
 Renombramiento y ROB siguen sujetos a propuestas específicas.

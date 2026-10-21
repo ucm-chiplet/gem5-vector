@@ -4,12 +4,13 @@ Estado: propuesta documental de objetivos, fases y criterios de cierre.
 No describe funcionalidades ya implementadas ni autoriza cambios de código
 o la creación de pruebas. Cada fase tendrá su propuesta de implementación.
 
-El baseline del hito 1 está cerrado. El hito 2 conserva sus objetivos
-actuales y consolida esa base con recursos temporizados y concurrencia.
-El hito 3 resuelve las restricciones que deja el 2 y completa el modelo
-Ara-like adaptado al proyecto. El nuevo hito 4 incorpora precisión mixta,
-formatos FP para HPC/ML y ampliaciones de datos y evaluación. El hito 5
-completa el repertorio habitual y su uso en kernels HPC y ML.
+La integración funcional de MinorCPU y VPU del hito 1 está cerrada. El hito 2
+incorpora concurrencia aritmética, coma flotante de 32 bits (FP32) y recursos
+con capacidad y tiempos explícitos. El 3 permite solapar trabajo escalar,
+memoria y cálculo vectorial, utilizando resultados parciales (chaining).
+El 4 añade precisión mixta y evaluación de clústeres. El 5 completa el
+repertorio vectorial necesario para ejecutar micro-kernels, álgebra lineal
+de BLIS y los bloques de atención seleccionados.
 
 Estos hitos desarrollan la base de los [objetivos globales][objetivos].
 El propósito es disponer de demanda y de un modelo de entrega de datos
@@ -20,17 +21,17 @@ específicas y criterios de comparación, sin ampliar por ello el hito 2.
 
 | Hito | Resultado principal | Límite que se resuelve después |
 | --- | --- | --- |
-| 2. Consolidación y ampliación del baseline | Anchos, recursos finitos, concurrencia independiente, FPU, memoria por bloques y red modular. | Dependencias por instrucción completa; memoria serializada; sin predicación. |
-| 3. Arquitectura Ara-like adaptada | Predicación, resultados tipados, chaining, memoria concurrente, colectivos y preparación para clústeres. | Precisión mixta, nuevos formatos y repertorio ampliado en 4--5. |
-| 4. Precisión mixta y ampliaciones para HPC/ML | FP16, BF16, FP32/FP64, conversiones, acumulación, segmentados, compactación y evaluación temporal y de clústeres. | Completar cobertura de kernels e instrucciones habituales en el 5. |
-| 5. Repertorio y kernels HPC/ML | Enteras, máscaras, reducciones, permutaciones, memoria irregular e integración de bibliotecas. | No implica completar RVV ni ejecutar cualquier aplicación. |
+| 2. Concurrencia aritmética, FP32 y recursos temporizados | Anchos, recursos finitos, concurrencia independiente, FPU, memoria por bloques y red modular. | Dependencias por instrucción completa; memoria serializada; sin predicación. |
+| 3. Solapamiento escalar-vectorial, chaining y memoria concurrente | Predicación, resultados tipados, chaining, memoria concurrente, progreso escalar con comandos vectoriales pendientes, colectivos y preparación para clústeres. | Precisión mixta, nuevos formatos y repertorio ampliado en 4--5. |
+| 4. Precisión mixta y evaluación de clústeres | FP16, BF16, FP32/FP64, conversiones, acumulación, segmentados, compactación y evaluación temporal y de clústeres. | Completar cobertura de kernels e instrucciones habituales en el 5. |
+| 5. Repertorio RVV y ejecución de kernels BLIS y atención | Enteras, máscaras, reducciones, permutaciones, memoria irregular e integración de bibliotecas. | No implica completar RVV ni ejecutar cualquier aplicación. |
 
 Recorrido del documento:
 
-- [Hito 2: consolidar y ampliar la base](#hito-2-consolidar-y-ampliar-la-base-funcional).
-- [Hito 3: completar el modelo](#hito-3-completar-el-modelo-ara-like-adaptado).
-- [Hito 4: precisión mixta y ampliaciones](#hito-4-precisión-mixta-y-ampliaciones-para-hpcml).
-- [Hito 5: repertorio y kernels](#hito-5-repertorio-e-integración-de-kernels-hpcml).
+- [Hito 2: Concurrencia aritmética, FP32 y recursos temporizados](#hito-2-concurrencia-aritmética-fp32-y-recursos-temporizados).
+- [Hito 3: Solapamiento escalar-vectorial, chaining y memoria concurrente](#hito-3-solapamiento-escalar-vectorial-chaining-y-memoria-concurrente).
+- [Hito 4: Precisión mixta y evaluación de clústeres](#hito-4-precisión-mixta-y-evaluación-de-clústeres).
+- [Hito 5: Repertorio RVV y ejecución de kernels BLIS y atención](#hito-5-repertorio-rvv-y-ejecución-de-kernels-blis-y-atención).
 - [Dependencias y entregas](#dependencias-y-entregas-entre-hitos).
 
 ## Cómo usar el plan
@@ -47,7 +48,7 @@ El [plan de benchmarks][benchmarks] concreta la campaña acordada y sus fichas.
 | Entrega | Qué aporta al estudio VAMPIRE | Objetivos |
 | --- | --- | --- |
 | 2 | Recursos finitos y métricas para explicar servicio del VRF, FUs, memoria y red. | O2, O6. |
-| 3 | Chaining, memoria concurrente y fronteras de clústeres y colectivos reutilizables para futuros caminos IME. | O2, O3. |
+| 3 | Chaining, memoria concurrente, progreso escalar observable y fronteras de clústeres y colectivos reutilizables para futuros caminos IME. | O2, O3, O6. |
 | 4 | Formatos/precisión mixta y primer experimento parametrizable de clústeres, con perfiles numéricos y temporales. | O1, O2, O3, O6. |
 | 5 | Cargas y repertorio RVV seleccionados, con ROI y demanda medida para preparar ports y comparar candidatos. | O1, O2, O6. |
 | Líneas coordinadas | Especificación/ports IME, candidatos T1/T3 y estudio de modo T2, calibración y DSE planar/3D. | O1--O6. |
@@ -62,6 +63,11 @@ Las comprobaciones descritas son sugerencias para que el equipo defina la
 validación. No se crean ni ejecutan pruebas como parte de esta revisión.
 La planificación no fija todavía duración ni calendario.
 
+Los ejemplos al final de cada hito usan las [convenciones de lectura y
+referencias normativas del resumen][convenciones-ejemplos]. Son fragmentos
+para explicar el objetivo de ejecución, no soporte verificado ni nuevas
+pruebas. El ejemplo del hito 1 está en su [README](hito1/README.md).
+
 Las operaciones se definirán siguiendo el [manual oficial RVV][manual-rvv]
 y contrastando la [especificación congelada v1.0][rvv]. Una propuesta de
 implementación fijará formas, anchos, configuración legal y casos límite.
@@ -70,6 +76,66 @@ Para FP16 y BF16 se consultan también las secciones específicas de las
 [extensiones vectoriales FP][manual-fp] y [BF16][manual-bf16], edición
 20260120. Se documentará el subconjunto admitido sin anunciar una extensión
 completa cuando falten operaciones o dependencias escalares.
+
+### Políticas tail/máscara y perfiles LMUL por hito
+
+Esta distribución atiende O2 y O6: definir el comportamiento del subconjunto
+y registrar evidencia por configuración, separando soporte, candidatos y
+optimización. La referencia es RVV 1.0, [manual oficial, edición
+20240411][manual-rvv], secciones **Vector Tail Agnostic and Vector Mask
+Agnostic**, **Vector Register Grouping**, **Mapping for LMUL < 1** y
+**Vector Operands**.
+
+| Política | Elementos de destino afectados | Garantía |
+| --- | --- | --- |
+| `tu` (`vta=0`) | Tail: índices desde `vl`. | Conservar su valor anterior. |
+| `ta` (`vta=1`) | Tail. | Puede conservarse el valor o escribirse unos, con las reglas de la instrucción. |
+| `mu` (`vma=0`) | Elementos del cuerpo desactivados por la máscara. | Conservar su valor anterior. |
+| `ma` (`vma=1`) | Elementos del cuerpo desactivados por la máscara. | Puede conservarse el valor o escribirse unos, con las reglas de la instrucción. |
+
+Admitir agnostic y aprovecharlo para ahorrar recursos son decisiones
+distintas. La implementación conservadora puede preservar los valores con
+`ta/ma`; no se exige una fase posterior que los sobrescriba con unos.
+Cualquier optimización de tráfico, dependencias o escrituras debe definir
+su mecanismo, coste y evidencia en una propuesta específica; no tiene un
+hito asignado. Las posiciones anteriores a `vstart` siguen sus reglas de
+preservación; con `vstart>=vl` no se habilitan escrituras de tail. Los
+destinos de máscara tienen tail agnostic incluso con `tu`; se aplican
+sus reglas particulares. Ninguna política agnostic
+autoriza accesos de memoria o excepciones de elementos desactivados.
+
+| Hito | Políticas y perfil exigidos en su alcance |
+| --- | --- |
+| 1 cerrado | Captura de `vta/vma` y conservación fuera del rango escrito; offload sin predicación y configuración de referencia `m1`. No acredita todas las variantes. |
+| 2 | Respetar `tu/ta` y capturar `mu/ma` sin predicación. Fijar la matriz SEW×LMUL en 2.1 y ejecutar suma y memoria con grupos enteros y fraccionales del perfil al cerrar 2.2. Mantener y extender ese soporte en las fases posteriores. |
+| 3 | Fase 3.2: integrar `mu/ma`, escrituras parciales y memoria predicada, conservando las garantías de tail y el perfil LMUL heredado. |
+| 4 | Ampliar la geometría a EEW/EMUL distintos en conversiones y acumulación; mantener las políticas y cerrar las combinaciones que requieren sus casos. |
+| 5 | Completar la campaña acordada de LMUL y tail para el repertorio y los kernels seleccionados, con evidencia por combinación. No aplaza el soporte comprometido en 2--4. |
+
+Los factores `m1/m2/m4/m8` y `mf2/mf4/mf8` son **objetivos acordados de
+cierre de la fase 2.2** para suma entera y memoria unit-stride, en las
+combinaciones del perfil legal fijado en 2.1. Cada factor debe estar cubierto
+en las combinaciones que le correspondan; no se exige el producto cartesiano
+de todos los SEW y LMUL. La matriz exacta por operación, SEW y geometría se
+concretará en la propuesta de implementación de 2.1. Estos factores dejan
+de ser meros candidatos, sin convertirse por ello en soporte implementado.
+
+En 2.2 se incorporan primero los grupos enteros y después `mf2`, seguido
+de `mf4/mf8`, todavía con una instrucción activa. Las fases 2.3--2.5
+conservan ese soporte al introducir recursos temporizados, memoria por
+bloques y concurrencia. Las nuevas operaciones de 2.6--2.7 lo extienden
+según su formato y combinaciones legales. Los ejemplos `m1/m2` no fijan un
+límite. Un valor en el enum o una opción de configuración no acredita
+soporte ejecutado y comprobado.
+
+La matriz identificará operación, SEW/EEW, LMUL/EMUL, legalidad según RVV,
+configuraciones habilitadas y evidencia. Se comprobarán SEW/ELEN, capacidad,
+alineación y solapamientos; no basta que haya espacio con el VLEN elegido.
+`m4` y `m8` usan grupos de cuatro y ocho registros con comienzo múltiplo
+de cuatro y ocho. Los fraccionales usan la parte inicial de un registro;
+el resto pertenece al tail, también bajo `tu/ta`. No crean nombres de
+registro adicionales. En precisión mixta debe comprobarse el EMUL de cada
+operando y su límite de ocho registros; no se admite un destino EMUL=16.
 
 ## Campaña de benchmarks acordada
 
@@ -118,14 +184,16 @@ registran aparte, sin confundir la FMA vectorial con una operación de tile.
   una referencia concreta; el 4 incluye comprobación y ajuste de perfiles,
   sin atribuir equivalencia de ciclos por el nombre Ara-like.
 
-## Hito 2: consolidar y ampliar la base funcional
+## Hito 2: Concurrencia aritmética, FP32 y recursos temporizados
 
 ### Objetivo y resultado
 
-Convertir el baseline en una arquitectura comprensible y parametrizable,
-con recursos temporizados, instrucciones aritméticas independientes en
-vuelo y un procedimiento estable de extensión. Se mantienen los ocho pasos
-del diseño actual y todo su repertorio, incluidas las dos slides.
+Ejecutar varias instrucciones aritméticas vectoriales independientes a la
+vez, con enteros de 8/16/32/64 bits y coma flotante de 32 bits (FP32).
+Modelar la capacidad y los tiempos de colas, bancos, unidades de cálculo y
+red para explicar sus esperas y límites de servicio. Mantener un
+procedimiento estable de extensión y los ocho pasos del diseño, incluido
+todo su repertorio y las dos slides.
 
 El resultado admite enteros de 8/16/32/64 bits, suma y Mul/Div/resto `.vv`
 y `.vx`, memoria unit-stride con EEW=SEW, y FP32 `vfadd`, `vfmul` y `vfdiv`
@@ -146,6 +214,11 @@ que toda instrucción tiene dos fuentes y un destino vectorial homogéneo;
 no habilita esas familias todavía. El cierre entrega contratos de propiedad,
 identidad, aceptación, retry, finalización, retirada y drain sin ambigüedad.
 
+La propuesta de esta fase fija la matriz inicial SEW×LMUL para los factores
+acordados `m1/m2/m4/m8` y `mf2/mf4/mf8`, el tratamiento de `tu/ta` y la
+captura de `mu/ma`. Identifica combinaciones exigidas, ilegales o fuera del
+perfil; no elimina un factor comprometido por considerarlo un candidato.
+
 ### Fase 2.2. Generalización de anchos
 
 Separar los bytes transportados del cálculo por elemento. `AddressMapper`,
@@ -153,9 +226,17 @@ VRF, tareas y adaptadores deben interpretar SEW/EEW y los grupos legales,
 con una geometría compatible con el ancho configurado. La suma y la memoria
 unit-stride deben recorrer CPU, backend y retorno en los cuatro anchos.
 
+El cierre exige grupos `m1/m2/m4/m8` y fraccionales `mf2/mf4/mf8` en suma
+y memoria para las combinaciones de la matriz de 2.1. Primero se integran
+los grupos enteros y después `mf2`, seguido de `mf4/mf8`, manteniendo una
+instrucción activa. Deben resolverse límites entre registros, alineación,
+capacidad efectiva y conservación del tail del contenedor fraccionario.
+
 El cierre distingue capacidad interna de soporte arquitectónico y recoge
 configuraciones admitidas y rechazadas. No introduce widening ni FP64.
 Los perfiles temporales se parametrizan por operación y ancho.
+Las fases posteriores conservan este perfil y lo extienden al repertorio
+incorporado según su formato; la temporización no aplaza su soporte funcional.
 
 ### Fase 2.3. Recursos temporizados y arbitraje
 
@@ -220,6 +301,8 @@ Cerrar la matriz por operación, forma, ancho y configuración, con evidencia
 y límites explícitos. Revisar propiedad de buffers, reservas, liberación,
 errores y drain en todo el recorrido. Las estadísticas deben permitir
 atribuir esperas a dependencias, unidades, VRF, memoria o interconexión.
+La consolidación reúne la evidencia de grupos enteros y fraccionales
+incorporados en 2.2 y mantenidos por las ampliaciones posteriores.
 
 Entregar al hito 3 un mapa de contratos que deben ampliarse: disponibilidad
 por rangos, predicación, resultados escalares, operaciones colectivas y
@@ -232,16 +315,71 @@ rehacer la comprobación cerrada del hito 1 ni adelanta chaining o máscaras.
 Los criterios completos se mantienen en la
 [sección 15.3 del diseño][cierre-h2].
 
-## Hito 3: completar el modelo Ara-like adaptado
+### Ejemplos al cierre: enteros de 16 bits y FP32
+
+Se aplican las [convenciones comunes][convenciones-ejemplos].
+Estos fragmentos amplían el repertorio del hito 1; no son simulaciones
+ni pruebas nuevas.
+
+**Enteros de 16 bits y comunicación entre lanes.** `a0=N>0`;
+`a1=A`, `a2=B`, `a3=S`, `a4=P` y `a5=D` apuntan a arrays
+de elementos de 16 bits. El bloque calcula suma y producto módulo
+`2^16` y desplaza A hacia índices menores: D[i]=A[i+1], con cero al
+final. Si el bloque tiene tres elementos, A=[100,200,300] y B=[2,3,4]
+producen S=[102,203,304], P=[200,600,1200] y D=[200,300,0].
+
+```asm
+vsetvli t0, a0, e16, m1, tu, mu
+vle16.v v1, (a1)
+vle16.v v2, (a2)
+vadd.vv v3, v1, v2
+vmul.vv v4, v1, v2
+vslide1down.vx v5, v1, zero
+vse16.v v3, (a3)
+vse16.v v4, (a4)
+vse16.v v5, (a5)
+```
+
+Las tres operaciones leen fuentes compatibles y escriben destinos
+distintos. La slide utiliza el transporte cuando el mapper sitúa los
+elementos correspondientes en lanes diferentes.
+
+**FP32: dos cálculos independientes.** `a0=N>0`; `a1=A`,
+`a2=B`, `a3=P` y `a4=S` apuntan a arrays FP32.
+El bloque produce `P[i] = A[i] * B[i]` y `S[i] = A[i] + B[i]`,
+con el redondeo FP correspondiente. Para un bloque de tres elementos,
+A=[1,2,3] y B=[0.5,1.5,2] producen P=[0.5,3,6] y S=[1.5,3.5,5].
+
+```asm
+vsetvli t0, a0, e32, m1, tu, mu
+vle32.v v1, (a1)
+vle32.v v2, (a2)
+vfmul.vv v3, v1, v2
+vfadd.vv v4, v1, v2
+vse32.v v3, (a3)
+vse32.v v4, (a4)
+```
+
+Las dos operaciones aritméticas pueden solaparse si hay recursos. En el
+hito 2 las cargas y stores siguen siendo barreras y los consumidores esperan
+al productor completo. El ensamblador no prescribe latencias ni acredita
+por sí solo que el modelo haya solapado instrucciones.
+
+## Hito 3: Solapamiento escalar-vectorial, chaining y memoria concurrente
 
 ### Objetivo y resultado
 
-Resolver los límites de ejecución que impiden ampliar el repertorio con
-limpieza. El resultado debe permitir predicación, resultados de distinta
-clase, ejecución colectiva, chaining y varias instrucciones de memoria en
-vuelo, preservando las reglas arquitectónicas y las capacidades finitas.
-También debe dejar el sistema preparado para clusterización: agrupar lanes
-y sus recursos locales sin rediseñar el recorrido de cada instrucción.
+Permitir que la CPU escalar, los accesos a memoria y el cálculo vectorial
+progresen simultáneamente. Los consumidores podrán usar partes ya escritas
+de un resultado sin esperar al vector completo (chaining), y habrá varias
+instrucciones de memoria en vuelo. Minor podrá preparar y despachar nuevos
+comandos mientras otros siguen activos, sin exigir siempre vaciar la VPU.
+
+Incorporar selección de elementos mediante máscaras (predicación),
+resultados vectoriales y escalares, y operaciones que reúnen trabajo de
+varias lanes. Preservar el estado correcto ante excepciones, con recursos
+de capacidad finita. Preparar interfaces para agrupar lanes y sus recursos
+locales en clústeres sin rediseñar el recorrido de cada instrucción.
 
 Se trabaja primero con las instrucciones del hito 2 y sus ampliaciones de
 predicación admitidas. Los nuevos opcodes HPC/ML se incorporan en 4--5.
@@ -316,6 +454,11 @@ Preparar el retorno escalar con aceptación, finalización y retirada por
 identidad. El cierre exige coherencia entre máscara, scoreboard, escrituras
 parciales y CPU; las operaciones que producen máscaras se añaden en el 4.
 
+Aquí se integran explícitamente `mu` y `ma`. Preservar los elementos
+inactivos es válido con ambas opciones; no se añade una obligación de
+sobrescribirlos al seleccionar `ma`. Las operaciones que producen máscaras
+en 4--5 aplican su regla particular de tail agnostic.
+
 ### Fase 3.3. Disponibilidad por rangos y chaining aritmético
 
 Sustituir la espera RAW de todo el productor por disponibilidad de sus
@@ -378,6 +521,59 @@ cargas y hacia stores, y faults precisos. Los mecanismos de 3.3 y 3.4 pueden
 desarrollarse antes bajo restricciones conservadoras; su integración no se
 declara terminada hasta resolver esta fase. Si los faults obligan a vaciar
 siempre toda la VPU, el objetivo de solapamiento sigue pendiente.
+
+#### Progreso escalar con comandos vectoriales pendientes
+
+Ampliar la ventana de aritmética vectorial consecutiva del hito 2 para que
+el trabajo escalar independiente pueda ejecutarse y preparar operandos de
+nuevos comandos mientras la VPU sigue activa. No basta admitir instrucciones
+en el pipeline: sus resultados deben poder alimentar el despacho posterior
+sin esperar a la finalización de todos los comandos anteriores.
+
+La pregunta es cuándo la frontera CPU--VPU limita la entrega de trabajo,
+aunque existan datos y recursos vectoriales disponibles. Este requisito
+atiende O2 y O6: modelar capacidades finitas y distinguir mediante métricas
+las esperas de Minor de las dependencias y la ocupación del backend.
+
+La propuesta de implementación debe concretar:
+
+- En Decode/Execute y el estado vectorial de Minor, la separación entre
+  despacho, ejecución escalar, finalización vectorial y retirada. La ruta
+  escalar actual ejecuta funcionalmente en `commitInst()`; ampliar colas o
+  añadir un cursor de despacho no resuelve por sí solo ese bloqueo.
+- Qué clases pueden progresar y qué dependencias exigen esperar. Incluir
+  aritmética escalar, actualización de punteros/contadores y control de
+  bucle, sin enviar comandos vectoriales por caminos aún especulativos.
+  Definir también las restricciones de memoria escalar y vectorial.
+- La propiedad del seguimiento pendiente en Minor y `CpuVectorInterface`.
+  Conservar `CommandKey`, contexto y respuesta terminal única hasta cerrar
+  las obligaciones, aunque la instrucción deje la cola de retirada. La VPU
+  sigue recibiendo descriptores semánticos sin objetos de instrucción CPU.
+- La captura estable de operandos, configuración y redondeo por comando,
+  y el retorno de resultados escalares, flags, `vstart` y faults. Precisar
+  sincronización ante configuración/CSRs, barreras, interrupciones, squash
+  y drain; `accepted` no equivale automáticamente a retirada segura.
+- El mecanismo que impide efectos escalares o vectoriales jóvenes indebidos
+  cuando una instrucción anterior aún puede fallar. Comparar retirada
+  temprana de clases seguras con ejecución y retención de resultados hasta
+  retirada; elegir y dimensionar la solución junto con esta fase 3.5.
+  No se prescribe retirada temprana general, ROB ni renombramiento.
+
+El cierre exige una secuencia mixta en la que progrese trabajo escalar y
+se despache un nuevo comando que use sus resultados mientras otro comando
+vectorial anterior siga ejecutándose. Incluir control de bucle resuelto y
+casos que deban esperar por dependencia o sincronización. La evidencia se
+acordará con el equipo antes de crear pruebas; se sugiere contrastar una
+secuencia vectorial consecutiva con otra de trabajo vectorial equivalente
+intercalada con aritmética escalar y actualización de punteros.
+
+Registrar solapamiento escalar/vectorial, ocupación del seguimiento y tiempo
+con capacidad vectorial disponible pero sin despacho por bloqueo de Minor.
+Este criterio exige progreso funcional útil, no sólo más entradas en colas.
+Puede desarrollarse primero con aritmética bajo restricciones conservadoras;
+el cierre conjunto con memoria exige las garantías de faults de esta fase.
+No se exige equivalencia de ciclos con CVA6--AraXL ni se anuncia soporte ya
+implementado; la elección y los cambios de código requieren su propuesta.
 
 ### Fase 3.6. Ejecución colectiva e interconexión
 
@@ -477,6 +673,8 @@ pruebas; describir un contrato no acredita que el mecanismo funcione.
 Registrar esperas por dependencia de rangos, tiempo hasta primer resultado,
 solapamiento productor/consumidor, comandos de memoria en vuelo, bloques,
 peticiones, presión de buffers y espera para publicación arquitectónica.
+Incluir progreso escalar con comandos pendientes y capacidad vectorial sin
+utilizar por bloqueo de despacho en Minor, según la fase 3.5.
 El cierre incluye funcionamiento con capacidades pequeñas y contrapresión,
 sin asumir que aumentar buffers corrige un bloqueo de protocolo.
 
@@ -489,6 +687,9 @@ sin asumir que aumentar buffers corrige un bloqueo de protocolo.
   capacidades separadas para comandos, bloques y peticiones físicas.
 - Memoria y aritmética pueden progresar juntas, incluido chaining, con
   retirada, faults, flags, interrupciones y drain definidos y comprobables.
+- Minor ejecuta trabajo escalar independiente y despacha comandos que usan
+  sus resultados mientras sigue ejecutándose un comando vectorial anterior,
+  con control de bucle resuelto y publicación arquitectónica segura.
 - Las familias de los hitos 4 y 5 tienen contratos y recursos de ejecución
   preparados: tercer operando, máscara, escalar, colectivo y direccionamiento.
 - La organización inicial de un clúster usa interfaces que separan control
@@ -497,16 +698,93 @@ sin asumir que aumentar buffers corrige un bloqueo de protocolo.
 - No queda pendiente inventar un nuevo mecanismo global de dependencias o
   publicación arquitectónica para cada nueva instrucción de los hitos 4 y 5.
 
-## Hito 4: precisión mixta y ampliaciones para HPC/ML
+### Ejemplos al cierre: progreso escalar, chaining y máscaras
+
+Entradas: `a0=N>0`, `a1=A`, `a2=B`, `a3=C` y `a4=K`,
+con datos enteros de 32 bits. En el bloque, `C[i]=A[i]+B[i]+K+1`
+módulo `2^32`.
+
+```asm
+vsetvli t0, a0, e32, m1, tu, mu
+vle32.v v1, (a1)
+vle32.v v2, (a2)
+vadd.vv v3, v1, v2
+addi t2, a4, 1
+vadd.vx v4, v3, t2
+vse32.v v4, (a3)
+```
+
+La suma escalar debe poder preparar el operando del nuevo comando mientras
+continúa trabajo vectorial anterior. Las dos cargas pueden coexistir y el
+consumidor puede usar rangos ya escritos por su productor. Estas son metas
+temporales del hito 3: este mismo código puede ejecutarse serializado antes,
+pero eso no demuestra progreso escalar, memoria concurrente ni chaining.
+
+**Recorrido completo por bloques.** Con las mismas entradas del ejemplo
+anterior, este bucle procesa los N elementos. Los arrays son disjuntos,
+y las direcciones y N avanzan con el `vl` real, no con un tamaño fijo.
+
+```asm
+.Lh3_bloque:
+    vsetvli t0, a0, e32, m1, tu, mu
+    vle32.v v1, (a1)
+    vle32.v v2, (a2)
+    vadd.vv v3, v1, v2
+    addi t2, a4, 1
+    vadd.vx v4, v3, t2
+    vse32.v v4, (a3)
+    slli t1, t0, 2
+    add a1, a1, t1
+    add a2, a2, t1
+    add a3, a3, t1
+    sub a0, a0, t0
+    bnez a0, .Lh3_bloque
+```
+
+El control debe resolverse antes de enviar comandos de la siguiente
+iteración. Los cambios de configuración, las dependencias reales y los
+posibles faults mantienen sus puntos de sincronización: no se promete
+solapamiento en cada frontera del bucle.
+
+**Máscara suministrada como datos.** Este fragmento es independiente:
+`a0=N>0`, `a1=A`, `a2=B`, `a3=C` son arrays int32 y
+`a4=M` contiene N palabras uint32 con patrón `0x55555555`.
+En el entorno little-endian, los bits de `v0` activan posiciones pares.
+
+```asm
+vsetvli t0, a0, e32, m1, tu, mu
+vle32.v v0, (a4)
+vle32.v v1, (a1)
+vle32.v v2, (a2)
+vle32.v v3, (a3)
+vadd.vv v3, v1, v2, v0.t
+vse32.v v3, (a3)
+```
+
+C recibe A+B en posiciones pares del bloque y conserva su valor anterior
+en las impares. Por ejemplo, un bloque con A=[1,2,3,4], B=[10,20,30,40]
+y C inicial=[9,9,9,9] da C=[11,9,33,9].
+
+Se carga el patrón con `vle32.v`, ya presente en el
+baseline; no se presupone una instrucción de comparación o carga especial
+de máscaras adicional. La máscara usa un bit por elemento, no una palabra
+por elemento, aunque aquí el buffer se sobredimensiona para esa carga.
+
+## Hito 4: Precisión mixta y evaluación de clústeres
 
 ### Objetivo y alcance
 
-Ampliar la base del 3 para que los formatos numéricos y el movimiento de
-datos permitan estudiar kernels de HPC y aprendizaje automático. Este hito
-da prioridad propia a FP16 y BF16, las conversiones entre precisiones y la
-acumulación en un formato más amplio. Mantiene FP32 y añade el perfil FP64
-para cálculo científico. También incorpora segmentados, compactación y
-una evaluación temporal y de clusterización acotada.
+Ejecutar casos de cálculo científico y aprendizaje automático que almacenan
+datos y calculan con distintas precisiones, incluidas acumulaciones en un
+formato de mayor precisión que las entradas. Medir error numérico y tiempos
+de ejecución, y comparar una organización plana de lanes con un primer
+reparto acotado de esas lanes en dos clústeres: grupos con recursos locales
+e interfaces de comunicación.
+
+Dar prioridad a FP16 y BF16, las conversiones entre precisiones y la
+acumulación en un formato más amplio. Mantener FP32 y añadir el perfil FP64
+para cálculo científico. Incorporar también accesos segmentados y
+compactación de datos sobre los mecanismos del hito 3.
 
 La selección cubre todas las operaciones que usen los casos acordados,
 incluidos movimiento, configuración, formas escalares y auxiliares. No se
@@ -571,6 +849,12 @@ exijan los casos elegidos, junto con conversiones FP16--FP32 y FP32--FP64
 en ambos sentidos. El cierre conserva predicación, chaining, capacidad
 finita y publicación arquitectónica segura con geometrías diferentes.
 No requiere añadir todas las variantes widening/narrowing de RVV.
+
+La matriz de esta fase amplía el perfil LMUL heredado del 2 para los casos
+de precisión mixta. Incluye EMUL por fuente/destino y su límite de ocho
+registros, partes no utilizadas del registro fraccionario y `tu/ta/mu/ma`
+según la operación. Una ampliación de geometría no activa por sí sola
+todas las combinaciones SEW×LMUL.
 
 ### Fase 4.3. FPU con varios formatos y conversiones
 
@@ -693,12 +977,51 @@ Las dependencias pendientes de bibliotecas se registran con su fase del 5.
 - La evidencia numérica y temporal identifica supuestos, límites y las
   dependencias de bibliotecas que completará el 5.
 
-## Hito 5: repertorio e integración de kernels HPC/ML
+### Ejemplo al cierre: FP16 con acumulador FP32 y salida FP16
+
+Entradas: `a0=N>0`, `a1=A16`, `a2=B16`, `a3=C32` y
+`a4=D16`. A16/B16 son IEEE binary16 y C32 contiene el acumulador FP32
+inicial. El bloque actualiza C32 mediante una multiplicación-acumulación
+fusionada y convierte su resultado a FP16 en D16.
+
+```asm
+vsetvli t0, a0, e16, m1, tu, mu
+vle16.v v1, (a1)
+vle16.v v2, (a2)
+vsetvli zero, t0, e32, m2, tu, mu
+vle32.v v8, (a3)
+vsetvli zero, t0, e16, m1, tu, mu
+vfwmacc.vv v8, v1, v2
+vsetvli zero, t0, e32, m2, tu, mu
+vse32.v v8, (a3)
+vsetvli zero, t0, e16, m1, tu, mu
+vfncvt.f.f.w v4, v8
+vse16.v v4, (a4)
+```
+
+`v8--v9` forman el grupo FP32; `v1`, `v2` y `v4` no se solapan
+con él. Las configuraciones e16/m1 y e32/m2 tienen el mismo VLMAX y
+conservan el número de elementos de este bloque. `vfwmacc` redondea la
+operación fusionada en FP32; la conversión posterior redondea a FP16.
+
+Para un bloque de tres elementos, A16=[1,2,3], B16=[0.5,1.5,2]
+y C32 inicial=[10,20,30] producen C32=D16=[10.5,23,36]. Estos valores
+concretos son representables exactamente en ambos formatos.
+
+Requiere el perfil FP16 con estas operaciones de Zvfh y grupos de dos
+registros habilitados. No representa BF16 ni instrucciones FP8/FP4. El
+mismo código sirve para comparar organización plana y dos clústeres:
+cambian los recursos y el transporte, no las instrucciones ni el resultado.
+
+## Hito 5: Repertorio RVV y ejecución de kernels BLIS y atención
 
 ### Objetivo y criterio de selección
 
-Completar las instrucciones habituales y la integración de kernels HPC/ML
-sobre la arquitectura del 3 y las ampliaciones numéricas y de datos del 4.
+Completar el subconjunto de instrucciones vectoriales RISC-V (RVV) y los
+auxiliares de biblioteca necesarios para ejecutar los micro-kernels
+acordados, kernels de álgebra lineal densa de BLIS y los bloques de atención
+CSA/HCA de DeepSeek V4 Flash. Obtener resultados numéricos y temporales
+sobre los mecanismos y formatos de los hitos 2--4.
 La campaña de [micro-kernels, BLIS y CSA/HCA][benchmarks] determina la
 selección. [RiVEC][rivec] y [TSVC][tsvc] quedan como bibliografía de apoyo,
 sin convertirse en suites acordadas ni en un ranking universal de opcodes.
@@ -735,6 +1058,10 @@ SEW, LMUL/EMUL, predicación y configuración legal. Cerrar los casos de
 LMUL y tail y las formas `vsetvli`, `vsetivli` y `vsetvl` requeridas por la
 campaña, ejecutadas en CPU. Incluir también movimientos y auxiliares que
 produzca el compilador antes de prometer ejecutar un kernel.
+
+Este cierre integra las matrices y evidencias de los hitos 2--4. La campaña
+conjunta no significa que los LMUL fraccionales, `m4/m8` o tail empiecen a
+admitirse en el 5; su perfil inicial se concreta y comprueba en el 2.
 
 Fijar operaciones y revisión de BLIS, y la implementación de CSA/HCA de
 DeepSeek V4 Flash que se adaptará. Delimitar etapas y ROI, prefill/decode,
@@ -827,6 +1154,53 @@ un conjunto de kernels. Los perfiles no calibrados se identificarán.
 - Se publican configuración, método de medida, cobertura y límites; las
   frecuencias medidas se atribuyen a esos kernels y sus entradas concretas.
 
+### Ejemplo al cierre: carga indexada, máscara y reducción
+
+Entradas: `a0=N>0`, `a1=I` apunta a índices uint32 y `a2=X` a
+datos int32. Los índices son menores que `2^30` y señalan posiciones
+válidas de X. El bloque devuelve en `a3` la suma de los valores negativos
+seleccionados, módulo `2^32` y extendida con signo a RV64.
+
+```asm
+vsetvli t0, a0, e32, m1, tu, mu
+vle32.v v1, (a1)
+vsll.vi v2, v1, 2
+vluxei32.v v3, (a2), v2
+vmslt.vx v0, v3, zero
+vmv.v.i v4, 0
+vredsum.vs v5, v3, v4, v0.t
+vmv.x.s a3, v5
+```
+
+Los índices se convierten a desplazamientos en bytes; `ei32` indica el
+ancho de esos desplazamientos, mientras e32 fija el ancho del dato cargado.
+La carga se hace sin máscara: el filtro se aplica después a la reducción.
+`v4[0]=0` es la semilla y el resultado queda en `v5[0]`.
+
+Por ejemplo, si el bloque abarca `I=[3,0,1]` y
+`X=[5,-2,7,-4]`, devuelve `a3=-6`. Estas formas ilustran el perfil que
+debe concretar la fase 5.1; no acreditan una biblioteca ni atención completas.
+
+**Paso de una actualización de columna FP32.** Fragmento independiente:
+`a0=N>0`, `a1` apunta a un bloque contiguo de A[:,k], `a2` al
+bloque correspondiente de C[:,j] y `a3` al escalar FP32 B[k,j].
+
+```asm
+vsetvli t0, a0, e32, m1, tu, mu
+vle32.v v1, (a1)
+vle32.v v8, (a2)
+flw ft0, 0(a3)
+vfmacc.vf v8, ft0, v1
+vse32.v v8, (a2)
+```
+
+Actualiza `C[i,j] += A[i,k] * B[k,j]` con FMA. Esta operación numérica
+ya pertenece al perfil del hito 4 cuando se admite esa forma; en el 5 se
+integra con el resto de instrucciones y bibliotecas de las cargas elegidas.
+Es un paso ilustrativo de cálculo denso, no un kernel BLIS completo ni
+un bloque de atención. La integración real debe identificar packing,
+bucles, auxiliares y, en atención, la ruta de normalización y exponencial.
+
 ## Dependencias y entregas entre hitos
 
 Las fases son un orden de integración, no un permiso para habilitar
@@ -839,11 +1213,14 @@ ejecutables comprometidos en el 4 no dependen de una implementación del 5.
 La preparación para clústeres se considera desde 3.1 al diseñar identidad
 y ubicación; 3.7 integra y revisa esas fronteras sobre todos los recorridos.
 No se añade sólo como una reorganización documental al final del hito.
+El progreso escalar amplía la ventana del 2 y se integra en 3.5 con el
+seguimiento pendiente, el orden de memoria y la publicación segura. No se
+habilitan efectos jóvenes sin resolver las garantías del comando anterior.
 
 | Entrega | Debe quedar resuelto | Debe quedar identificado para después |
 | --- | --- | --- |
 | Cierre del 2 | Repertorio completo del hito, recursos y perfiles, identidad, propiedad, límites y observabilidad. | Contratos a ampliar para rangos, predicación, escalares, colectivos y memoria concurrente. |
-| Cierre del 3 | Chaining, memoria concurrente, predicación, colectivos, publicación segura y fronteras para clústeres. | Perfiles numéricos del 4, repertorio del 5 y experimento de clústeres. |
+| Cierre del 3 | Chaining, memoria concurrente, progreso escalar con comandos vectoriales pendientes, predicación, colectivos, publicación segura y fronteras para clústeres. | Perfiles numéricos del 4, repertorio del 5 y experimento de clústeres. |
 | Cierre del 4 | Perfiles FP, precisión mixta, datos seleccionados, calidad numérica y evaluación temporal/de clústeres. | Formas adicionales, integración BLIS y CSA/HCA del 5; alcance real de los experimentos FP8/FP4. |
 | Cierre del 5 | Repertorio y kernels acordados con evidencia por forma, formato y ancho. | Instrucciones no cubiertas, restricciones y experimentos posteriores. |
 
@@ -914,6 +1291,7 @@ de modificar código. No se reabre el baseline cerrado como fase preliminar.
 [rvv]: https://github.com/riscvarchive/riscv-v-spec/blob/v1.0/v-spec.adoc
 [rivec]: https://arxiv.org/abs/2111.01949
 [tsvc]: https://riscv.epcc.ed.ac.uk/assets/files/sc25/Lin.pdf
+[convenciones-ejemplos]: <Resumen de hitos - Objetivos y alcance.md#cómo-leer-los-ejemplos>
 [resumen]: <Resumen de hitos - Objetivos y alcance.md>
 [manual-fp]: https://docs.riscv.org/reference/isa/v20260120/unpriv/v-st-ext.html
 [manual-bf16]: https://docs.riscv.org/reference/isa/v20260120/unpriv/bfloat16.html
