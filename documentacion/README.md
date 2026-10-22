@@ -14,8 +14,9 @@ candidatos con controles planares y justificar o rechazar sus ventajas.
 
 Lee primero los objetivos y después el hito relacionado con el trabajo.
 Los hitos 2--5 son la base habilitadora, no la totalidad del resultado de
-investigación. Los documentos distinguen contratos, propuestas y soporte;
-una sección o un diagrama no acredita una implementación.
+investigación; se prevén hitos 6 y siguientes, por definir. Los documentos
+distinguen contratos, propuestas y soporte; una sección o un diagrama no
+acredita una implementación.
 
 | Hito | Alcance y estado |
 | --- | --- |

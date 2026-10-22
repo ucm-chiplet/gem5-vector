@@ -31,16 +31,19 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
 
 El recorrido previsto es:
 
-1. Definir contratos, formatos, estados y capacidades.
+1. Definir contratos, formatos, estados y capacidades, y preparar la
+   construcción configurable por módulos.
 2. Generalizar suma y memoria a 8/16/32/64 bits con grupos enteros y
    fraccionales del perfil SEW×LMUL fijado en fase 1.
-3. Temporizar recursos finitos y arbitraje del VRF.
+3. Temporizar recursos finitos y arbitraje del VRF, con contadores por
+   recurso.
 4. Agrupar memoria unit-stride en bloques con buffers y un bloque activo.
 5. Solapar instrucciones independientes desde Minor hasta las lanes.
 6. Incorporar la FPU FP32, operaciones enteras Mul/Div/resto en la ALU y
    varias ALUs por lane.
-7. Añadir transporte modular entre lanes, inicialmente con un crossbar, y
-   `vslide1up.vx` y `vslide1down.vx` como consumidores obligatorios.
+7. Añadir transporte modular entre lanes, inicialmente con un crossbar y
+   tráfico medido por enlace, y `vslide1up.vx` y `vslide1down.vx` como
+   consumidores obligatorios.
 8. Consolidar soporte, contratos, observabilidad y procedimiento de
    extensión; documentar la entrega técnica al hito 3.
 

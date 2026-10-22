@@ -7,7 +7,10 @@ describen objetivos de desarrollo, no soporte ya implementado. El
 La finalidad está en los [objetivos a medio y largo plazo][objetivos]:
 estudiar entrega de datos en RVV+IME y comparar organizaciones candidatas
 y escenarios CMOS 2.0 con controles planares. Los hitos 2--5 construyen la
-base; no agotan ese resultado de investigación.
+base; no agotan ese resultado de investigación. Se prevén hitos 6 y
+siguientes, por definir según los resultados. El repertorio de
+instrucciones de 2--5 parte de un análisis preliminar y se revisará con la
+caracterización de micro-kernels y cargas reales.
 
 La campaña acordada tiene tres bloques: **micro-kernels RVV**, kernels de
 álgebra lineal densa de **BLIS** y los bloques de atención **CSA/HCA de
@@ -128,6 +131,8 @@ unidades de cálculo y red para explicar sus esperas y límites de servicio.
 FPU dedicada a FP32, varias instrucciones aritméticas independientes,
 memoria unit-stride por bloques e interconexión modular con ambas slide1.
 Consolida contratos, capacidades, métricas y procedimiento de extensión.
+Prepara la VPU para ser componible: módulos con parámetros propios, mapeo
+seleccionable, contadores por recurso y tráfico medido por enlace.
 
 **Límite de cierre:** el consumidor espera al productor completo; memoria
 mantiene una instrucción, un bloque y un paquete físico activos. Precisión
@@ -179,7 +184,8 @@ comandos con sus resultados mientras la VPU sigue activa, con control de
 bucle resuelto y publicación arquitectónica segura. El mecanismo concreto
 de retirada o retención se definirá junto con memoria y faults precisos.
 Incluye resultados escalares/máscaras, ejecución colectiva, faults precisos
-y preparación para agrupar lanes en clústeres dentro de una VPU.
+y preparación para agrupar lanes en clústeres dentro de una VPU, incluidos
+varios puertos o memorias de primer nivel por clúster.
 La fase 3.2 integra `mu/ma` con la predicación y las escrituras parciales.
 
 **Límite de cierre:** una organización inicial de un grupo utiliza las
@@ -230,7 +236,9 @@ estos casos, respetando políticas y límites de grupos.
 
 Evalúa FP8 y revisa FP4 del indexador CSA con representación y ruta explícitas.
 Incluye calidad numérica, perfiles temporales y comparación de una
-organización plana con un primer modelo acotado de dos clústeres.
+organización plana con un primer modelo acotado de dos clústeres. El
+número de clústeres, los puertos de memoria y la red se combinan desde la
+configuración, sin exigir una topología adicional.
 Ese control estudia organización lógica; la comparación planar/3D requiere
 además particiones y costes tecnológicos explícitos.
 
@@ -335,7 +343,10 @@ T1/T3 y costes de modo T2 según los perfiles y datos disponibles.
 Después se incorporan modelos tecnológicos calibrados y una exploración
 conjunta de carga, arquitectura y tecnología. Los tamaños son parámetros;
 las ventajas 3D deben demostrarse o rechazarse, no darse por supuestas.
-Estas líneas no reciben aquí números de hito ni fechas cerradas.
+Se prevén hitos 6 y siguientes para incorporarlas, por definir según los
+resultados y sin fechas cerradas. Como mínimo admitirán IME en el modelo y
+las organizaciones que dependen de él; la componibilidad que no depende de
+IME se prepara en los hitos 2--4.
 
 [manual-ejemplos]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
 [plan]: <Plan de evolución - Hitos 2 a 5.md>

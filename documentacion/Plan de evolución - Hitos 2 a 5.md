@@ -26,6 +26,13 @@ específicas y criterios de comparación, sin ampliar por ello el hito 2.
 | 4. Precisión mixta y evaluación de clústeres | FP16, BF16, FP32/FP64, conversiones, acumulación, segmentados, compactación y evaluación temporal y de clústeres. | Completar cobertura de kernels e instrucciones habituales en el 5. |
 | 5. Repertorio RVV y ejecución de kernels BLIS y atención | Enteras, máscaras, reducciones, permutaciones, memoria irregular e integración de bibliotecas. | No implica completar RVV ni ejecutar cualquier aplicación. |
 
+El repertorio de instrucciones de los hitos 2--5 parte de un análisis
+preliminar. Se revisará con la caracterización de micro-kernels y cargas
+reales; cada cambio se hará mediante una propuesta que actualice la matriz
+de soporte. Tampoco el número de hitos es cerrado: se prevén hitos 6 y
+siguientes, por definir según los resultados (véase
+[continuidad](#continuidad-de-investigación-y-líneas-paralelas)).
+
 Recorrido del documento:
 
 - [Hito 2: Concurrencia aritmética, FP32 y recursos temporizados](#hito-2-concurrencia-aritmética-fp32-y-recursos-temporizados).
@@ -57,6 +64,13 @@ Las interfaces deben poder ampliarse sin incrustar una red concreta o un
 acceso ilimitado a todos los registros. Esto prepara opciones futuras;
 no habilita anticipadamente residencias de C, cambios de modo o motores
 matriciales en los recorridos activos de 2--5.
+
+Desde el hito 2 la VPU se prepara para ser componible: módulos con
+parámetros propios, mapeo y red seleccionables al construir, y métricas
+comparables por recurso y por enlace. Una organización distinta debe poder
+describirse en la configuración sin reescribir los módulos que no cambian.
+Estos hitos dejan la preparación; no exigen implementar organizaciones o
+topologías adicionales.
 
 En cada fase se indican trabajo, responsabilidades y resultado de cierre.
 Las comprobaciones descritas son sugerencias para que el equipo defina la
@@ -219,6 +233,11 @@ acordados `m1/m2/m4/m8` y `mf2/mf4/mf8`, el tratamiento de `tu/ta` y la
 captura de `mu/ma`. Identifica combinaciones exigidas, ilegales o fuera del
 perfil; no elimina un factor comprometido por considerarlo un candidato.
 
+Define también la construcción configurable de `VectorEngine`: lanes,
+bancos, VLSU, backend de memoria e interconexión con parámetros propios, y
+el mapeo de bytes a lanes y bancos como política seleccionable. La política
+inicial es la actual; no se habilitan organizaciones nuevas.
+
 ### Fase 2.2. Generalización de anchos
 
 Separar los bytes transportados del cálculo por elemento. `AddressMapper`,
@@ -248,6 +267,8 @@ las respuestas que ya han sido aceptadas.
 Lanes y VRF cierran esta fase con un recorrido temporizado cuyo progreso
 no depende de buffers ilimitados. Cambiar un parámetro debe afectar al
 recurso correspondiente y producir esperas explicables en las estadísticas.
+Los contadores por recurso (accesos concedidos por banco, puerto y anchura)
+permiten atribuir el tráfico del VRF en cualquier organización.
 
 ### Fase 2.4. Memoria unit-stride por bloques
 
@@ -294,6 +315,8 @@ Implementar ambas slides sin predicación, incluyendo `vstart`, tail,
 adaptación del escalar y restricciones de solapamiento del manual. El cierre
 demuestra que el tráfico que cruza lanes usa la red modelada y que sus
 consumidores no dependen del crossbar. No se exige una segunda topología.
+La red publica el tráfico por enlace con métricas comunes a cualquier
+topología, de modo que otra red pueda compararse con las mismas unidades.
 
 ### Fase 2.8. Consolidación y preparación de la siguiente etapa
 
@@ -497,6 +520,11 @@ programa simultáneamente en vuelo, varios bloques/peticiones cuando haya
 capacidad y una política explícita para combinaciones load/store. Dividir
 una sola instrucción en paquetes concurrentes no satisface este objetivo.
 
+La VLSU y el backend quedan preparados para conectarse a varios puertos o
+memorias de primer nivel. El reparto por direcciones asigna cada byte a un
+único puerto, de modo que se conservan las reglas de orden y alias de esta
+fase. La configuración de referencia puede seguir usando un solo puerto.
+
 ### Fase 3.5. Integrar memoria, chaining y faults precisos
 
 Unir carga--cálculo--store con disponibilidad por rangos. Antes de habilitar
@@ -631,6 +659,8 @@ puedan introducirse sin rehacer las instrucciones, el chaining o la VLSU.
    a sus propietarios. Una carga puede tener destinos en distintos grupos;
    un store puede reunir fuentes de varios. La ubicación no cambia sus
    reglas de alias, faults, publicación segura ni contabilidad por comando.
+   Cada grupo podrá disponer de sus propios puertos de memoria de primer
+   nivel, con la preparación de la fase 3.4.
 7. Definir cómo se reúnen errores, flags, finalizaciones y drain desde los
    grupos. Contabilizar cada recurso una vez y reservar las respuestas
    aceptadas; una ampliación con varias redes deberá justificar progreso
@@ -938,6 +968,9 @@ Dos clústeres es el punto inicial para comprobar esas fronteras, no una
 constante arquitectónica ni una partición física final. La configuración
 debe permitir barrer agrupaciones compatibles. L1 designa memoria de primer
 nivel; el escenario debe declarar si es caché u otro tipo de memoria.
+Clústeres, puertos de memoria y red se combinan desde la configuración con
+las interfaces preparadas en los hitos 2 y 3; no se exige implementar una
+topología adicional.
 
 El cierre exige equivalencia funcional y métricas comparables de tráfico
 local/remoto, espera y ocupación. Una configuración con dos etiquetas sobre
@@ -1257,8 +1290,15 @@ Tampoco se añaden aquí como fases de código activas de los hitos 2--5.
 Estas líneas pueden diseñarse, perfilarse o contrastarse mientras avanza la
 base. Su activación requiere propuestas específicas, no esperar sin motivo
 a implementar todo RVV. Los [objetivos globales][objetivos] fijan criterios,
-fuentes y límites; los hitos adicionales y fechas se definirán al concretar
-esas propuestas.
+fuentes y límites.
+
+Se prevén hitos 6 y siguientes, por definir según los resultados y sin
+fechas cerradas. Como mínimo deberán admitir IME en el modelo y las
+organizaciones que dependen de él: unidades compartidas entre RVV e IME,
+motores dedicados o reconfigurables y estado fuera del VRF. La parte de la
+componibilidad que no depende de IME se prepara ya en los hitos 2--4.
+Cuando el trabajo de IME esté disponible se tendrá en cuenta; el resto del
+plan no depende de su fecha.
 
 La implementación de cada fase debe proponer archivos y módulos afectados,
 interfaces, decisiones y alternativas, exclusiones y validación. Si para

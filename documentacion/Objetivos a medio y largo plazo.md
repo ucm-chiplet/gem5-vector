@@ -72,7 +72,11 @@ numérica y declarará su ruta: escalar, RVV, IME o adaptación de formato.
 Los hitos 2--5 desarrollan la base habilitadora: temporización de recursos,
 concurrencia, chaining, memoria en vuelo, clústeres, formatos y repertorio
 seleccionado. Su propósito es localizar los límites de servicio de datos,
-no únicamente ejecutar más opcodes.
+no únicamente ejecutar más opcodes. También dejan la VPU preparada para ser
+componible, de modo que una organización distinta pueda describirse en la
+configuración sin reescribir los módulos que no cambian. El repertorio de
+instrucciones parte de un análisis preliminar y se revisará con la
+caracterización de las cargas.
 
 Se modelarán capacidades, bancos, puertos, colas, enlaces, buffers y
 arbitraje. Debe poder distinguirse entre trabajo disponible, datos listos,
@@ -197,7 +201,8 @@ sensibilidad a latencia, ancho de banda, capacidad y supuestos inciertos.
 | Tecnología | Obtener o delimitar modelos de calibración, traducirlos a parámetros y documentar incertidumbre. |
 | Evaluación | Contrastar perfiles/modelo, ejecutar la DSE y justificar o rechazar las ventajas de las organizaciones 3D. |
 
-Estas líneas no reciben aquí nuevos números de hito ni fechas cerradas.
+Se prevén hitos 6 y siguientes para estas líneas, por definir según los
+resultados y sin fechas cerradas.
 Sus propuestas y dependencias deben coordinarse con la base 2--5; pueden
 prepararse en paralelo. Las fechas y los estados de avance del borrador
 son contexto de planificación, no una certificación actual del código.

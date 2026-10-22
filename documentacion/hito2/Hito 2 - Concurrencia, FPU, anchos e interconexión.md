@@ -262,6 +262,12 @@ posición de bytes. El layout físico permanece basado en bytes y palabras;
 cambiar SEW no cambia el significado ni la ubicación de los bytes almacenados.
 No se introduce el layout dependiente de SEW ni el reshuffle completo de Ara.
 
+El mapeo se construye como una política seleccionable al configurar
+`VectorEngine`. La política inicial es el reparto por bytes y palabras de
+esta sección. Otra política podrá cambiar la lane, el banco o la fila de los
+bytes sin alterar la semántica RVV ni a sus consumidores, que sólo consultan
+al mapeador. Este hito no implementa políticas alternativas.
+
 La primera geometría exige que:
 
 - Los elementos admitidos quepan íntegramente en una palabra.
@@ -777,8 +783,16 @@ para recibirla. Más puertos no eliminan incompatibilidades ni contrapresión.
 ### 9.3. Parámetros y validación
 
 Los nombres siguientes son propuestos; los ya existentes conservan su
-significado cuando sea compatible. La configuración pertenece a
+significado cuando sea compatible. La configuración se fija al construir
 `VectorEngine` y permanece inmutable durante la simulación.
+
+La VPU se prepara para ser componible. Cada módulo (lanes, bancos, VLSU,
+backend de memoria e interconexión) declara sus propios parámetros y se
+instancia desde la configuración, en lugar de depender de una lista plana
+de `VectorEngine`. `VectorEngine` valida la combinación y conecta los
+módulos. Describir otra organización no debe exigir modificar el código de
+los módulos que no cambian. La propuesta de fase 1 decidirá si cada módulo
+es un SimObject o recibe una estructura de parámetros.
 
 | Parámetro/familia | Unidad y significado |
 | --- | --- |
@@ -990,6 +1004,11 @@ y ocupación. Una topología futura puede añadir saltos o conflictos de enlace
 como métricas propias, sin cambiar el significado de los contadores comunes.
 Variar sólo la latencia de un crossbar no equivale a comparar topologías.
 
+Toda topología publica además el tráfico por enlace: bytes y paquetes por
+par origen--destino, clasificados como locales o remotos según la ubicación
+de los participantes. Al compartir unidades, estas métricas permiten
+comparar organizaciones distintas sobre la misma carga.
+
 En este hito se documenta e implementará únicamente el crossbar detrás de
 la interfaz. Anillos, mallas y otros modelos requerirán propuestas propias,
 con recursos, rutas, progreso y validación definidos. Los ejecutores de
@@ -1191,6 +1210,9 @@ parte de las interfaces existentes, sin ampliar todavía la ejecución.
 8. Documentar los puntos de ampliación para fuentes adicionales, lectura
    del destino, máscaras y resultados escalares. Separar representación
    semántica y soporte activo, sin habilitar esas familias ni sus recursos.
+9. Definir la construcción configurable de la sección 9.3: qué módulos se
+   instancian desde la configuración, sus parámetros propios, la política
+   de mapeo y cómo se conectan. No se habilitan organizaciones nuevas.
 
 **Módulos e interfaces.** `common/`, `interface/`, `VectorEngine` y el
 adaptador de Minor. Los mensajes compartidos no exponen `StaticInst` ni
@@ -1278,6 +1300,8 @@ ejecución de una sola instrucción para aislar este cambio de la concurrencia.
    resultado de frecuencia de admisión y conservar los datos bajo bloqueo.
 6. Ampliar drain y estadísticas para incluir reservas, accesos, eventos,
    respuestas y resultados todavía retenidos.
+7. Añadir contadores por recurso: accesos concedidos por banco, puerto y
+   anchura, para atribuir el tráfico del VRF en cualquier organización.
 
 **Módulos e interfaces.** `VectorEngine`, parámetros, `AraLane`,
 `LaneRegisterFile`, `VectorRegBank`, ALU y solicitantes de la VLSU. Se
@@ -1485,8 +1509,9 @@ reemplaza los accesos locales de memoria de fase 4.
    Mantener una ruta local cuando no haga falta cruzar lanes y documentar
    su consumo de recursos para interpretar los resultados.
 6. Revisar que envíos, recepción, reintentos y cierre sólo dependan de la
-   interfaz común. Definir métricas comparables para futuras topologías;
-   dejar sus rutas y recursos como extensiones, sin implementarlas ahora.
+   interfaz común. Definir métricas comparables para futuras topologías,
+   incluido el tráfico por enlace de la sección 10.4; dejar sus rutas y
+   recursos como extensiones, sin implementarlas ahora.
 7. Completar ambas operaciones con rangos vacíos y `vl=1`, `vstart` no nulo,
    extremos escalares y solapamiento legal de down. No ampliar a predicación
    en esta fase ni ejecutar una forma con máscara como si fuera sin máscara.
@@ -1583,6 +1608,9 @@ estadísticas del hito 1 no implementan los recursos propuestos aquí.
   flags y comprobaciones de frontera.
 - Posible `common/operation_traits.hh`: descripción semántica si conviene
   separarla de `VectorSupport`; sin imponer un archivo por instrucción.
+- Posibles descripciones Python por módulo junto a `VectorEngine.py`, si la
+  propuesta de fase 1 opta por SimObjects para la construcción configurable
+  de la sección 9.3.
 
 ### Frontend e integración CPU
 
@@ -1782,6 +1810,11 @@ IME futuras ni acredita su implementación.
   no monopoliza el camino de ejecución de toda la lane.
 - Metadatos semánticos compartidos frente a switches de soporte duplicados:
   facilita añadir operaciones sin trasladar la decodificación a la VPU.
+- Módulos configurables frente a construcción fija en `VectorEngine`:
+  prepara la comparación de organizaciones sin reescribir la VPU. Se
+  descarta esperar a hitos posteriores, porque cada módulo nuevo encarece
+  separarlos, y también admitir ya grafos arbitrarios de componentes, cuya
+  validación de progreso no aporta nada en este hito.
 
 ## 17. Referencias y nivel de fidelidad
 
