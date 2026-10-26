@@ -2,10 +2,12 @@
 #define __CPU_VECTOR_ENGINE_INTERFACE_VECTOR_COMMAND_HH__
 
 #include <cstdint>
+#include <optional>
 #include <variant>
 
 #include "base/types.hh"
 #include "cpu/vector_engine/common/command_key.hh"
+#include "cpu/vector_engine/common/fp_types.hh"
 #include "cpu/vector_engine/common/vector_reg_ref.hh"
 #include "cpu/vector_engine/common/vector_types.hh"
 #include "mem/request.hh"
@@ -41,8 +43,7 @@ struct ArithmeticCommand
 inline bool
 operator==(const ArithmeticCommand &lhs, const ArithmeticCommand &rhs)
 {
-    return lhs.operation == rhs.operation &&
-           lhs.widthMode == rhs.widthMode &&
+    return lhs.operation == rhs.operation && lhs.widthMode == rhs.widthMode &&
            lhs.signedness == rhs.signedness &&
            lhs.destination == rhs.destination &&
            lhs.vectorSource == rhs.vectorSource &&
@@ -64,7 +65,8 @@ operator!=(const ArithmeticCommand &lhs, const ArithmeticCommand &rhs)
  * AraVLSU usa la base y el índice de elemento para obtener cada dirección.
  */
 struct UnitStrideAddress
-{};
+{
+};
 
 constexpr bool
 operator==(const UnitStrideAddress &, const UnitStrideAddress &)
@@ -125,10 +127,8 @@ operator!=(const IndexedAddress &lhs, const IndexedAddress &rhs)
  * Forma de direccionamiento que MinorCPU incluye en MemoryCommand.
  * Admisión sólo admite UnitStrideAddress en la versión inicial.
  */
-using MemoryAddressing = std::variant<
-    UnitStrideAddress,
-    StridedAddress,
-    IndexedAddress>;
+using MemoryAddressing =
+    std::variant<UnitStrideAddress, StridedAddress, IndexedAddress>;
 
 // --------------------------------------------------------------------------
 // Comando de memoria.
@@ -153,9 +153,8 @@ struct MemoryCommand
 inline bool
 operator==(const MemoryCommand &lhs, const MemoryCommand &rhs)
 {
-    return lhs.direction == rhs.direction &&
-           lhs.dataReg == rhs.dataReg && lhs.base == rhs.base &&
-           lhs.addressing == rhs.addressing &&
+    return lhs.direction == rhs.direction && lhs.dataReg == rhs.dataReg &&
+           lhs.base == rhs.base && lhs.addressing == rhs.addressing &&
            lhs.elementWidthBits == rhs.elementWidthBits &&
            lhs.fieldCount == rhs.fieldCount &&
            lhs.faultOnlyFirst == rhs.faultOnlyFirst;
@@ -175,8 +174,7 @@ operator!=(const MemoryCommand &lhs, const MemoryCommand &rhs)
  * MinorCPU selecciona una operación aritmética o de memoria.
  * AraSequencer usa la alternativa para crear la tarea de la unidad adecuada.
  */
-using VectorCommandPayload =
-    std::variant<ArithmeticCommand, MemoryCommand>;
+using VectorCommandPayload = std::variant<ArithmeticCommand, MemoryCommand>;
 
 // --------------------------------------------------------------------------
 // Descriptor compartido entre CPU y VPU.
@@ -196,6 +194,8 @@ struct VectorCommand
     VectorConfig config;
     VectorCommandPayload payload;
     RequestorID requestorId = Request::invldRequestorId;
+    // Contract prepared for phase 6; CPU FP offload remains disabled.
+    std::optional<FpExecutionContext> fpContext;
 };
 
 inline bool
@@ -203,7 +203,8 @@ operator==(const VectorCommand &lhs, const VectorCommand &rhs)
 {
     return lhs.command == rhs.command && lhs.pc == rhs.pc &&
            lhs.config == rhs.config && lhs.payload == rhs.payload &&
-           lhs.requestorId == rhs.requestorId;
+           lhs.requestorId == rhs.requestorId &&
+           lhs.fpContext == rhs.fpContext;
 }
 
 inline bool

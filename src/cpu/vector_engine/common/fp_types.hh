@@ -32,6 +32,20 @@ struct FpExecutionContext
     FpRoundingMode roundingMode = FpRoundingMode::Invalid;
 };
 
+/** Igualdad del contexto capturado, usada al cotejar reservas y reintentos. */
+constexpr bool
+operator==(const FpExecutionContext &lhs, const FpExecutionContext &rhs)
+{
+    return lhs.roundingMode == rhs.roundingMode;
+}
+
+/** Mismo ámbito de comparación que operator==; no consulta el CSR frm. */
+constexpr bool
+operator!=(const FpExecutionContext &lhs, const FpExecutionContext &rhs)
+{
+    return !(lhs == rhs);
+}
+
 // Codificación de fflags RVV. Se devuelve el OR de los elementos ejecutados;
 // el consumidor arquitectónico debe acumularlo en el CSR correspondiente.
 using FpExceptionFlags = uint8_t;

@@ -49,8 +49,8 @@ struct ArithmeticTask
     VectorConfig config;
     ArithmeticCommand arithmetic;
     ByteRange destinationRange;
-    // Sólo para operaciones FP. El productor suministra frm ya resuelto;
-    // la interfaz CPU--VPU actual todavía no transporta este contexto.
+    // FP rounding captured by the producer and propagated unchanged.
+    // Preparing this field does not enable CPU FP offload.
     std::optional<FpExecutionContext> fpContext = std::nullopt;
 };
 

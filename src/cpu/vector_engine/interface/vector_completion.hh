@@ -6,6 +6,7 @@
 
 #include "base/types.hh"
 #include "cpu/vector_engine/common/command_key.hh"
+#include "cpu/vector_engine/common/fp_types.hh"
 
 namespace gem5::vector_engine
 {
@@ -60,6 +61,8 @@ struct VectorCompletion
     std::optional<ScalarResult> scalarResult;
     uint32_t finalVstart = 0;
     std::optional<FaultInfo> fault;
+    // OR of executed elements, applied by CPU retirement, never callbacks.
+    FpExceptionFlags fpFlags = 0;
 };
 
 } // namespace gem5::vector_engine

@@ -57,6 +57,7 @@ struct VectorConfig
     bool masked = false;
     bool tailAgnostic = false;
     bool maskAgnostic = false;
+    bool illegalVtype = false;
 };
 
 constexpr bool
@@ -64,9 +65,9 @@ operator==(const VectorConfig &lhs, const VectorConfig &rhs)
 {
     return lhs.vl == rhs.vl && lhs.vstart == rhs.vstart &&
            lhs.sewBits == rhs.sewBits && lhs.lmul == rhs.lmul &&
-           lhs.masked == rhs.masked &&
-           lhs.tailAgnostic == rhs.tailAgnostic &&
-           lhs.maskAgnostic == rhs.maskAgnostic;
+           lhs.masked == rhs.masked && lhs.tailAgnostic == rhs.tailAgnostic &&
+           lhs.maskAgnostic == rhs.maskAgnostic &&
+           lhs.illegalVtype == rhs.illegalVtype;
 }
 
 constexpr bool
