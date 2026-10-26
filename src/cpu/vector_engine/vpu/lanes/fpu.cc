@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/element_codec.hh"
 #include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
@@ -121,24 +122,29 @@ Fpu::acceptBundle(const ExecutionBundle &bundle)
     const uint64_t size =
         uint64_t{bundle.elements.elementCount} * element_bytes;
     panic_if(!bundle.key.valid() || !bundle.elements.valid() ||
+                 !isValid(bundle.emul) ||
                  !bundle.destination.naturallyAligned() ||
                  offset + size > std::numeric_limits<uint32_t>::max() ||
                  bundle.destinationRange.offset != offset ||
                  bundle.destinationRange.size != size ||
-                 bundle.lhs.size() != bundle.elements.elementCount ||
-                 bundle.rhs.size() != bundle.elements.elementCount,
+                 bundle.lhs.size() != size ||
+                 bundle.rhs.size() != size ||
+                 (bundle.byteOrder != ByteOrder::little &&
+                  bundle.byteOrder != ByteOrder::big),
              "Invalid FP16 execution bundle");
 
     active.emplace();
     active->bundle = bundle;
     stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
-    active->result =
-        ExecutionResult{bundle.key,
-                        bundle.sewBits,
-                        bundle.elements,
-                        bundle.destination,
-                        bundle.destinationRange,
-                        std::vector<uint32_t>(bundle.elements.elementCount)};
+    active->result = ExecutionResult{bundle.key,
+                                     bundle.sewBits,
+                                     bundle.elements,
+                                     bundle.destination,
+                                     bundle.destinationRange,
+                                     ByteBuffer(size),
+                                     0,
+                                     bundle.byteOrder,
+                                     bundle.emul};
     owner.schedule(executeEvent, owner.clockEdge(Cycles(1)));
     return TransferResult::Accepted;
 }
@@ -152,14 +158,17 @@ Fpu::execute()
         // Restaurar el estado antes del callback evita contaminar la CPU
         // o una ejecución posterior, incluso si el receptor admite trabajo.
         const SoftFloatScope scope(bundle.fpContext->roundingMode);
-        for (std::size_t i = 0; i < bundle.lhs.size(); ++i) {
-            const float16_t lhs{static_cast<uint16_t>(bundle.lhs[i])};
-            const float16_t rhs{static_cast<uint16_t>(bundle.rhs[i])};
+        for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
+            const float16_t lhs{static_cast<uint16_t>(ElementCodec::read(
+                bundle.lhs, i, bundle.sewBits, bundle.byteOrder))};
+            const float16_t rhs{static_cast<uint16_t>(ElementCodec::read(
+                bundle.rhs, i, bundle.sewBits, bundle.byteOrder))};
             const auto value = f16_add(lhs, rhs).v;
             // RISC-V usa el NaN canónico binary16, incluido el generado
             // por operaciones inválidas. SoftFloat conserva sus flags.
             const bool nan = (value & 0x7c00) == 0x7c00 && (value & 0x03ff);
-            active->result.values[i] = nan ? 0x7e00 : value;
+            ElementCodec::write(active->result.values, i, bundle.sewBits,
+                                nan ? 0x7e00 : value, bundle.byteOrder);
         }
         active->result.fpFlags =
             static_cast<FpExceptionFlags>(softfloat_exceptionFlags);

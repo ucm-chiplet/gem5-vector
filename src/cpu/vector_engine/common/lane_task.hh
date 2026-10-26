@@ -89,6 +89,8 @@ struct LaneTask
     // Ausente para vadd.vx: el escalar viaja en arithmetic.secondOperand.
     std::optional<ByteRange> secondVectorSourceRange;
     std::optional<FpExecutionContext> fpContext = std::nullopt;
+    // Effective group for the same-width operands, including fractions.
+    VectorLmul lmul = VectorLmul::Invalid;
 };
 
 } // namespace gem5::vector_engine

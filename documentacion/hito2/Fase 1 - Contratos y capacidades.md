@@ -18,6 +18,14 @@ de acumulador/predicado y destinos escalares son puntos de extensión, sin
 operaciones activas que los utilicen. Ampliar las fuentes de una operación
 requiere ampliar su descriptor y validación; no basta añadir un rol al enum.
 
+Los mensajes de cálculo transportan `ByteBuffer`. Su tamaño es
+`elementCount * elementBytes`; se conserva el orden creciente de elementos
+y offsets de bytes. El orden de bytes del objetivo viaja con el bundle y el
+resultado. `ElementCodec` interpreta los patrones sin depender del host.
+Sus adaptadores representan 8/16/32/64 bits; esa capacidad de representación
+no habilita operaciones en todos esos anchos. La ALU y la FPU conservan
+sus capacidades anteriores.
+
 ## Propiedad, identidad y cierre
 
 ```text

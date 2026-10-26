@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/element_codec.hh"
 #include "cpu/vector_engine/interface/cpu_vector_interface.hh"
 
 namespace gem5::vector_engine
@@ -100,12 +101,12 @@ VectorSupport::elementBytes(uint16_t element_bits)
     return element_bits / 8;
 }
 
-uint32_t
+uint64_t
 VectorSupport::elementMask(uint16_t element_bits)
 {
     panic_if(!supportsElementWidth(element_bits),
              "Unsupported vector element width");
-    return std::numeric_limits<uint32_t>::max() >> (32 - element_bits);
+    return ElementCodec::mask(element_bits);
 }
 
 uint64_t

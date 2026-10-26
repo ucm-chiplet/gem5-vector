@@ -3,5 +3,6 @@
 Import("*")
 
 Source("vector_support.cc")
+Source("element_codec.cc")
 Source("operation_traits.cc")
 Source("module_stats.cc")

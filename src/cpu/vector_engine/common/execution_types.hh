@@ -4,15 +4,20 @@
 #define __CPU_VECTOR_ENGINE_COMMON_EXECUTION_TYPES_HH__
 
 #include <optional>
-#include <vector>
 
 #include "cpu/vector_engine/common/fp_types.hh"
 #include "cpu/vector_engine/common/lane_task.hh"
+#include "enums/ByteOrder.hh"
 
 namespace gem5::vector_engine
 {
 
-/** Operandos leídos por la lane, con contexto FP sólo para la FPU. */
+/**
+ * Operandos propios de un fragmento, preparados por la lane antes de enviar.
+ * La FU copia datos al aceptar y no lee el VRF. emul conserva el grupo
+ * efectivo; byteOrder permite interpretar bytes sin depender del host.
+ * Un rechazo deja el mismo bundle e identidad en manos de la lane.
+ */
 struct ExecutionBundle
 {
     LaneFragmentKey key;
@@ -21,13 +26,19 @@ struct ExecutionBundle
     ElementRange elements;
     VectorRegRef destination;
     ByteRange destinationRange;
-    // Contenedores de patrones de bits; sólo los sewBits bajos son activos.
-    std::vector<uint32_t> lhs;
-    std::vector<uint32_t> rhs;
+    // Increasing element and byte offset; size = count * bytes(SEW).
+    ByteBuffer lhs;
+    ByteBuffer rhs;
     std::optional<FpExecutionContext> fpContext = std::nullopt;
+    ByteOrder byteOrder = ByteOrder::little;
+    VectorLmul emul = VectorLmul::Invalid;
 };
 
-/** Resultado retenido hasta el writeback; los flags no son faults. */
+/**
+ * Resultado que la lane retiene hasta confirmar el writeback del fragmento.
+ * values tiene destinationRange.size bytes; orden y EMUL deben coincidir
+ * con el bundle original. Los flags son efectos FP agregados, no faults.
+ */
 struct ExecutionResult
 {
     LaneFragmentKey key;
@@ -35,8 +46,10 @@ struct ExecutionResult
     ElementRange elements;
     VectorRegRef destination;
     ByteRange destinationRange;
-    std::vector<uint32_t> values;
+    ByteBuffer values;
     FpExceptionFlags fpFlags = 0;
+    ByteOrder byteOrder = ByteOrder::little;
+    VectorLmul emul = VectorLmul::Invalid;
 };
 
 } // namespace gem5::vector_engine

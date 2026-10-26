@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/element_codec.hh"
 #include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
@@ -48,12 +49,15 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
     const uint64_t size =
         uint64_t{bundle.elements.elementCount} * element_bytes;
     panic_if(!bundle.key.valid() || !bundle.elements.valid() ||
+                 !isValid(bundle.emul) ||
                  !bundle.destination.naturallyAligned() ||
                  offset + size > std::numeric_limits<uint32_t>::max() ||
                  bundle.destinationRange.offset != offset ||
                  bundle.destinationRange.size != size ||
-                 bundle.lhs.size() != bundle.elements.elementCount ||
-                 bundle.rhs.size() != bundle.elements.elementCount,
+                 bundle.lhs.size() != size ||
+                 bundle.rhs.size() != size ||
+                 (bundle.byteOrder != ByteOrder::little &&
+                  bundle.byteOrder != ByteOrder::big),
              "Invalid integer ALU execution bundle");
 
     active.emplace();
@@ -64,13 +68,15 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
         elements32 += bundle.elements.elementCount;
     }
     stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
-    active->result =
-        ExecutionResult{bundle.key,
-                        bundle.sewBits,
-                        bundle.elements,
-                        bundle.destination,
-                        bundle.destinationRange,
-                        std::vector<uint32_t>(bundle.elements.elementCount)};
+    active->result = ExecutionResult{bundle.key,
+                                     bundle.sewBits,
+                                     bundle.elements,
+                                     bundle.destination,
+                                     bundle.destinationRange,
+                                     ByteBuffer(size),
+                                     0,
+                                     bundle.byteOrder,
+                                     bundle.emul};
     owner.schedule(executeEvent, owner.clockEdge(Cycles(1)));
     return TransferResult::Accepted;
 }
@@ -80,12 +86,13 @@ Alu::execute()
 {
     panic_if(!active, "ALU evaluation without an accepted bundle");
     const auto &bundle = active->bundle;
-    const auto mask = VectorSupport::elementMask(bundle.sewBits);
-    for (std::size_t i = 0; i < bundle.lhs.size(); ++i) {
-        active->result.values[i] =
-            static_cast<uint32_t>(uint64_t{bundle.lhs[i]} +
-                                  uint64_t{bundle.rhs[i]}) &
-            mask;
+    for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
+        const auto lhs = ElementCodec::read(bundle.lhs, i, bundle.sewBits,
+                                            bundle.byteOrder);
+        const auto rhs = ElementCodec::read(bundle.rhs, i, bundle.sewBits,
+                                            bundle.byteOrder);
+        ElementCodec::write(active->result.values, i, bundle.sewBits,
+                            lhs + rhs, bundle.byteOrder);
     }
     auto result = std::move(active->result);
     // Liberar capacidad antes del callback permite una nueva admisión.

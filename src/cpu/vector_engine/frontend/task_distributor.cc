@@ -179,6 +179,7 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
         fragment.sewBits = task.config.sewBits;
         fragment.arithmetic = arithmetic;
         fragment.fpContext = task.fpContext;
+        fragment.lmul = task.config.lmul;
         fragment.elements = ElementRange{offset / element_bytes,
                                          (end - offset) / element_bytes};
         fragment.destinationRange = fragment_range;

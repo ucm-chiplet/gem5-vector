@@ -48,7 +48,7 @@ class VectorSupport
     // Precondición: ancho soportado. La máscara ajusta un patrón de bits
     // al SEW activo; uint32_t es el contenedor, no el ancho del elemento.
     static uint32_t elementBytes(uint16_t element_bits);
-    static uint32_t elementMask(uint16_t element_bits);
+    static uint64_t elementMask(uint16_t element_bits);
 
     // Precondición: LMUL válido y SEW soportado; aplica LMUL antes de dividir.
     static uint64_t maxElements(uint32_t vlen_bytes, VectorLmul lmul,

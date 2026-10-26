@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "cpu/vector_engine/common/element_codec.hh"
 #include "cpu/vector_engine/common/vector_support.hh"
 
 namespace gem5::vector_engine
@@ -71,7 +72,7 @@ AraLane::validateTask(const LaneTask &task) const
 {
     const auto &arithmetic = task.arithmetic;
     panic_if(!task.key.valid() || task.laneId != laneId ||
-                 !task.elements.valid(),
+                 !task.elements.valid() || !isValid(task.lmul),
              "Invalid lane fragment identity or elements");
     panic_if(!VectorSupport::supportsExecution(arithmetic, task.sewBits,
                                                task.fpContext),
@@ -97,11 +98,10 @@ AraLane::validateTask(const LaneTask &task) const
              "Lane byte ranges do not match their elements");
 
     const ByteEnable byte_enable(expected.size, 1);
+    const unsigned expected_regs =
+        task.lmul > VectorLmul::M1 ? 1U << static_cast<int>(task.lmul) : 1;
     const auto check_register = [&](const VectorRegRef &reg) {
-        panic_if(!reg.naturallyAligned() ||
-                     (reg.regCount != 1 && reg.regCount != 2 &&
-                      reg.regCount != 4 && reg.regCount != 8) ||
-                     reg.regCount != arithmetic.destination.regCount,
+        panic_if(!reg.naturallyAligned() || reg.regCount != expected_regs,
                  "Invalid architectural group in a lane fragment");
         const auto mapping = mapper.map(reg, expected, byte_enable);
         panic_if(mapping.size() != 1 || mapping.front().laneId != laneId ||
@@ -150,16 +150,17 @@ AraLane::acceptTask(const LaneTask &task)
     state.task = task;
     stats.accept(task.elements.elementCount, task.destinationRange.size);
     // Los dos slots y sus buffers existen antes de emitir cualquier lectura.
-    state.bundle =
-        ExecutionBundle{task.key,
-                        task.arithmetic.operation,
-                        task.sewBits,
-                        task.elements,
-                        task.arithmetic.destination,
-                        task.destinationRange,
-                        std::vector<uint32_t>(task.elements.elementCount),
-                        std::vector<uint32_t>(task.elements.elementCount),
-                        task.fpContext};
+    state.bundle = ExecutionBundle{task.key,
+                                   task.arithmetic.operation,
+                                   task.sewBits,
+                                   task.elements,
+                                   task.arithmetic.destination,
+                                   task.destinationRange,
+                                   ByteBuffer(task.destinationRange.size),
+                                   ByteBuffer(task.destinationRange.size),
+                                   task.fpContext,
+                                   targetByteOrder,
+                                   task.lmul};
     state.pending[0] = PendingVrfAccess{
         VrfReadRequest{
             makeAccess(task.arithmetic.vectorSource, task.vectorSourceRange)},
@@ -170,10 +171,11 @@ AraLane::acceptTask(const LaneTask &task)
             VrfReadRequest{makeAccess(*source, *task.secondVectorSourceRange)},
             task.key, AccessRole::Rhs};
     } else {
-        const auto scalar = static_cast<uint32_t>(std::get<RegVal>(
-                                task.arithmetic.secondOperand)) &
-                            VectorSupport::elementMask(task.sewBits);
-        std::fill(state.bundle.rhs.begin(), state.bundle.rhs.end(), scalar);
+        const auto scalar = std::get<RegVal>(task.arithmetic.secondOperand);
+        for (uint32_t i = 0; i < task.elements.elementCount; ++i) {
+            ElementCodec::write(state.bundle.rhs, i, task.sewBits, scalar,
+                                targetByteOrder);
+        }
         state.rhsReady = true;
     }
     wakeup();
@@ -314,21 +316,7 @@ AraLane::recvVrfReadResponse(const ReadResponse &response)
         auto &values = i == 0 ? state.bundle.lhs : state.bundle.rhs;
         auto &ready = i == 0 ? state.lhsReady : state.rhsReady;
         panic_if(ready, "Lane operand was already received");
-        const auto element_bytes =
-            VectorSupport::elementBytes(state.task.sewBits);
-        for (std::size_t element = 0; element < values.size(); ++element) {
-            uint32_t value = 0;
-            for (unsigned byte = 0; byte < element_bytes; ++byte) {
-                const unsigned shift =
-                    8 * (targetByteOrder == ByteOrder::little
-                             ? byte
-                             : element_bytes - 1 - byte);
-                value |=
-                    uint32_t{response.data[element * element_bytes + byte]}
-                    << shift;
-            }
-            values[element] = value;
-        }
+        values = response.data;
         ready = true;
         slot.reset();
         wakeup();
@@ -348,28 +336,18 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
                  result.elements != task.elements ||
                  result.destination != task.arithmetic.destination ||
                  result.destinationRange != task.destinationRange ||
-                 result.values.size() != task.elements.elementCount ||
-                 !validFpFlags(result.fpFlags) ||
+                 result.values.size() != task.destinationRange.size ||
+                 result.byteOrder != targetByteOrder ||
+                 result.emul != task.lmul || !validFpFlags(result.fpFlags) ||
                  (!task.fpContext && result.fpFlags != 0) || state.result ||
                  state.pending[0] || state.pending[1] || state.pending[2] ||
                  !state.lhsReady || !state.rhsReady,
              "Lane execution result does not match its pending fragment");
     state.result = result;
-    ByteBuffer data(task.destinationRange.size);
-    const auto element_bytes = VectorSupport::elementBytes(task.sewBits);
-    for (std::size_t element = 0; element < result.values.size(); ++element) {
-        for (unsigned byte = 0; byte < element_bytes; ++byte) {
-            const unsigned shift = 8 * (targetByteOrder == ByteOrder::little
-                                            ? byte
-                                            : element_bytes - 1 - byte);
-            data[element * element_bytes + byte] =
-                static_cast<uint8_t>(result.values[element] >> shift);
-        }
-    }
     state.pending[2] = PendingVrfAccess{
         VrfWriteRequest{
             makeAccess(task.arithmetic.destination, task.destinationRange),
-            std::move(data)},
+            result.values},
         task.key, AccessRole::Destination};
     state.phase = Phase::Write;
     wakeup();
