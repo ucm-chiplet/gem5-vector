@@ -105,16 +105,23 @@ AraSequencer::makeTask(const VectorCommand &command) const
              "Task byte range is not representable");
 
     const int exponent = static_cast<int>(config.lmul);
-    const uint64_t effective_bytes = exponent >= 0
-                                         ? uint64_t{vlenBytes} << exponent
-                                         : uint64_t{vlenBytes} >> -exponent;
+    // LMUL multiplica o divide el espacio disponible de un registro.
+    uint64_t effective_bytes = uint64_t{vlenBytes};
+    if (exponent >= 0) {
+        effective_bytes <<= exponent;
+    } else {
+        effective_bytes >>= -exponent;
+    }
 
     panic_if(end > effective_bytes, "Task exceeds effective LMUL capacity");
 
     const ByteRange range{static_cast<uint32_t>(offset),
                           static_cast<uint32_t>(size)};
 
-    const unsigned expected_regs = exponent > 0 ? 1U << exponent : 1U;
+    unsigned expected_regs = 1;
+    if (exponent > 0) {
+        expected_regs = 1U << exponent;
+    }
 
     const auto check_register = [&](const VectorRegRef &reg) {
         panic_if(!reg.naturallyAligned() || reg.regCount != expected_regs ||
@@ -125,6 +132,8 @@ AraSequencer::makeTask(const VectorCommand &command) const
     // Una sola tarea por comando: cero es único dentro de CommandKey.
     const TaskKey key{command.command, TaskId{0}};
 
+    // Comprobar todos los registros que lee o escribe la operación. El
+    // escalar y la dirección ya capturados no son grupos del VRF.
     for (const auto &operand : describeOperands(command)) {
         if (const auto *reg = std::get_if<VectorRegRef>(&operand.value)) {
             check_register(*reg);
@@ -166,9 +175,10 @@ AraSequencer::evaluate()
         } else {
             ++storeCommands;
         }
-        const auto count = command->config.vl > command->config.vstart
-                               ? command->config.vl - command->config.vstart
-                               : 0;
+        uint64_t count = 0;
+        if (command->config.vl > command->config.vstart) {
+            count = command->config.vl - command->config.vstart;
+        }
         stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
                                                   command->config.sewBits));
 
@@ -299,7 +309,8 @@ AraSequencer::finish()
         completion.finalVstart = *completion.fault->elementIndex;
     }
 
-    // Closing still owns the command credit throughout the callback.
+    // Notificar antes de liberar la cabeza: durante la llamada la CPU debe
+    // seguir viendo este comando como pendiente. Después se permite avanzar.
     completionEndpoint.completed(completion);
     stats.complete(completion.status != CompletionStatus::Success);
     queue.releaseHead(completion.command);

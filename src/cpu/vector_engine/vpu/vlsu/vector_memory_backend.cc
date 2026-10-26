@@ -143,10 +143,13 @@ VectorMemoryBackend::validateRequest(const VectorMemoryRequest &request) const
                  request.virtualAddress > addressMask ||
                  request.byteEnable != ByteEnable(request.size, 1),
              "Invalid vector memory element descriptor");
-    panic_if(
-        request.storeData.size() !=
-            (request.direction == MemoryDirection::Store ? request.size : 0),
-        "Invalid vector memory store buffer");
+    // Sólo un store trae datos de entrada; una carga los recibirá de memoria.
+    uint32_t store_bytes = 0;
+    if (request.direction == MemoryDirection::Store) {
+        store_bytes = request.size;
+    }
+    panic_if(request.storeData.size() != store_bytes,
+             "Invalid vector memory store buffer");
 }
 
 TransferResult

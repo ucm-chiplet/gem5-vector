@@ -48,19 +48,19 @@ operationTraits(ArithmeticOperation operation)
     static constexpr OperationTraits add{ExecutionClass::IntegerAlu,
                                          ElementFormat::Integer,
                                          IntegerElementWidths,
-                                         true,
-                                         true,
-                                         false,
-                                         false,
-                                         true};
+                                         true,  // Dos fuentes vectoriales.
+                                         true,  // Vector y escalar.
+                                         false, // No necesita redondeo FP.
+                                         false, // No accede a memoria.
+                                         true}; // Admisible desde CPU.
     static constexpr OperationTraits float_add{ExecutionClass::FloatingPoint,
                                                ElementFormat::IeeeFloat,
-                                               {16, 0},
-                                               true,
-                                               false,
-                                               true,
-                                               false,
-                                               false};
+                                               {16, 0}, // Sólo binary16.
+                                               true,    // Dos vectores.
+                                               false,   // Sin forma escalar.
+                                               true,    // Necesita redondeo.
+                                               false,  // Sin acceso a memoria.
+                                               false}; // Sin offload CPU.
     switch (operation) {
         case ArithmeticOperation::Add:
             return &add;
@@ -77,15 +77,16 @@ operationTraits(MemoryDirection direction)
     static constexpr OperationTraits memory{ExecutionClass::Memory,
                                             ElementFormat::RawBits,
                                             IntegerElementWidths,
-                                            false,
-                                            false,
-                                            false,
-                                            true,
-                                            true};
-    return direction == MemoryDirection::Load ||
-                   direction == MemoryDirection::Store
-               ? &memory
-               : nullptr;
+                                            false, // No es suma .vv.
+                                            false, // No es suma .vx.
+                                            false, // No necesita redondeo FP.
+                                            true,  // Puede fallar un acceso.
+                                            true}; // Admisible desde CPU.
+    if (direction == MemoryDirection::Load ||
+        direction == MemoryDirection::Store) {
+        return &memory;
+    }
+    return nullptr;
 }
 
 std::vector<OperandDescriptor>
@@ -99,6 +100,8 @@ describeOperands(const VectorCommand &command)
         if (!traits) {
             return operands;
         }
+        // Todos los registros de estas operaciones usan el ancho y el
+        // grupo del comando. Sólo cambian su papel y si se leen o escriben.
         const auto append = [&](OperandRole role, OperandAccess access,
                                 const VectorRegRef &reg) {
             operands.push_back({role, access, traits->format, config.sewBits,
@@ -113,19 +116,26 @@ describeOperands(const VectorCommand &command)
             append(OperandRole::Source, OperandAccess::Read, *reg);
         } else if (const auto *scalar =
                        std::get_if<RegVal>(&arithmetic->secondOperand)) {
+            // El escalar ya se leyó en CPU; no pertenece a un grupo vectorial.
             operands.push_back({OperandRole::Source, OperandAccess::Read,
                                 traits->format, config.sewBits,
                                 VectorLmul::Invalid, CapturedScalar{*scalar}});
         }
     } else if (const auto *memory =
                    std::get_if<MemoryCommand>(&command.payload)) {
-        const bool load = memory->direction == MemoryDirection::Load;
-        // Same-width profile only. Mixed EEW/EMUL needs its own proposal.
-        operands.push_back(
-            {load ? OperandRole::Destination : OperandRole::Source,
-             load ? OperandAccess::Write : OperandAccess::Read,
-             ElementFormat::RawBits, memory->elementWidthBits, config.lmul,
-             memory->dataReg});
+        // Una carga escribe el registro; un store lee sus datos.
+        auto role = OperandRole::Source;
+        auto access = OperandAccess::Read;
+        if (memory->direction == MemoryDirection::Load) {
+            role = OperandRole::Destination;
+            access = OperandAccess::Write;
+        }
+        // En el perfil actual, el elemento de memoria usa el ancho del
+        // comando y ocupa el mismo grupo de registros.
+        operands.push_back({role, access, ElementFormat::RawBits,
+                            memory->elementWidthBits, config.lmul,
+                            memory->dataReg});
+        // La dirección se guarda como valor: no es un elemento del vector.
         operands.push_back({OperandRole::Address, OperandAccess::Read,
                             ElementFormat::Integer, 0, VectorLmul::Invalid,
                             CapturedScalar{memory->base}});

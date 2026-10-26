@@ -62,8 +62,13 @@ VectorEngine::makeConfiguration(const Params &params)
     // Cero significa heredar la palabra física, no un recurso de cero bytes.
     // La resolución sucede una vez, antes de construir cualquier consumidor.
     const auto resolve_width = [word_bytes](uint32_t width) {
-        return width ? width : word_bytes;
+        if (width == 0) {
+            return word_bytes;
+        }
+        return width;
     };
+    // Agrupar los parámetros por su consumidor: lane y unidades de cálculo,
+    // bancos del VRF, peticiones vectoriales y conexión con memoria.
     config.lane = {params.lane_task_entries,
                    params.operand_buffer_entries_per_source,
                    params.result_buffer_entries,
@@ -81,6 +86,8 @@ VectorEngine::makeConfiguration(const Params &params)
                    params.memory_block_requests};
     config.memory = {params.address_bits,
                      params.memory_max_outstanding_packets};
+    // Validar también los límites de la futura red aunque esté deshabilitada.
+    // Declararlos no crea enlaces ni permite enviar paquetes entre lanes.
     config.interconnect.enabled = params.interconnect_enabled;
     config.interconnect.capabilities = {
         config.vrf.numLanes,
@@ -97,6 +104,7 @@ VectorEngine::makeConfiguration(const Params &params)
                  !network.destinationBytesPerCycle,
              "Invalid interconnect capacity contract");
 
+    // Comprobar primero dimensiones y límites generales de esta fase.
     const auto bytes = config.vrf.vlenBytes;
     fatal_if(bytes < 4 || bytes > 8192 || (bytes & (bytes - 1)),
              "VectorEngine requires a power-of-two VLEN of 4..8192 bytes");
@@ -126,6 +134,7 @@ VectorEngine::makeConfiguration(const Params &params)
              "VectorEngine requires nonempty SEW and LMUL profiles");
     fatal_if(!config.vlsu.maxBlockBytes,
              "Memory block byte limit must be positive");
+    // Cada tamaño habilitado debe caber entero en una palabra y una petición.
     for (const auto sew : params.supported_sews) {
         fatal_if(sew > config.elenBits ||
                      !VectorSupport::supportsElementWidth(sew),
@@ -141,6 +150,7 @@ VectorEngine::makeConfiguration(const Params &params)
                  "Word and block limits must contain whole elements");
         config.supportedSews.push_back(sew);
     }
+    // Un LMUL sólo es útil si admite al menos uno de los tamaños elegidos.
     for (const int exponent : params.supported_lmuls) {
         fatal_if(exponent < -3 || exponent > 3,
                  "VectorEngine LMUL exponent must be in [-3, 3]");
@@ -395,6 +405,7 @@ VectorEngine::requestGrant(const VectorCommand &command)
         ++stats.rejected;
         return GrantResult::rejected(RejectionReason::InvalidIdentity);
     }
+    // Revisar soporte y habilitación antes de preguntar por espacio en cola.
     if (const auto reason = VectorSupport::checkCommand(
             command, vpuParameters.vrf.vlenBytes, vpuParameters.supportedLmuls,
             vpuParameters.elenBits)) {
@@ -425,9 +436,10 @@ void
 VectorEngine::dispatch(const GrantToken &token, const VectorCommand &command)
 {
     requireCpuBinding();
-    const auto count = command.config.vl > command.config.vstart
-                           ? command.config.vl - command.config.vstart
-                           : 0;
+    uint64_t count = 0;
+    if (command.config.vl > command.config.vstart) {
+        count = command.config.vl - command.config.vstart;
+    }
     stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
                                               command.config.sewBits));
     commandQueue->dispatch(token, command);

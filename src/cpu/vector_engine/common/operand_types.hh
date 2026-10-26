@@ -38,7 +38,7 @@
 namespace gem5::vector_engine
 {
 
-/** Papel semántico; no asigna unidades ni habilita nuevas instrucciones. */
+/** Para qué usa la operación este dato: fuente, resultado, dirección, etc. */
 enum class OperandRole : uint8_t
 {
     Source,
@@ -48,14 +48,14 @@ enum class OperandRole : uint8_t
     Address,
 };
 
-/** Efecto sobre el operando, utilizable por validación y dependencias. */
+/** Indica si la operación lee el dato, lo escribe o hace ambas cosas. */
 enum class OperandAccess : uint8_t
 {
     Read,
     Write,
     ReadWrite
 };
-/** Interpretación de los bits: memoria transporta RawBits, no calcula. */
+/** Cómo interpretar los bits; las cargas/stores sólo los copian (RawBits). */
 enum class ElementFormat : uint8_t
 {
     RawBits,
@@ -64,23 +64,24 @@ enum class ElementFormat : uint8_t
     Mask
 };
 
-/** Valor capturado, no nombre de registro ni referencia al estado CPU. */
+/** Copia de un valor escalar que la CPU ya leyó al crear el comando. */
 struct CapturedScalar
 {
     uint64_t bits = 0;
 };
 
-/** Destino escalar reservado para ampliaciones; no es un valor capturado. */
+/** Registro escalar donde guardar un resultado en una ampliación futura. */
 struct ScalarDestination
 {
     RegIndex index = 0;
 };
 
 /**
- * Vista derivada de un comando, sin una segunda autoridad mutable de datos.
- * EEW/EMUL describen grupos vectoriales; un escalar usa EMUL Invalid y la
- * dirección usa EEW=0 porque no es un elemento vectorial. Los roles de
- * acumulador/predicado y los destinos escalares siguen siendo reservas.
+ * Descripción de un dato leído o escrito, obtenida a partir del comando.
+ * eewBits es el ancho del elemento y emul el tamaño del grupo de registros.
+ * Un valor escalar no tiene grupo (EMUL Invalid); una dirección tampoco es
+ * un elemento vectorial (EEW=0). Acumuladores, predicados y destinos escalares
+ * están reservados para operaciones futuras.
  */
 struct OperandDescriptor
 {

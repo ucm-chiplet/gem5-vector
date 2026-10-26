@@ -41,13 +41,13 @@ using TransferId = uint32_t;
 inline constexpr TransferId InvalidTransferId =
     std::numeric_limits<TransferId>::max();
 
-/** Identidad local a una tarea, asignada por su propietario entre orígenes. */
+/** Identifica un envío dentro de su tarea, aunque haya varios emisores. */
 struct TransferKey
 {
     TaskKey task;
     TransferId transferId = InvalidTransferId;
 
-    /** Sólo valida identidad; no comprueba que exista una reserva de red. */
+    /** Indica si tarea y número de envío tienen valores válidos. */
     bool
     valid() const
     {
@@ -69,16 +69,16 @@ operator!=(const TransferKey &lhs, const TransferKey &rhs)
     return !(lhs == rhs);
 }
 
-/** Uso del paquete, sin opcode ni permiso de forwarding entre comandos. */
+/** Indica para qué se mueve el dato; no contiene una instrucción CPU. */
 enum class TransferKind : uint8_t
 {
     RegisterMove
 };
 
 /**
- * Límites publicados por una topología: entradas son paquetes; tamaños y
- * buffers son bytes; servicio de origen/destino se expresa en bytes/ciclo.
- * Describirlos no instancia una red ni acredita ancho de banda medido.
+ * Límites que anuncia la red: cuántos destinos conecta, cuánto cabe en un
+ * paquete y cuánto puede guardar o mover. Los tamaños se expresan en bytes
+ * y las velocidades en bytes por ciclo. Declararlos no construye una red.
  */
 struct InterconnectCapabilities
 {
@@ -91,9 +91,10 @@ struct InterconnectCapabilities
 };
 
 /**
- * Movimiento lógico con datos propios, independiente del mapeo físico.
- * Accepted obliga a conservar una copia hasta su única entrega; Retry no
- * transfiere propiedad. El WriteAck del VRF pertenece al consumidor.
+ * Datos de un envío entre lanes. El paquete incluye su propia copia de los
+ * bytes. Si la red lo acepta, debe conservarlos hasta entregarlos una vez.
+ * Si pide reintentar, el emisor sigue siendo responsable del envío. Quien
+ * recibe los bytes debe encargarse de su escritura y confirmación en el VRF.
  */
 struct InterconnectPacket
 {
@@ -108,15 +109,18 @@ struct InterconnectPacket
     ByteEnable byteEnable;
 
     /**
-     * Comprueba forma, endpoints, máscara y límites declarados, sin efectos.
-     * No reserva espacio ni valida legalidad RVV o capacidad física del VRF.
+     * Comprueba destinos, tamaños y bytes habilitados frente a los límites
+     * anunciados. No reserva espacio ni comprueba si los datos caben en el
+     * VRF o si la instrucción cumple las reglas de RVV.
      */
     bool valid(const InterconnectCapabilities &caps) const;
 };
 
-/** Common observation points; topology-specific link counters are separate.
- * Admission wait: first attempt to acceptance. Observed latency: acceptance
- * to delivery. Retries are attempts, never new packets or additional bytes.
+/**
+ * Momentos que puede registrar cualquier red: intento, aceptación y entrega.
+ * La espera va del primer intento a la aceptación; el viaje observado, de
+ * la aceptación a la entrega. Reintentar no cuenta como otro paquete ni
+ * como más datos transferidos.
  */
 enum class TransportObservation : uint8_t
 {

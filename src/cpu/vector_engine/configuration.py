@@ -24,10 +24,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Immutable construction descriptions for the current VPU organization.
+"""Valores agrupados por módulo para describir cómo se construirá la VPU.
 
-These are configuration values, not SimObjects or executable resources.
-VectorEngine validates the translated values again on the C++ boundary.
+Estas clases guardan las elecciones de configuración. VectorEngine crea
+los recursos y comprueba que los valores se pueden usar juntos en C++.
 """
 
 from dataclasses import (
@@ -39,7 +39,7 @@ from typing import Tuple
 
 @dataclass(frozen=True)
 class VrfConfiguration:
-    """Geometría en bytes/bancos/lanes y política del layout inicial."""
+    """Tamaño del VRF y forma de repartir sus palabras entre lanes y bancos."""
 
     vlen_bytes: int
     lane_word_bytes: int = 8
@@ -50,17 +50,22 @@ class VrfConfiguration:
 
 @dataclass(frozen=True)
 class ExecutionConfiguration:
-    """Bytes por bundle, bundles pendientes y ciclos de latencia/iniciación."""
+    """Tamaño, capacidad y tiempos de una unidad de cálculo.
 
-    width_bytes: int = 0  # Resolve to the VRF word width during construction.
+    width_bytes limita los bytes de cada grupo de elementos. latency cuenta
+    los ciclos hasta responder; initiation_interval, los ciclos entre inicios.
+    La fase actual sólo acepta la capacidad y los tiempos ya implementados.
+    """
+
+    width_bytes: int = 0  # Cero usa el tamaño de palabra del VRF.
     capacity: int = 1
-    latency: int = 1  # Cycles; functional scheduling, not calibrated hardware.
+    latency: int = 1  # Ciclos del modelo; no es una medida de hardware.
     initiation_interval: int = 1
 
 
 @dataclass(frozen=True)
 class LaneConfiguration:
-    """Contextos/buffers por lane y fuente; no activa varias instrucciones."""
+    """Espacio por lane para tareas, operandos y resultados, y sus ALU/FPU."""
 
     task_entries: int = 1
     operand_entries_per_source: int = 1
@@ -73,7 +78,11 @@ class LaneConfiguration:
 
 @dataclass(frozen=True)
 class BankConfiguration:
-    """Puertos y accesos por banco; el perfil actual exige un único RW."""
+    """Accesos que puede atender un banco y sus tiempos en ciclos.
+
+    El modelo actual exige un puerto compartido de lectura/escritura y un
+    solo acceso pendiente. Declarar más capacidad no habilita ese servicio.
+    """
 
     read_ports: int = 0
     write_ports: int = 0
@@ -85,7 +94,7 @@ class BankConfiguration:
 
 @dataclass(frozen=True)
 class VlsuConfiguration:
-    """Límites de memoria preparados sin habilitar agrupación de elementos."""
+    """Límite de bytes por petición; hoy sólo se envía un elemento cada vez."""
 
     max_block_bytes: int = 8
     active_blocks: int = 1
@@ -94,7 +103,7 @@ class VlsuConfiguration:
 
 @dataclass(frozen=True)
 class MemoryBackendConfiguration:
-    """Ancho de dirección y paquetes físicos, separados de bloques lógicos."""
+    """Tamaño de las direcciones y peticiones pendientes hacia memoria."""
 
     address_bits: int = 64
     max_outstanding_packets: int = 1
@@ -102,10 +111,14 @@ class MemoryBackendConfiguration:
 
 @dataclass(frozen=True)
 class InterconnectConfiguration:
-    """Capacidades de transporte declaradas; enabled debe seguir a False."""
+    """Espacio, velocidad y tiempo de viaje previstos para la futura red.
+
+    Los tamaños son bytes y las velocidades, bytes por ciclo. Estos valores
+    se comprueban al construir, pero en la fase 1 enabled debe ser False.
+    """
 
     enabled: bool = False
-    max_packet_bytes: int = 0  # Zero resolves to lane_word_bytes.
+    max_packet_bytes: int = 0  # Cero usa lane_word_bytes.
     packets_per_destination: int = 1
     bytes_per_destination: int = 0
     source_bytes_per_cycle: int = 0
@@ -115,10 +128,11 @@ class InterconnectConfiguration:
 
 @dataclass(frozen=True)
 class VpuConfiguration:
-    """Composición de valores inmutables, validada al construir VectorEngine.
+    """Reúne las elecciones para construir una VPU en una sola descripción.
 
-    No crea SimObjects ni recursos. Los ceros de anchura se resuelven en C++
-    usando la palabra del VRF; describir capacidades no habilita su servicio.
+    Cada parte describe un módulo y sus valores no cambian tras crearla.
+    VectorEngine comprueba la composición al construir los recursos reales.
+    Allí los anchos con valor cero toman el tamaño de palabra del VRF.
     """
 
     vrf: VrfConfiguration
@@ -139,12 +153,14 @@ class VpuConfiguration:
     target_byte_order: str = "little"
 
     def parameters(self):
-        """Devuelve una copia plana para el ABI de parámetros generado por gem5.
+        """Convierte la descripción en los argumentos que espera VectorEngine.
 
-        Cada módulo conserva aquí sus unidades y nombres. Este método sólo
-        traduce: no consulta estado CPU, no resuelve anchos ni valida soporte.
-        Las listas devueltas son copias y no modifican esta configuración.
+        Por ejemplo, lane.alu.width_bytes se convierte en alu_width_bytes.
+        Sólo cambia la organización de los valores: las comprobaciones se
+        hacen al construir la VPU. Devuelve listas nuevas para que usarlas
+        como parámetros no permita modificar esta descripción.
         """
+        # Traducir los nombres que difieren entre módulos y parámetros gem5.
         result = {
             "vlen_bytes": self.vrf.vlen_bytes,
             "lane_word_bytes": self.vrf.lane_word_bytes,
@@ -187,6 +203,7 @@ class VpuConfiguration:
             ),
             "interconnect_transit_latency": self.interconnect.transit_latency,
         }
+        # ALU y FPU comparten campos: basta añadir el prefijo de cada unidad.
         for name in ("alu", "fpu"):
             unit = getattr(self.lane, name)
             for member in (
@@ -196,6 +213,7 @@ class VpuConfiguration:
                 "initiation_interval",
             ):
                 result[f"{name}_{member}"] = getattr(unit, member)
+        # Los campos del banco siguen la misma regla, con el prefijo bank_.
         for member in (
             "read_ports",
             "write_ports",

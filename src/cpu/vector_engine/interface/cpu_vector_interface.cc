@@ -57,6 +57,7 @@ CpuVectorInterface::~CpuVectorInterface()
 GrantResult
 CpuVectorInterface::requestGrant(const VectorCommand &command)
 {
+    // Un comando incorrecto o ya reservado no debe consumir otra entrada.
     if (const auto reason = VectorSupport::checkStructure(command)) {
         ++stats.rejected;
         return GrantResult::rejected(*reason);
@@ -71,6 +72,7 @@ CpuVectorInterface::requestGrant(const VectorCommand &command)
         case GrantStatus::Granted:
             panic_if(result.token->command != command.command,
                      "Grant response belongs to another command");
+            // Conservar lo reservado para comprobar luego el envío y cierre.
             commands.emplace(command.command,
                              CommandState{command, *result.token});
             ++grants;
@@ -95,11 +97,13 @@ CpuVectorInterface::dispatch(const GrantToken &token,
                  found->second.token != token ||
                  found->second.descriptor != command,
              "Dispatch does not match the reserved immutable command");
-    // A synchronous accepted/completed callback can consume this state.
+    // Marcar el envío antes de llamar a la VPU: ésta puede responder dentro
+    // de dispatch, sin esperar a que la llamada termine.
     found->second.phase = Phase::Dispatched;
-    const auto count = command.config.vl > command.config.vstart
-                           ? command.config.vl - command.config.vstart
-                           : 0;
+    uint64_t count = 0;
+    if (command.config.vl > command.config.vstart) {
+        count = command.config.vl - command.config.vstart;
+    }
     stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
                                               command.config.sewBits));
     vpuEndpoint.dispatch(token, command);
@@ -124,6 +128,7 @@ CpuVectorInterface::completed(const VectorCompletion &completion)
     panic_if(found == commands.end() || found->second.phase != Phase::Accepted,
              "Unknown, premature or duplicate CPU completion");
     const auto &command = found->second.descriptor;
+    // Sólo aceptar efectos que el comando original podía producir.
     panic_if(!validFpFlags(completion.fpFlags) ||
                  (!command.fpContext && completion.fpFlags) ||
                  completion.scalarResult,
@@ -143,6 +148,7 @@ CpuVectorInterface::completed(const VectorCompletion &completion)
                 completion.finalVstart >= command.config.vl,
             "Invalid memory fault completion");
     }
+    // La entrada sigue viva mientras la CPU recibe la notificación final.
     found->second.phase = Phase::Completed;
     stats.complete(completion.status != CompletionStatus::Success);
     completionEndpoint.completed(completion);

@@ -21,10 +21,9 @@ inline constexpr RequestId InvalidRequestId =
     std::numeric_limits<RequestId>::max();
 
 /**
- * Logical contiguous element block. Phase 1 admits elementCount == 1 only.
- * El backend puede dividirla en
- * fragmentos físicos, pero devuelve una sola respuesta con la misma clave.
- * No transporta objetos de instrucción CPU ni paquetes de gem5.
+ * Petición de acceso a elementos consecutivos. En esta fase sólo se envía
+ * uno cada vez. El backend puede necesitar varios accesos físicos para
+ * atenderla, pero devuelve una única respuesta con la misma identidad.
  */
 struct VectorMemoryRequest
 {
@@ -35,7 +34,8 @@ struct VectorMemoryRequest
     // Destino de carga o fuente de store; dataRange es relativo al grupo.
     VectorRegRef registerRef;
     ByteRange dataRange;
-    // Absolute elements; size = elementCount * elementBytes. No unique lane.
+    // Índices del vector original; size = elementCount * elementBytes.
+    // La lane que contiene los datos se obtiene por separado con el mapper.
     ElementRange elements;
     uint32_t elementBytes = 0;
     Addr virtualAddress = 0;
@@ -49,13 +49,15 @@ struct VectorMemoryRequest
     RequestorID requestorId = Request::invldRequestorId;
 
     /**
-     * Comprueba en 64 bits las relaciones elementos/bytes del descriptor.
-     * No valida soporte, direcciones ni buffers y no activa agrupación:
-     * el backend actual exige además elementCount == 1.
+     * Comprueba que el número de elementos coincide con los bytes pedidos
+     * y con su posición en el grupo de registros. No comprueba la dirección
+     * de memoria ni el contenido de los buffers. El backend exige además
+     * un solo elemento por petición en esta fase.
      */
     bool
     validBlockShape() const
     {
+        // Multiplicar en 64 bits evita desbordar antes de comparar con size.
         return elements.valid() && elementBytes && dataRange.valid() &&
                uint64_t{elements.elementCount} * elementBytes == size &&
                dataRange.size == size &&

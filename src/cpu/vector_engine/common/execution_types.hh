@@ -13,10 +13,11 @@ namespace gem5::vector_engine
 {
 
 /**
- * Operandos propios de un fragmento, preparados por la lane antes de enviar.
- * La FU copia datos al aceptar y no lee el VRF. emul conserva el grupo
- * efectivo; byteOrder permite interpretar bytes sin depender del host.
- * Un rechazo deja el mismo bundle e identidad en manos de la lane.
+ * Trabajo que una lane entrega a la ALU o FPU con sus operandos ya leídos.
+ * La unidad copia estos datos al aceptar, por lo que no necesita leer el VRF.
+ * byteOrder indica cómo interpretar los bytes y emul conserva el tamaño del
+ * grupo de registros. Si la unidad pide reintentar, la lane guarda el mismo
+ * mensaje y su identidad para volver a enviarlo.
  */
 struct ExecutionBundle
 {
@@ -26,7 +27,7 @@ struct ExecutionBundle
     ElementRange elements;
     VectorRegRef destination;
     ByteRange destinationRange;
-    // Increasing element and byte offset; size = count * bytes(SEW).
+    // Elementos consecutivos, con elementCount * bytes(SEW) en cada fuente.
     ByteBuffer lhs;
     ByteBuffer rhs;
     std::optional<FpExecutionContext> fpContext = std::nullopt;
@@ -35,9 +36,10 @@ struct ExecutionBundle
 };
 
 /**
- * Resultado que la lane retiene hasta confirmar el writeback del fragmento.
+ * Resultado que la lane guarda hasta que el VRF confirme su escritura.
  * values tiene destinationRange.size bytes; orden y EMUL deben coincidir
- * con el bundle original. Los flags son efectos FP agregados, no faults.
+ * con el trabajo original. fpFlags reúne los indicadores de coma flotante
+ * de sus elementos; no representa un fallo de acceso a memoria.
  */
 struct ExecutionResult
 {

@@ -89,7 +89,8 @@ struct LaneTask
     // Ausente para vadd.vx: el escalar viaja en arithmetic.secondOperand.
     std::optional<ByteRange> secondVectorSourceRange;
     std::optional<FpExecutionContext> fpContext = std::nullopt;
-    // Effective group for the same-width operands, including fractions.
+    // Tamaño del grupo de registros que usa este fragmento, también si es
+    // fraccional. En las operaciones actuales coincide para ambos operandos.
     VectorLmul lmul = VectorLmul::Invalid;
 };
 

@@ -39,36 +39,37 @@ namespace gem5::vector_engine
 {
 
 /**
- * Convierte entre bytes y patrones de bits, sin consultar el soporte activo.
- * Las unidades validan la operación; este adaptador sólo interpreta datos.
- * No modifica el tamaño de los buffers ni usa el endianness del host.
+ * Lee y escribe elementos guardados como bytes, respetando el orden de
+ * bytes de la CPU simulada. El ordenador que ejecuta gem5 puede usar otro
+ * orden. Poder representar un ancho aquí no habilita sus instrucciones.
  */
 class ElementCodec
 {
   public:
-    /** Indica si el contenedor puede representar ese ancho, en bits. */
+    /** Indica si sabemos leer y escribir elementos de ese número de bits. */
     static bool validWidth(uint16_t bits);
-    /** Bytes por elemento; exige validWidth(bits). */
+    /** Devuelve cuántos bytes ocupa un elemento de un ancho admitido. */
     static uint32_t bytes(uint16_t bits);
-    /** Máscara de bits activos; también admite 64 sin desplazar por 64. */
+    /** Devuelve un valor con unos en los bits que pertenecen al elemento. */
     static uint64_t mask(uint16_t bits);
     /**
-     * Lee el elemento indicado por su índice dentro del buffer, no por su
-     * índice arquitectónico. Exige ancho/orden válidos y bytes suficientes.
-     * Devuelve sus bits sin interpretar signo ni formato de coma flotante.
+     * Reúne los bytes de un elemento en un valor de 64 bits. element es su
+     * posición dentro de data, empezando por cero. El buffer debe contener
+     * el elemento completo; aquí no se interpreta su signo ni su formato.
      */
     static uint64_t read(const ByteBuffer &data, std::size_t element,
                          uint16_t bits, ByteOrder byte_order);
     /**
-     * Escribe los bits bajos del valor en un elemento ya reservado. Conserva
-     * los bytes ajenos al elemento y no adquiere propiedad del buffer.
+     * Guarda value en la posición element de data. Si sobran bits altos,
+     * se descartan. El espacio debe existir y los demás bytes se conservan.
      */
     static void write(ByteBuffer &data, std::size_t element, uint16_t bits,
                       uint64_t value, ByteOrder byte_order);
     /**
-     * Normaliza una fuente .vx capturada por CPU: trunca si XLEN >= SEW y
-     * extiende el signo si XLEN < SEW. XLEN es 32/64; SEW debe ser válido.
-     * El resultado se conserva en el comando durante todos los reintentos.
+     * Adapta un valor escalar al tamaño del elemento vectorial: conserva
+     * los bits bajos si sobra anchura y repite el signo si falta. xlen es
+     * el ancho del registro CPU (32 o 64 bits). Se hace una vez al crear
+     * el comando, para reutilizar el mismo valor si hay que reintentarlo.
      */
     static uint64_t normalizeScalar(uint64_t value, unsigned xlen,
                                     uint16_t element_bits);

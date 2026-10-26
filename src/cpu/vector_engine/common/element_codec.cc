@@ -52,6 +52,8 @@ uint64_t
 ElementCodec::mask(uint16_t bits)
 {
     panic_if(!validWidth(bits), "Invalid element mask width");
+    // Partir de 64 unos permite obtener también la máscara de 64 bits:
+    // en ese caso el desplazamiento es cero.
     return std::numeric_limits<uint64_t>::max() >> (64 - bits);
 }
 
@@ -64,11 +66,15 @@ ElementCodec::read(const ByteBuffer &data, std::size_t element, uint16_t bits,
         (byte_order != ByteOrder::little && byte_order != ByteOrder::big) ||
             data.size() < size || element > (data.size() - size) / size,
         "Invalid element byte order or buffer range");
+    // element cuenta elementos dentro del buffer; offset cuenta bytes.
     const auto offset = element * size;
     uint64_t value = 0;
     for (unsigned byte = 0; byte < size; ++byte) {
-        const unsigned shift =
-            8 * (byte_order == ByteOrder::little ? byte : size - 1 - byte);
+        // El orden del objetivo decide qué byte contiene los bits bajos.
+        unsigned shift = 8 * byte;
+        if (byte_order == ByteOrder::big) {
+            shift = 8 * (size - 1 - byte);
+        }
         value |= uint64_t{data[offset + byte]} << shift;
     }
     return value;
@@ -85,8 +91,11 @@ ElementCodec::write(ByteBuffer &data, std::size_t element, uint16_t bits,
         "Invalid element byte order or buffer range");
     const auto offset = element * size;
     for (unsigned byte = 0; byte < size; ++byte) {
-        const unsigned shift =
-            8 * (byte_order == ByteOrder::little ? byte : size - 1 - byte);
+        // Usar el mismo orden que read permite recuperar el valor escrito.
+        unsigned shift = 8 * byte;
+        if (byte_order == ByteOrder::big) {
+            shift = 8 * (size - 1 - byte);
+        }
         data[offset + byte] = static_cast<uint8_t>(value >> shift);
     }
 }
@@ -96,10 +105,13 @@ ElementCodec::normalizeScalar(uint64_t value, unsigned xlen,
                               uint16_t element_bits)
 {
     panic_if(xlen != 32 && xlen != 64, "Invalid scalar register width");
+    // Primero conservar sólo los bits que existen en el registro CPU.
     value &= mask(xlen);
+    // Si el elemento es mayor, repetir el bit de signo en los bits nuevos.
     if (xlen < element_bits && (value & (uint64_t{1} << (xlen - 1)))) {
         value |= ~mask(xlen);
     }
+    // El comando guarda únicamente los bits que usará cada elemento.
     return value & mask(element_bits);
 }
 

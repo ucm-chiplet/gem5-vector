@@ -49,8 +49,8 @@ struct ArithmeticTask
     VectorConfig config;
     ArithmeticCommand arithmetic;
     ByteRange destinationRange;
-    // FP rounding captured by the producer and propagated unchanged.
-    // Preparing this field does not enable CPU FP offload.
+    // Redondeo ya elegido por quien crea la tarea; se conserva hasta calcular.
+    // Este campo no habilita por sí solo las instrucciones FP desde CPU.
     std::optional<FpExecutionContext> fpContext = std::nullopt;
 };
 

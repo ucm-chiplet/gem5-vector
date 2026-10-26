@@ -172,7 +172,8 @@ AraVLSU::prepareElement()
                  mapping.front().originalRange != request.dataRange,
              "A VLSU element must belong to one VRF word");
     element.laneId = mapping.front().laneId;
-    // The block has no physical lane; this element has one mapped owner.
+    // Guardar la ubicación aquí: pertenece a este elemento, no a la forma
+    // general de una petición que en el futuro podría agrupar varios.
     // La lectura del store y la escritura de la carga usan la misma forma
     // de acceso, pero cada elemento obtiene un accessId nuevo.
     element.vrfAccess = VrfAccess{
@@ -180,9 +181,13 @@ AraVLSU::prepareElement()
                      VrfRequester{VrfRequesterKind::Vlsu, std::nullopt},
                      state.nextAccessId++},
         request.registerRef, request.dataRange, request.byteEnable};
-    state.phase = request.direction == MemoryDirection::Load
-                      ? Phase::SendMemory
-                      : Phase::SendRead;
+    // Una carga empieza en memoria; un store debe leer antes sus bytes del
+    // VRF.
+    if (request.direction == MemoryDirection::Load) {
+        state.phase = Phase::SendMemory;
+    } else {
+        state.phase = Phase::SendRead;
+    }
 }
 
 bool

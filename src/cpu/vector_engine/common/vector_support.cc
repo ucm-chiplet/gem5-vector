@@ -119,12 +119,17 @@ VectorSupport::inTargetProfile(uint16_t sew_bits, VectorLmul lmul,
         return false;
     }
     const int exponent = static_cast<int>(lmul);
-    return exponent >= 0 || sew_bits <= (elen_bits >> -exponent);
+    if (exponent >= 0) {
+        return true;
+    }
+    // Con un grupo fraccional, reducir también el máximo ancho admitido.
+    return sew_bits <= (elen_bits >> -exponent);
 }
 
 std::optional<RejectionReason>
 VectorSupport::checkStructure(const VectorCommand &command)
 {
+    // Sin identidad o configuración coherente no podemos seguir el comando.
     if (!command.command.valid()) {
         return RejectionReason::InvalidIdentity;
     }
@@ -139,15 +144,19 @@ VectorSupport::checkStructure(const VectorCommand &command)
         command.requestorId == Request::invldRequestorId) {
         return RejectionReason::InvalidPayload;
     }
-    const unsigned expected_regs =
-        config.lmul > VectorLmul::M1 ? 1U << static_cast<int>(config.lmul) : 1;
+    // Un grupo fraccional sigue usando un nombre de registro. Los grupos
+    // mayores que m1 ocupan 2, 4 u 8 registros consecutivos.
+    unsigned expected_regs = 1;
+    if (config.lmul > VectorLmul::M1) {
+        expected_regs = 1U << static_cast<int>(config.lmul);
+    }
     const auto check_reg = [&](const VectorRegRef &reg) {
         return reg.naturallyAligned() && reg.regCount == expected_regs;
     };
     if (const auto *arithmetic =
             std::get_if<ArithmeticCommand>(&command.payload)) {
-        // Unsupported width relations have different group rules. Do not
-        // misdiagnose them using the current same-width group's size.
+        // Las operaciones con anchos distintos tendrían otras reglas de
+        // grupos. Rechazarlas antes de aplicar las del perfil actual.
         if (arithmetic->widthMode != ElementWidthMode::SameWidth ||
             arithmetic->signedness != ElementSignedness::NotApplicable) {
             return RejectionReason::UnsupportedOperation;
@@ -167,6 +176,8 @@ VectorSupport::checkStructure(const VectorCommand &command)
         }
     } else {
         const auto &memory = std::get<MemoryCommand>(command.payload);
+        // Primero revisar que los campos tienen sentido; después comprobar
+        // que pertenecen al perfil de memoria que sabemos ejecutar.
         if (!operationTraits(memory.direction) ||
             memory.addressing.valueless_by_exception() ||
             !ElementCodec::validWidth(memory.elementWidthBits) ||
@@ -192,6 +203,7 @@ VectorSupport::maxElements(uint32_t vlen_bytes, VectorLmul lmul,
              "Invalid vector configuration for VLMAX");
     const int exponent = static_cast<int>(lmul);
     const uint64_t vlen_bits = uint64_t{vlen_bytes} * 8;
+    // LMUL amplía o reduce el espacio disponible antes de contar elementos.
     if (exponent >= 0) {
         return (vlen_bits << exponent) / sew_bits;
     }
@@ -203,6 +215,8 @@ VectorSupport::checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
                             const std::vector<VectorLmul> &supported_lmuls,
                             uint16_t elen_bits)
 {
+    // Mantener el orden: datos coherentes, espacio en registros y soporte.
+    // Así el motivo de rechazo no depende de la ocupación de la cola.
     if (const auto reason = checkStructure(command)) {
         return reason;
     }
@@ -221,7 +235,7 @@ VectorSupport::checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
     if (const auto *arithmetic =
             std::get_if<ArithmeticCommand>(&command.payload)) {
         const auto *traits = operationTraits(arithmetic->operation);
-        // The FP messages are prepared, but phase 6 owns CPU FP activation.
+        // Tener campos para redondeo y flags no habilita todavía FP desde CPU.
         if (!traits || !traits->cpuOffload ||
             !supportsExecution(*arithmetic, config.sewBits,
                                command.fpContext)) {

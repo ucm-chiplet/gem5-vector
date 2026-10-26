@@ -194,7 +194,8 @@ struct VectorCommand
     VectorConfig config;
     VectorCommandPayload payload;
     RequestorID requestorId = Request::invldRequestorId;
-    // Contract prepared for phase 6; CPU FP offload remains disabled.
+    // Redondeo que usaría un comando FP. Preparar este campo no permite
+    // enviar todavía instrucciones FP desde CPU: se habilitarán en fase 6.
     std::optional<FpExecutionContext> fpContext;
 };
 

@@ -44,20 +44,22 @@ struct WordLocation
     uint64_t row;
 };
 
-/** Pure placement policy. It does not interpret SEW or architectural state. */
+/** Decide dónde guardar una palabra, sin cambiar el contenido del vector. */
 class MappingPolicy
 {
   public:
     virtual ~MappingPolicy() = default;
-    /** Mapea un índice global de palabra sobre geometría validada e inmutable.
+    /** Devuelve lane, banco y fila de una palabra. La geometría ya está
+     * validada y no cambia durante la simulación.
      */
     virtual WordLocation locate(uint64_t word,
                                 const VrfGeometry &geometry) const = 0;
-    /** Filas reservadas por banco, incluidas posiciones finales sin mapeo. */
+    /** Filas necesarias por banco, incluida una última fila sin llenar. */
     virtual uint64_t rowsPerBank(const VrfGeometry &geometry) const = 0;
 };
 
-/** Crea una política propiedad del mapper; falla para modelos inexistentes. */
+/** Crea la política elegida para el mapper; rechaza opciones no disponibles.
+ */
 std::unique_ptr<const MappingPolicy> makeMappingPolicy(MappingPolicyKind kind);
 
 } // namespace gem5::vector_engine

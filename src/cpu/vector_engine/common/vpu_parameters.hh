@@ -39,13 +39,14 @@
 namespace gem5::vector_engine
 {
 
-/** Selección de construcción; sólo existe el reparto actual por palabras. */
+/** Forma de repartir palabras entre lanes y bancos al construir la VPU. */
 enum class MappingPolicyKind : uint8_t
 {
     WordStriped
 };
 
-/** Bytes por bundle, bundles pendientes y ciclos de latencia/iniciación. */
+/** Tamaño del trabajo que recibe una ALU/FPU, capacidad y tiempos en ciclos.
+ */
 struct ExecutionParameters
 {
     uint32_t widthBytes = 0;
@@ -53,7 +54,7 @@ struct ExecutionParameters
     Cycles latency{1};
     Cycles initiationInterval{1};
 
-    /** Reconoce el único perfil funcional implementado, sin temporizarlo. */
+    /** Comprueba si estos valores corresponden a la unidad actual. */
     bool
     currentProfile(uint32_t word_bytes) const
     {
@@ -63,8 +64,9 @@ struct ExecutionParameters
 };
 
 /**
- * Contextos y buffers por lane/fuente, con máximo de bytes por bundle.
- * El propietario resuelve los anchos antes de entregar esta vista a la lane.
+ * Espacio de una lane para tareas, operandos y resultados, y sus ALU/FPU.
+ * VectorEngine fija los tamaños antes de construir la lane; ésta sólo los
+ * consulta durante la ejecución.
  */
 struct LaneParameters
 {
@@ -76,7 +78,7 @@ struct LaneParameters
     ExecutionParameters alu;
     ExecutionParameters fpu;
 
-    /** Evita aceptar capacidades o particiones de FU todavía sin ejecución. */
+    /** Comprueba que la lane se puede construir con los recursos actuales. */
     bool
     currentProfile(uint32_t word_bytes) const
     {
@@ -87,7 +89,7 @@ struct LaneParameters
     }
 };
 
-/** Puertos por banco, accesos pendientes y ciclos; no describe el layout. */
+/** Cuántos accesos puede atender un banco y cuánto tarda en responder. */
 struct BankParameters
 {
     uint32_t readPorts = 0;
@@ -97,7 +99,7 @@ struct BankParameters
     Cycles latency{1};
     Cycles initiationInterval{1};
 
-    /** El modelo actual sólo sirve un acceso pendiente mediante un puerto RW.
+    /** Exige un acceso pendiente y un puerto compartido de lectura/escritura.
      */
     bool
     currentProfile() const
@@ -108,33 +110,35 @@ struct BankParameters
     }
 };
 
-/** Límite de bytes preparado para bloques; el recorrido activo es por
- * elemento. */
+/** Tamaño máximo de petición; hoy se envía un solo elemento cada vez. */
 struct VlsuParameters
 {
     uint32_t maxBlockBytes = 8;
     uint32_t activeBlocks = 1;
-    // Prepared contract only: true is rejected until phase 4.
+    // Agrupar elementos en una petición queda pendiente de la fase 4.
     bool blockRequests = false;
 };
 
-/** Ancho de dirección del objetivo y límite de paquetes físicos en vuelo. */
+/** Tamaño de dirección de la CPU y peticiones pendientes hacia memoria. */
 struct MemoryBackendParameters
 {
     unsigned addressBits = 64;
     uint32_t maxOutstandingPackets = 1;
 };
 
-/** Perfil de construcción sin red activa; tránsito excluye espera/servicio. */
+/** Límites de la futura red y tiempo de viaje una vez atendido el envío. */
 struct InterconnectParameters
 {
-    // No topology is implemented in phase 1.
+    // La fase 1 declara estos valores, pero todavía no construye una red.
     bool enabled = false;
     InterconnectCapabilities capabilities;
     Cycles transitLatency{1};
 };
 
-/** Immutable composition, owned by VectorEngine, outliving all consumers. */
+/**
+ * Configuración que VectorEngine conserva durante toda la simulación.
+ * Cada módulo recibe su parte por referencia y no la modifica.
+ */
 struct VpuParameters
 {
     VrfGeometry vrf;

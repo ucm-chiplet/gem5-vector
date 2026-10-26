@@ -61,7 +61,8 @@ struct VectorCompletion
     std::optional<ScalarResult> scalarResult;
     uint32_t finalVstart = 0;
     std::optional<FaultInfo> fault;
-    // OR of executed elements, applied by CPU retirement, never callbacks.
+    // Reúne los indicadores FP de los elementos ejecutados. Minor los aplica
+    // al retirar la instrucción, después de recibir esta notificación.
     FpExceptionFlags fpFlags = 0;
 };
 

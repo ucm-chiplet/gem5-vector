@@ -172,8 +172,12 @@ Fpu::execute()
             // RISC-V usa el NaN canónico binary16, incluido el generado
             // por operaciones inválidas. SoftFloat conserva sus flags.
             const bool nan = (value & 0x7c00) == 0x7c00 && (value & 0x03ff);
+            auto result_bits = value;
+            if (nan) {
+                result_bits = 0x7e00;
+            }
             ElementCodec::write(active->result.values, i, bundle.sewBits,
-                                nan ? 0x7e00 : value, bundle.byteOrder);
+                                result_bits, bundle.byteOrder);
         }
         active->result.fpFlags =
             static_cast<FpExceptionFlags>(softfloat_exceptionFlags);

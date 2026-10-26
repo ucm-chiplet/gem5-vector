@@ -101,17 +101,19 @@ class VectorEngine(ClockedObject):
 
     @classmethod
     def from_configuration(cls, configuration, **kwargs):
-        """Construye desde una composición tipada y argumentos gem5 adicionales.
+        """Crea la VPU a partir de una VpuConfiguration.
 
-        Rechaza ajustes duplicados para que cada valor tenga un único origen.
-        La validación de geometría y recursos pertenece al constructor C++;
-        este adaptador no conecta puertos ni inicia trabajo.
+        kwargs permite añadir argumentos gem5, como el dominio de reloj.
+        Un parámetro no puede aparecer también en configuration: sería
+        ambiguo qué valor usar. El constructor C++ comprueba los tamaños y
+        recursos; los puertos se conectan después en el script de simulación.
         """
         from m5.objects.configuration import VpuConfiguration
 
         if not isinstance(configuration, VpuConfiguration):
             raise TypeError("Expected a VpuConfiguration")
         values = configuration.parameters()
+        # Cada ajuste debe venir de una sola fuente, sin sobrescribir valores.
         duplicates = values.keys() & kwargs.keys()
         if duplicates:
             raise ValueError(f"Duplicate VPU settings: {sorted(duplicates)}")

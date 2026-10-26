@@ -41,42 +41,48 @@ class InterconnectReceiver
 {
   public:
     virtual ~InterconnectReceiver() = default;
-    // No effects on false. On true reserve key/bytes until delivery.
+    // Devuelve true si guarda espacio para estos bytes hasta su entrega.
+    // Si devuelve false, no debe dejar ninguna reserva hecha.
     virtual bool reserveReception(TransferKey key, uint32_t bytes) = 0;
-    // Infallible once reserved. Receiver owns data after this callback.
+    // Una entrega ya reservada debe poder recibirse sin rechazarla. Desde
+    // esta llamada el receptor se encarga de conservar y procesar los datos.
     virtual void receive(const InterconnectPacket &packet) = 0;
 };
 
-/** Topology-independent contract; no active implementation in phase 1.
- * Accepted copies the packet and reserves destination reception. Retry has
- * no effects; the producer keeps the packet and retries next clock cycle.
- * The owner allocates transferId across all sources of a TaskKey.
- * Delivery consumes reserved reception exactly once. It is not a VRF ack.
- * No partial delivery or forwarding between commands is implied.
+/**
+ * Interfaz común para enviar datos entre lanes, sea cual sea la red elegida.
+ * En la fase 1 sólo se define la interfaz. Al aceptar un paquete, la futura
+ * red copia sus datos y reserva espacio en el destino. Si pide reintentar,
+ * el emisor conserva el paquete para el siguiente ciclo y no queda reserva.
+ * El propietario asigna transferId entre todos los emisores de una tarea.
+ * Cada paquete se entrega entero una vez; su entrega aún no confirma que
+ * el VRF se haya escrito ni habilita pasar resultados entre comandos.
  */
 class VectorInterconnect
 {
   public:
-    // tick is an absolute simulation tick; payloadBytes counts useful data.
+    // Registra el instante absoluto de simulación y el número de bytes útiles.
     using Observer = std::function<void(TransportObservation, TransferKey,
                                         Tick, LaneId, LaneId, uint32_t)>;
     virtual ~VectorInterconnect() = default;
-    /** Vista inmutable válida durante la vida del transporte. */
+    /** Devuelve los límites de la red, válidos mientras ésta exista. */
     virtual const InterconnectCapabilities &capabilities() const = 0;
-    // Bind before traffic. Receiver must outlive the drained transport.
+    // Conectar antes de enviar. El receptor debe existir hasta que la red
+    // haya terminado de entregar todo su trabajo pendiente.
     virtual void bindReceiver(LaneId destination,
                               InterconnectReceiver &receiver) = 0;
-    /** Conecta observación antes del tráfico, sin alterar servicio o
-     * propiedad. */
+    /** Instala quien registra los envíos antes de que empiece el tráfico. */
     virtual void setObserver(Observer observer) = 0;
     /**
-     * Intenta admitir un paquete válido y reservar recepción de forma
-     * indivisible: Accepted copia datos; Retry no deja reservas parciales.
+     * Intenta enviar un paquete válido. Accepted significa que se copiaron
+     * los datos y se reservó su recepción; Retry permite volver a intentarlo
+     * sin tener que deshacer reservas parciales.
      */
     virtual TransferResult send(const InterconnectPacket &packet) = 0;
-    // Owner closes new commands. Sends of admitted tasks must still progress.
+    // El propietario deja de admitir comandos nuevos. Los envíos de tareas
+    // que ya estaban admitidas deben poder continuar hasta terminar.
     virtual void beginDrain() = 0;
-    // Includes reception reservations, queued/transit data and events.
+    // Sólo está libre cuando no quedan reservas, datos ni eventos pendientes.
     virtual bool isIdle() const = 0;
 };
 

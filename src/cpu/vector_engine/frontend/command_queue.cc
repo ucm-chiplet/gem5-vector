@@ -116,9 +116,10 @@ CommandQueue::requestGrant(const VectorCommand &command)
     panic_if(!result.second, "Duplicate reservation ID");
 
     ++state.nextReservationId;
-    const auto count = command.config.vl > command.config.vstart
-                           ? command.config.vl - command.config.vstart
-                           : 0;
+    uint64_t count = 0;
+    if (command.config.vl > command.config.vstart) {
+        count = command.config.vl - command.config.vstart;
+    }
     stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
                                               command.config.sewBits));
 

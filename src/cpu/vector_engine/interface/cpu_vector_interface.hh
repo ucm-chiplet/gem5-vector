@@ -168,17 +168,18 @@ class CpuVectorInterface : public VpuCommandEndpoint,
     CommandKey allocateCommandKey(ContextID contextId);
 
   private:
-    /** Protocolo de callbacks, independiente de ejecución y retirada CPU. */
+    /** Pasos que debe seguir cada comando al cruzar la interfaz. */
     enum class Phase
     {
-        Reserved,
-        Dispatched,
-        Accepted,
-        Completed
+        Reserved,   // Hay espacio reservado, pero el comando no se ha enviado.
+        Dispatched, // Enviado; la VPU aún debe confirmar su aceptación.
+        Accepted,   // Está en la cola; todavía puede no haber empezado.
+        Completed   // La CPU está recibiendo la respuesta final.
     };
     /**
-     * Copia inmutable de la reserva para cotejar dispatch y su respuesta.
-     * Vive desde Granted hasta retornar completed; no es una entrada ROB.
+     * Guarda lo que se reservó para comprobar que se envía y termina el mismo
+     * comando. Se crea al obtener espacio y se borra tras notificar el final.
+     * La retirada de la instrucción CPU se sigue controlando en Minor.
      */
     struct CommandState
     {

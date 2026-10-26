@@ -36,18 +36,21 @@ namespace gem5::vector_engine
 namespace
 {
 
-/** Conserva el layout anterior: primero lanes, después bancos y filas. */
+/** Reparte palabras entre lanes y, dentro de cada lane, entre sus bancos. */
 class WordStripedMapping : public MappingPolicy
 {
   public:
     WordLocation
     locate(uint64_t word, const VrfGeometry &geometry) const override
     {
-        // Quitar el reparto entre lanes antes de elegir banco y fila local.
+        // Las palabras consecutivas van rotando por las lanes.
+        const auto lane = static_cast<LaneId>(word % geometry.numLanes);
+        // Después numerarlas dentro de su lane para elegir banco y fila.
         const auto local_word = word / geometry.numLanes;
-        return {static_cast<LaneId>(word % geometry.numLanes),
-                static_cast<BankId>(local_word % geometry.banksPerLane),
-                local_word / geometry.banksPerLane};
+        const auto bank =
+            static_cast<BankId>(local_word % geometry.banksPerLane);
+        const auto row = local_word / geometry.banksPerLane;
+        return {lane, bank, row};
     }
 
     uint64_t
@@ -57,8 +60,12 @@ class WordStripedMapping : public MappingPolicy
             uint64_t{NumArchitecturalVectorRegs} * geometry.vlenBytes /
             geometry.laneWordBytes / geometry.numLanes;
         const auto banks = geometry.banksPerLane;
-        // División con techo sin sumar banks - 1, para evitar desbordamientos.
-        return words_per_lane / banks + (words_per_lane % banks != 0);
+        // Si el reparto deja una palabra suelta, hace falta una fila más.
+        auto rows = words_per_lane / banks;
+        if (words_per_lane % banks != 0) {
+            ++rows;
+        }
+        return rows;
     }
 };
 

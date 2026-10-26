@@ -43,7 +43,7 @@ struct VectorCommand;
 // matriz objetivo SEW x LMUL ni una lista de rutas de decode comprobadas.
 inline constexpr std::array<uint16_t, 2> IntegerElementWidths{16, 32};
 
-/** Recurso funcional que consume la operación ya decodificada por CPU. */
+/** Indica qué tipo de unidad se encarga de una operación enviada por CPU. */
 enum class ExecutionClass : uint8_t
 {
     IntegerAlu,
@@ -52,9 +52,10 @@ enum class ExecutionClass : uint8_t
 };
 
 /**
- * Metadatos compartidos del soporte implementado, sin capacidad temporal.
- * cpuOffload significa admisible en la frontera, no que Minor traduzca ya
- * todas las formas/anchos. Las entradas widths con cero no son formatos.
+ * Ficha de lo que sabe hacer cada operación: unidad, tamaños y fuentes.
+ * cpuOffload permite admitir el comando desde CPU; no garantiza que Minor
+ * sepa construir todas sus variantes. Un cero en widths deja una posición
+ * sin usar. La ficha no indica si la unidad está libre en este momento.
  */
 struct OperationTraits
 {
@@ -67,21 +68,22 @@ struct OperationTraits
     bool mayMemoryFault;
     bool cpuOffload;
 
-    /** Consulta anchos efectivos de esta operación; nunca acepta cero. */
+    /** Indica si esta operación admite elementos de ese número de bits. */
     bool supportsWidth(uint16_t bits) const;
 };
 
-/** Devuelve metadatos estáticos inmutables, o nullptr para una operación
- * ajena. */
+/** Busca la ficha de cálculo; devuelve nullptr si no conoce la operación.
+ * La ficha es compartida y permanece válida durante toda la simulación. */
 const OperationTraits *operationTraits(ArithmeticOperation operation);
-/** Cargas y stores comparten transporte; otras direcciones devuelven nullptr.
+/** Busca la ficha de carga/store; devuelve nullptr para otras direcciones.
  */
 const OperationTraits *operationTraits(MemoryDirection direction);
 
 /**
- * Deriva roles y EEW/EMUL del perfil de igual ancho ya validado. El caller
- * recibe su propia colección; no conserva referencias a buffers temporales
- * ni decodifica opcodes. Los stores aportan una fuente, no un destino.
+ * Enumera qué lee y qué escribe un comando ya validado. Incluye el ancho
+ * de cada elemento (EEW) y el tamaño de su grupo de registros (EMUL).
+ * La lista se construye a partir del comando y pertenece a quien la pide;
+ * no se mantiene una segunda copia que haya que actualizar por separado.
  */
 std::vector<OperandDescriptor> describeOperands(const VectorCommand &command);
 

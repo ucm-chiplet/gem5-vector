@@ -101,8 +101,10 @@ AraLane::validateTask(const LaneTask &task) const
              "Lane byte ranges do not match their elements");
 
     const ByteEnable byte_enable(expected.size, 1);
-    const unsigned expected_regs =
-        task.lmul > VectorLmul::M1 ? 1U << static_cast<int>(task.lmul) : 1;
+    unsigned expected_regs = 1;
+    if (task.lmul > VectorLmul::M1) {
+        expected_regs = 1U << static_cast<int>(task.lmul);
+    }
     const auto check_register = [&](const VectorRegRef &reg) {
         panic_if(!reg.naturallyAligned() || reg.regCount != expected_regs,
                  "Invalid architectural group in a lane fragment");
@@ -175,6 +177,7 @@ AraLane::acceptTask(const LaneTask &task)
             task.key, AccessRole::Rhs};
     } else {
         const auto scalar = std::get<RegVal>(task.arithmetic.secondOperand);
+        // En .vx, todos los elementos usan el mismo escalar ya leído en CPU.
         for (uint32_t i = 0; i < task.elements.elementCount; ++i) {
             ElementCodec::write(state.bundle.rhs, i, task.sewBits, scalar,
                                 targetByteOrder);
@@ -220,9 +223,12 @@ AraLane::sendAccess(AccessRole role)
     // Copiar el mensaje permite que el callback retire la entrada original.
     const auto request = slot->request;
     slot->phase = AccessPhase::Waiting;
-    const auto result = role == AccessRole::Destination
-                            ? sendWrite(std::get<VrfWriteRequest>(request))
-                            : sendRead(std::get<VrfReadRequest>(request));
+    TransferResult result;
+    if (role == AccessRole::Destination) {
+        result = sendWrite(std::get<VrfWriteRequest>(request));
+    } else {
+        result = sendRead(std::get<VrfReadRequest>(request));
+    }
     switch (result) {
         case TransferResult::Accepted:
             if (role == AccessRole::Destination) {
@@ -266,9 +272,13 @@ AraLane::evaluate()
             break;
         case Phase::Execute: {
             state.phase = Phase::WaitExecution;
-            const auto result = state.task.fpContext
-                                    ? fpu.acceptBundle(state.bundle)
-                                    : alu.acceptBundle(state.bundle);
+            // El contexto FP identifica el cálculo que necesita redondeo.
+            TransferResult result;
+            if (state.task.fpContext) {
+                result = fpu.acceptBundle(state.bundle);
+            } else {
+                result = alu.acceptBundle(state.bundle);
+            }
             switch (result) {
                 case TransferResult::Accepted:
                     break;
@@ -316,11 +326,17 @@ AraLane::recvVrfReadResponse(const ReadResponse &response)
                      slot->role != static_cast<AccessRole>(i) ||
                      response.data.size() != request->access.range.size,
                  "Lane VRF read response has wrong phase, owner or size");
-        auto &values = i == 0 ? state.bundle.lhs : state.bundle.rhs;
-        auto &ready = i == 0 ? state.lhsReady : state.rhsReady;
-        panic_if(ready, "Lane operand was already received");
-        values = response.data;
-        ready = true;
+        // La clave ya identifica la lectura; guardar sus bytes en la fuente
+        // correspondiente. Las dos fuentes pueden llegar en cualquier orden.
+        if (i == 0) {
+            panic_if(state.lhsReady, "Lane operand was already received");
+            state.bundle.lhs = response.data;
+            state.lhsReady = true;
+        } else {
+            panic_if(state.rhsReady, "Lane operand was already received");
+            state.bundle.rhs = response.data;
+            state.rhsReady = true;
+        }
         slot.reset();
         wakeup();
         return;
@@ -346,6 +362,8 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
                  state.pending[0] || state.pending[1] || state.pending[2] ||
                  !state.lhsReady || !state.rhsReady,
              "Lane execution result does not match its pending fragment");
+    // Recibir el cálculo no termina la tarea: falta escribirlo en el VRF
+    // y esperar a que éste confirme que aplicó los bytes.
     state.result = result;
     state.pending[2] = PendingVrfAccess{
         VrfWriteRequest{

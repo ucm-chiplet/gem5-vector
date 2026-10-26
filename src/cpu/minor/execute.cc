@@ -120,7 +120,7 @@ Execute::captureVectorConfig(ThreadContext *thread) const
 
     config.tailAgnostic = (vtype >> 6) & 1;
     config.maskAgnostic = (vtype >> 7) & 1;
-    // Use gem5's VTYPE representation, also for RV32 guests.
+    // Leer vill desde la representación de gem5, también para una CPU RV32.
     config.illegalVtype = pc.vtype().vill;
     return config;
 }
@@ -184,23 +184,32 @@ Execute::buildVectorCommand(MinorVectorState &state,
                 );
         }
 
+        // Adaptar el escalar una sola vez. Si el envío debe esperar, el
+        // comando conserva este valor y no vuelve a leer el registro CPU.
         if (auto *value = std::get_if<RegVal>(&arithmetic.secondOperand);
             value &&
             vector_engine::ElementCodec::validWidth(command.config.sewBits)) {
             auto *isa = dynamic_cast<RiscvISA::ISA *>(thread->getIsaPtr());
             panic_if(!isa, "RVV scalar normalization requires RISC-V ISA");
+            unsigned xlen = 64;
+            if (isa->rvType() == RiscvISA::RV32) {
+                xlen = 32;
+            }
             *value = vector_engine::ElementCodec::normalizeScalar(
-                *value, isa->rvType() == RiscvISA::RV32 ? 32 : 64,
-                command.config.sewBits);
+                *value, xlen, command.config.sewBits);
         }
         const auto *traits =
             vector_engine::operationTraits(arithmetic.operation);
         if (traits && traits->requiresFpContext) {
             const auto frm =
                 thread->readMiscRegNoEffect(RiscvISA::MISCREG_FRM);
-            command.fpContext = vector_engine::FpExecutionContext{
-                frm <= 4 ? static_cast<vector_engine::FpRoundingMode>(frm)
-                         : vector_engine::FpRoundingMode::Invalid};
+            // Conservar también un modo inválido para que la validación
+            // rechace el comando; no sustituirlo por un redondeo por defecto.
+            auto rounding = vector_engine::FpRoundingMode::Invalid;
+            if (frm <= 4) {
+                rounding = static_cast<vector_engine::FpRoundingMode>(frm);
+            }
+            command.fpContext = vector_engine::FpExecutionContext{rounding};
         }
         command.payload = arithmetic;
 
@@ -1335,6 +1344,8 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                  */
                 break;
             case MinorVectorPhase::Completed:
+                // Acumular las excepciones FP al retirar, cuando el resultado
+                // ya puede hacerse visible en el estado de la CPU.
                 if (vec_state->completion->fpFlags) {
                     const auto flags = thread->readMiscReg(
                         RiscvISA::MISCREG_FFLAGS);

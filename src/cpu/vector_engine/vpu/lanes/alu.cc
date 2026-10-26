@@ -73,6 +73,8 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
         elements32 += bundle.elements.elementCount;
     }
     stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
+    // Reservar tantos bytes de resultado como ocupan los elementos recibidos.
+    // Conservar identidad y destino para que la lane pueda escribirlos luego.
     active->result = ExecutionResult{bundle.key,
                                      bundle.sewBits,
                                      bundle.elements,
@@ -91,6 +93,8 @@ Alu::execute()
 {
     panic_if(!active, "ALU evaluation without an accepted bundle");
     const auto &bundle = active->bundle;
+    // Interpretar cada par de elementos usando el orden de bytes del objetivo.
+    // write conserva sólo los bits del ancho elegido si la suma lo supera.
     for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
         const auto lhs = ElementCodec::read(bundle.lhs, i, bundle.sewBits,
                                             bundle.byteOrder);
