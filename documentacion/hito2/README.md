@@ -6,9 +6,13 @@ independientes a la vez, con enteros de 8/16/32/64 bits y coma flotante de
 unidades de cálculo y red para explicar sus esperas y límites de servicio.
 
 Este hito es un diseño propuesto, organizado en ocho fases de trabajo.
+La [entrega de contratos de fase 1](<Fase 1 - Contratos y capacidades.md>)
+documenta su implementación y límites. El resto del diseño conserva su
+estado de propuesta; los contratos preparados no habilitan sus operaciones.
 El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
-para repetirlo. Los cambios aquí descritos son documentales y no implementan
-los módulos ni la microarquitectura del hito 2.
+para repetirlo. El diseño y el diagrama describen la organización objetivo;
+la entrega de fase 1 distingue los contratos implementados de los recursos
+y operaciones pendientes.
 
 Su papel dentro de VAMPIRE es aportar recursos finitos y observabilidad
 para el estudio posterior de entrega de datos, RVV+IME y CMOS 2.0. Consulta

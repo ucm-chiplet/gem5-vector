@@ -49,6 +49,10 @@ from m5.objects import (
     VectorEngine,
     VoltageDomain,
 )
+from m5.objects.configuration import (
+    VpuConfiguration,
+    VrfConfiguration,
+)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--no-offload", action="store_true")
@@ -77,14 +81,8 @@ system.memory = SimpleMemory(range=system.mem_ranges[0])
 system.memory.port = system.membus.mem_side_ports
 
 if not args.no_offload:
-    system.cpu.vectorEngine = VectorEngine(
-        vlen_bytes=32,
-        lane_word_bytes=8,
-        num_lanes=2,
-        banks_per_lane=2,
-        supported_lmuls=[0],
-        address_bits=64,
-        target_byte_order="little",
+    system.cpu.vectorEngine = VectorEngine.from_configuration(
+        VpuConfiguration(vrf=VrfConfiguration(vlen_bytes=32))
     )
     system.cpu.vectorEngine.mem_side = system.membus.cpu_side_ports
 

@@ -67,6 +67,22 @@ deben cumplirse además soporte implementado, habilitación, geometría,
 VLMAX, alineación de grupos y restricciones de la operación. El grupo
 fraccional sigue usando un registro contenedor; no crea nombres nuevos.
 
+| Capacidad | Estado al integrar esta fase |
+| --- | --- |
+| Suma entera backend, 16/32 bits, `.vv/.vx` | Conservada; transporte adaptado a bytes. |
+| Memoria backend, 16/32 bits, unit-stride, EEW=SEW | Conservada; una petición por elemento. |
+| CPU: repertorio de offload existente | Conservado; decode no se amplía. |
+| `FloatAdd` binary16 interno | Conservado; contexto explícito y flags internos. |
+| Offload FP desde CPU | Deshabilitado, incluso con los mensajes FP preparados. |
+| Enteros/memoria de 8/64 bits y matriz completa | Objetivo de fase 2, no habilitado por estos tipos. |
+| Predicación, widening, narrowing y resultados escalares | Fuera de ejecución activa. |
+| Concurrencia, bloques agrupados y crossbar | Pendientes de sus fases. |
+
+La configuración de ejemplo conserva VLEN=256 bits, ELEN=64, dos lanes,
+palabras de ocho bytes, dos bancos por lane y LMUL=m1. Es un punto de
+construcción, no una constante de la arquitectura final ni nueva evidencia
+funcional. No se han creado benchmarks para ampliar la matriz comprobada.
+
 Se conserva prestart y tail, también con `ta`, y se capturan `mu/ma` sin
 ejecutar predicación. Con `vstart >= vl` no se emiten tareas ni escrituras;
 el comando conserva aceptación y finalización únicas. Los solapamientos
@@ -148,6 +164,13 @@ No se instancia red ni se permite habilitarla en fase 1.
 
 ## Configuración y mapeo
 
+`configuration.py` ofrece descripciones Python inmutables por módulo.
+`VectorEngine.from_configuration` traduce la composición al ABI plano de
+parámetros generado por gem5; no permite sobrescribir el mismo valor por
+dos vías. La construcción C++ vuelve a validarla y entrega estructuras
+inmutables propias a lanes/FUs, bancos, VLSU y backend. Los módulos usan
+el reloj del único SimObject `VectorEngine`.
+
 Se conservan los parámetros planos anteriores como entrada compatible.
 Anchos de bundle/FU con valor cero se resuelven a la palabra de lane antes
 de construir. Entradas son cantidades de contextos/bundles, anchos son
@@ -183,5 +206,31 @@ and Tail Element Definitions*, *Vector Arithmetic Instruction encoding*,
 Encoding*, *Vector Unit-Stride Instructions* y *Vector Floating-Point
 Exception Flags*. Los tiempos y la política física son decisiones del
 modelo, no requisitos temporales RVV.
+
+La validación de esta entrega comprende revisión de fuentes, formato,
+sintaxis Python y compilación dirigida. No sustituye evidencia de ejecución
+funcional, medición temporal ni calibración externa. No se crean ni ejecutan
+pruebas o simulaciones en esta implementación.
+
+Comprobaciones realizadas:
+
+- `git diff --check`: correcto.
+- Black/isort para los tres archivos Python modificados o nuevos y
+  comprobación de formato de los 45 archivos C++ de la VPU: correctos.
+- Compilación de sintaxis de los seis archivos Python/SCons: correcta.
+- SCons con 21 objetivos explícitos bajo `build/RISCV/`: objetos de tipos
+  comunes, frontera, frontend, lanes/FUs, VRF, memoria, interconexión,
+  propietario, Python embebido y `minor/cpu.o` / `minor/execute.o`: correcto.
+  La caché de compilación se dirigió a `/tmp` por las restricciones del
+  entorno. SCons detecta GCC 15.2.1 y emite un aviso porque está fuera de su
+  rango declarado; esta comprobación no acredita soporte de ese compilador.
+  El rango del sequencer usa conversiones explícitas tras comprobar límites.
+
+No se enlazó el ejecutable completo ni se comprobó funcionalmente una carga.
+
+Recorridos sugeridos al equipo, todavía sin implementar: éxito, rechazo
+permanente con cola llena, `Retry` estable, respuesta síncrona, rango vacío,
+fault y drain con obligaciones pendientes. Las fases posteriores deberán
+registrar por separado su evidencia funcional y temporal.
 
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html

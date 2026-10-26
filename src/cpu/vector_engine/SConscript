@@ -27,5 +27,6 @@
 Import("*")
 
 SimObject("VectorEngine.py", sim_objects=["VectorEngine"])
+PySource("m5.objects", "configuration.py")
 Source("vector_engine.cc")
 Source("vpu/interconnect/vector_interconnect.cc")

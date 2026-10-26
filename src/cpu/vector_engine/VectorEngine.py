@@ -98,3 +98,21 @@ class VectorEngine(ClockedObject):
     target_byte_order = Param.ByteOrder("Target CPU byte order")
 
     mem_side = RequestPort("Vector memory timing requests and responses")
+
+    @classmethod
+    def from_configuration(cls, configuration, **kwargs):
+        """Construye desde una composición tipada y argumentos gem5 adicionales.
+
+        Rechaza ajustes duplicados para que cada valor tenga un único origen.
+        La validación de geometría y recursos pertenece al constructor C++;
+        este adaptador no conecta puertos ni inicia trabajo.
+        """
+        from m5.objects.configuration import VpuConfiguration
+
+        if not isinstance(configuration, VpuConfiguration):
+            raise TypeError("Expected a VpuConfiguration")
+        values = configuration.parameters()
+        duplicates = values.keys() & kwargs.keys()
+        if duplicates:
+            raise ValueError(f"Duplicate VPU settings: {sorted(duplicates)}")
+        return cls(**values, **kwargs)
