@@ -167,6 +167,11 @@ anchos de red/buffer con cero se resuelven a una palabra de lane. Estos
 límites se validan, pero no crean servicio ni tráfico mientras la red esté
 deshabilitada.
 
+`AddressMapper` delega lane/banco/fila a `MappingPolicy`. La única política
+disponible es `word_striped`, con el reparto anterior y layout independiente
+de SEW. Se mantienen elementos íntegros y geometría por palabras; no se
+implementan reshuffle, clústeres ni políticas alternativas.
+
 ## Referencia normativa y comprobaciones
 
 Autoridad: RVV 1.0, manual oficial **edición 20240411**:

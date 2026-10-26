@@ -31,6 +31,7 @@
 
 #include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/vrf_types.hh"
+#include "cpu/vector_engine/vpu/register_file/mapping_policy.hh"
 
 namespace gem5::vector_engine
 {
@@ -43,8 +44,8 @@ namespace gem5::vector_engine
 class AddressMapper
 {
   public:
-    AddressMapper(const VrfGeometry &geometry,
-                  statistics::Group &stats_parent);
+    AddressMapper(const VrfGeometry &geometry, statistics::Group &stats_parent,
+                  MappingPolicyKind policy = MappingPolicyKind::WordStriped);
     AddressMapper(VrfGeometry &&) = delete;
 
     const VrfGeometry &
@@ -64,6 +65,7 @@ class AddressMapper
     mutable ModuleStats stats;
     mutable statistics::Scalar fragments;
     const VrfGeometry &vrfGeometry;
+    const std::unique_ptr<const MappingPolicy> policy;
 };
 
 } // namespace gem5::vector_engine

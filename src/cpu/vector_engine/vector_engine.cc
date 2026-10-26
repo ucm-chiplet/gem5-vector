@@ -178,7 +178,7 @@ VectorEngine::VectorEngine(const Params &params)
       vpuParameters(makeConfiguration(params)),
       addressBits(params.address_bits),
       targetByteOrder(params.target_byte_order),
-      mapper(vpuParameters.vrf, *this),
+      mapper(vpuParameters.vrf, *this, vpuParameters.mapping),
       // Revisa si todos los módulos han terminado durante drain.
       drainEvent([this] { checkDrain(); }, name() + ".drain")
 {

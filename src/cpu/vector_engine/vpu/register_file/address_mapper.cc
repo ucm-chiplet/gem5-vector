@@ -37,11 +37,13 @@ namespace gem5::vector_engine
 {
 
 AddressMapper::AddressMapper(const VrfGeometry &geometry,
-                             statistics::Group &stats_parent)
+                             statistics::Group &stats_parent,
+                             MappingPolicyKind policy_kind)
     : stats(&stats_parent, "mapper", "software mapping calls"),
       fragments(&stats, "fragments", statistics::units::Count::get(),
                 "VRF word fragments returned by software mapping calls"),
-      vrfGeometry(geometry)
+      vrfGeometry(geometry),
+      policy(makeMappingPolicy(policy_kind))
 {
     fatal_if(!geometry.vlenBytes || !geometry.laneWordBytes ||
                  !geometry.numLanes || !geometry.banksPerLane,
@@ -59,13 +61,7 @@ AddressMapper::AddressMapper(const VrfGeometry &geometry,
 uint64_t
 AddressMapper::rowsPerBank() const
 {
-    // La geometría validada reparte un número entero de palabras por lane.
-    const uint64_t words_per_lane =
-        uint64_t{NumArchitecturalVectorRegs} * vrfGeometry.vlenBytes /
-        vrfGeometry.laneWordBytes / vrfGeometry.numLanes;
-    const auto banks = vrfGeometry.banksPerLane;
-    // Techo de la división sin sumar banks - 1 al numerador.
-    return words_per_lane / banks + (words_per_lane % banks != 0);
+    return policy->rowsPerBank(vrfGeometry);
 }
 
 VrfMapping
@@ -93,15 +89,15 @@ AddressMapper::map(const VectorRegRef &reg, const ByteRange &range,
         const uint32_t offset = range.offset + consumed;
         const uint64_t absolute_byte = base + offset;
         const uint64_t global_word = absolute_byte / geometry.laneWordBytes;
-        const uint64_t local_word = global_word / geometry.numLanes;
+        const auto location = policy->locate(global_word, geometry);
         const uint32_t word_offset = absolute_byte % geometry.laneWordBytes;
         const uint32_t size = std::min(range.size - consumed,
                                        geometry.laneWordBytes - word_offset);
 
         MappedVrfFragment fragment;
-        fragment.laneId = global_word % geometry.numLanes;
-        fragment.bankId = local_word % geometry.banksPerLane;
-        fragment.row = local_word / geometry.banksPerLane;
+        fragment.laneId = location.lane;
+        fragment.bankId = location.bank;
+        fragment.row = location.row;
         fragment.byteOffsetInWord = word_offset;
         fragment.originalRange = ByteRange{offset, size};
         fragment.wordByteEnable.assign(geometry.laneWordBytes, 0);
