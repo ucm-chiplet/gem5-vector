@@ -74,6 +74,7 @@ class VectorEngine : public ClockedObject,
     {
         ContextID contextId = InvalidContextID;
         uint32_t vlenBytes = 0;
+        uint16_t elenBits = 0;
         unsigned addressBits = 0;
         ByteOrder byteOrder = ByteOrder::Num_ByteOrder;
         VectorMemoryBackend::ContextResolver resolveContext;

@@ -42,8 +42,8 @@ class LaneRegisterFile
     };
 
     LaneRegisterFile(ClockedObject &owner, const AddressMapper &mapper,
-                     LaneId lane_id, ResponsePort lane_responses,
-                     ResponsePort vlsu_responses);
+                     const BankParameters &parameters, LaneId lane_id,
+                     ResponsePort lane_responses, ResponsePort vlsu_responses);
     ~LaneRegisterFile();
 
     LaneRegisterFile(const LaneRegisterFile &) = delete;
@@ -75,6 +75,7 @@ class LaneRegisterFile
     statistics::Scalar readBytes;
     statistics::Scalar writeBytes;
     const AddressMapper &mapper;
+    const BankParameters &parameters;
     const LaneId laneId;
     ResponsePort laneResponses;
     ResponsePort vlsuResponses;

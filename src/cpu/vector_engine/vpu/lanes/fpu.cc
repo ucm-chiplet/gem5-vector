@@ -77,7 +77,8 @@ static_assert(FpInvalid == softfloat_flag_invalid);
 } // anonymous namespace
 
 Fpu::Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
-         statistics::Group &stats_parent)
+         statistics::Group &stats_parent,
+         const ExecutionParameters &parameters)
     : stats(&stats_parent, "fpu", "floating-point bundles"),
       inexactBundles(&stats, "inexactBundles", statistics::units::Count::get(),
                      "Completed bundles reporting inexact"),
@@ -93,10 +94,14 @@ Fpu::Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
       invalidBundles(&stats, "invalidBundles", statistics::units::Count::get(),
                      "Completed bundles reporting invalid operation"),
       owner(owner),
+      parameters(parameters),
       sendResult(std::move(send_result)),
       executeEvent([this] { execute(); },
                    owner.name() + ".lane" + std::to_string(lane_id) + ".fpu")
 {
+    fatal_if(!parameters.widthBytes ||
+                 !parameters.currentProfile(parameters.widthBytes),
+             "Execution unit supports one functional bundle only");
     fatal_if(!sendResult, "FPU requires a result receiver");
 }
 
@@ -127,7 +132,7 @@ Fpu::acceptBundle(const ExecutionBundle &bundle)
                  offset + size > std::numeric_limits<uint32_t>::max() ||
                  bundle.destinationRange.offset != offset ||
                  bundle.destinationRange.size != size ||
-                 bundle.lhs.size() != size ||
+                 size > parameters.widthBytes || bundle.lhs.size() != size ||
                  bundle.rhs.size() != size ||
                  (bundle.byteOrder != ByteOrder::little &&
                   bundle.byteOrder != ByteOrder::big),
@@ -145,7 +150,7 @@ Fpu::acceptBundle(const ExecutionBundle &bundle)
                                      0,
                                      bundle.byteOrder,
                                      bundle.emul};
-    owner.schedule(executeEvent, owner.clockEdge(Cycles(1)));
+    owner.schedule(executeEvent, owner.clockEdge(parameters.latency));
     return TransferResult::Accepted;
 }
 

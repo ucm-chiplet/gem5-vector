@@ -13,9 +13,9 @@ namespace gem5::vector_engine
 {
 
 AraVLSU::AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
-                 unsigned address_bits, MemorySender send_memory,
-                 ReadSender send_read, WriteSender send_write,
-                 CompletionSender send_completion)
+                 const VlsuParameters &parameters, unsigned address_bits,
+                 MemorySender send_memory, ReadSender send_read,
+                 WriteSender send_write, CompletionSender send_completion)
     : stats(&owner, "vlsu", "memory tasks"),
       loadTasks(&stats, "loadTasks", statistics::units::Count::get(),
                 "Accepted vector load tasks"),
@@ -40,12 +40,16 @@ AraVLSU::AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
                       "Load writeback attempts rejected by local VRF"),
       owner(owner),
       mapper(mapper),
+      parameters(parameters),
       sendMemory(std::move(send_memory)),
       sendRead(std::move(send_read)),
       sendWrite(std::move(send_write)),
       sendCompletion(std::move(send_completion)),
       progressEvent([this] { evaluate(); }, owner.name() + ".vlsu")
 {
+    fatal_if(parameters.activeBlocks != 1 || parameters.blockRequests ||
+                 !parameters.maxBlockBytes,
+             "VLSU supports one active element; invalid block contract");
     fatal_if(address_bits != 32 && address_bits != 64,
              "VLSU requires a 32-bit or 64-bit target address width");
     addressMask = address_bits == 64 ? std::numeric_limits<Addr>::max()
@@ -76,6 +80,9 @@ AraVLSU::validateTask(const MemoryTask &task) const
              "Invalid memory task configuration or active elements");
     panic_if(!VectorSupport::supportsMemory(memory, config.sewBits),
              "Unsupported operation in an admitted memory task");
+    panic_if(VectorSupport::elementBytes(memory.elementWidthBits) >
+                 parameters.maxBlockBytes,
+             "Memory element exceeds the configured block byte limit");
     panic_if(task.requestorId == Request::invldRequestorId,
              "Memory task has no requestor identity");
 

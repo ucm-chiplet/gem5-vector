@@ -34,7 +34,8 @@ class VectorRegBank
     using WriteAckSender = std::function<void(const BankWriteAck &)>;
 
     VectorRegBank(ClockedObject &owner, const AddressMapper &mapper,
-                  LaneId lane_id, BankId bank_id, ReadSender send_read,
+                  const BankParameters &parameters, LaneId lane_id,
+                  BankId bank_id, ReadSender send_read,
                   WriteAckSender send_write_ack,
                   statistics::Group &stats_parent);
     ~VectorRegBank();
@@ -65,6 +66,7 @@ class VectorRegBank
     statistics::Scalar writeBytes;
     ClockedObject &owner;
     const VrfGeometry &geometry;
+    const BankParameters &parameters;
     const LaneId laneId;
     const uint64_t rowCount;
     ReadSender sendRead;

@@ -13,7 +13,8 @@ namespace gem5::vector_engine
 CommandQueue::CommandQueue(statistics::Group &stats_parent,
                            std::size_t queue_depth, uint32_t vlen_bytes,
                            const std::vector<VectorLmul> &supported_lmuls,
-                           CpuCompletionEndpoint &completion_endpoint)
+                           CpuCompletionEndpoint &completion_endpoint,
+                           uint16_t elen_bits)
     : stats(&stats_parent, "queue", "command reservations"),
       capacityStalls(&stats, "capacityStalls", statistics::units::Count::get(),
                      "Grant attempts stalled by full queue"),
@@ -23,6 +24,7 @@ CommandQueue::CommandQueue(statistics::Group &stats_parent,
                  "Reserved commands inserted into the FIFO"),
       queueDepth(queue_depth),
       vlenBytes(vlen_bytes),
+      elenBits(elen_bits),
       supportedLmuls(supported_lmuls),
       completionEndpoint(completion_endpoint)
 {
@@ -31,6 +33,8 @@ CommandQueue::CommandQueue(statistics::Group &stats_parent,
     // y la coincidencia de VLEN con Minor cuando se integre el coprocesador.
     fatal_if(queueDepth == 0, "CommandQueue requires at least one entry");
     fatal_if(vlenBytes == 0, "CommandQueue requires a nonzero VLEN");
+    fatal_if(elenBits != 32 && elenBits != 64,
+             "CommandQueue requires ELEN of 32 or 64 bits");
     fatal_if(supportedLmuls.empty(),
              "CommandQueue requires at least one supported LMUL");
 
@@ -38,9 +42,13 @@ CommandQueue::CommandQueue(statistics::Group &stats_parent,
         fatal_if(!isValid(*it), "Invalid supported LMUL");
         fatal_if(std::find(supportedLmuls.begin(), it, *it) != it,
                  "Duplicate supported LMUL");
-        fatal_if(VectorSupport::maxElements(
-                     vlenBytes, *it, VectorSupport::elementWidths.back()) == 0,
-                 "Supported LMUL cannot hold a 32-bit element");
+        const bool usable = std::any_of(
+            VectorSupport::elementWidths.begin(),
+            VectorSupport::elementWidths.end(), [&](uint16_t sew) {
+                return VectorSupport::inTargetProfile(sew, *it, elenBits) &&
+                       VectorSupport::maxElements(vlenBytes, *it, sew) != 0;
+            });
+        fatal_if(!usable, "Configured LMUL cannot hold a supported element");
     }
 }
 
@@ -69,8 +77,8 @@ CommandQueue::requestGrant(const VectorCommand &command)
 {
     // Los rechazos permanentes preceden al examen de capacidad: una cola
     // llena no debe convertir un descriptor no soportado en un Stall.
-    if (const auto reason =
-            VectorSupport::checkCommand(command, vlenBytes, supportedLmuls)) {
+    if (const auto reason = VectorSupport::checkCommand(
+            command, vlenBytes, supportedLmuls, elenBits)) {
         ++stats.rejected;
         return GrantResult::rejected(*reason);
     }

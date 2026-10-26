@@ -99,6 +99,7 @@ MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
                 ->contextId(); // As we only support one thread context, we can
                                // use the front.
         binding.vlenBytes = riscv_isa->getVecLenInBytes();
+        binding.elenBits = riscv_isa->getVecElemLenInBits();
         binding.addressBits = riscv_isa->rvType() == RiscvISA::RV32
                                   ? 32
                                   : 64; // ¿Se puede modificar?

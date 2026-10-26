@@ -11,6 +11,7 @@
 #include "arch/generic/mmu.hh"
 #include "cpu/vector_engine/common/memory_types.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
+#include "cpu/vector_engine/common/vpu_parameters.hh"
 #include "mem/packet.hh"
 #include "mem/port.hh"
 #include "sim/clocked_object.hh"
@@ -43,7 +44,8 @@ class VectorMemoryBackend
     using AccessFaultFactory = std::function<Fault(Addr, MemoryDirection)>;
     using ResponseSender = std::function<void(const VectorMemoryResponse &)>;
 
-    VectorMemoryBackend(ClockedObject &owner, unsigned address_bits,
+    VectorMemoryBackend(ClockedObject &owner,
+                        const MemoryBackendParameters &parameters,
                         ContextResolver resolve_context,
                         AccessFaultFactory access_fault,
                         ResponseSender send_response);
@@ -167,6 +169,7 @@ class VectorMemoryBackend
     statistics::Scalar portRetries;
     statistics::Scalar retryNotifications;
     ClockedObject &owner;
+    const MemoryBackendParameters &parameters;
     Addr addressMask;
     ContextResolver resolveContext;
     AccessFaultFactory accessFault;

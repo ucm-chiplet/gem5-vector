@@ -62,11 +62,10 @@ VectorMemoryBackend::FragmentState::finish(const Fault &fault,
     backend.finishTranslation(*this, fault, request, context, mode);
 }
 
-VectorMemoryBackend::VectorMemoryBackend(ClockedObject &owner,
-                                         unsigned address_bits,
-                                         ContextResolver resolve_context,
-                                         AccessFaultFactory access_fault,
-                                         ResponseSender send_response)
+VectorMemoryBackend::VectorMemoryBackend(
+    ClockedObject &owner, const MemoryBackendParameters &parameters,
+    ContextResolver resolve_context, AccessFaultFactory access_fault,
+    ResponseSender send_response)
     : stats(&owner, "memory", "logical memory requests"),
       loads(&stats, "loads", statistics::units::Count::get(),
             "Accepted logical load requests"),
@@ -97,12 +96,16 @@ VectorMemoryBackend::VectorMemoryBackend(ClockedObject &owner,
                          statistics::units::Count::get(),
                          "recvReqRetry notifications received"),
       owner(owner),
+      parameters(parameters),
       resolveContext(std::move(resolve_context)),
       accessFault(std::move(access_fault)),
       sendResponse(std::move(send_response)),
       port(*this, owner.name() + ".vector_memory"),
       progressEvent([this] { evaluate(); }, owner.name() + ".vector_memory")
 {
+    const auto address_bits = parameters.addressBits;
+    fatal_if(parameters.maxOutstandingPackets != 1,
+             "Vector memory supports one physical packet in flight");
     fatal_if(FullSystem, "Vector memory backend only supports SE mode");
     fatal_if(address_bits != 32 && address_bits != 64,
              "Vector memory requires a 32-bit or 64-bit address width");

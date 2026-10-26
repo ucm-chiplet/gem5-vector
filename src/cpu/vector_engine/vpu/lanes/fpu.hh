@@ -8,6 +8,7 @@
 
 #include "cpu/vector_engine/common/execution_types.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
+#include "cpu/vector_engine/common/vpu_parameters.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
 
@@ -27,7 +28,8 @@ class Fpu
     using ResultSender = std::function<void(const ExecutionResult &)>;
 
     Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
-        statistics::Group &stats_parent);
+        statistics::Group &stats_parent,
+        const ExecutionParameters &parameters);
     ~Fpu();
 
     Fpu(const Fpu &) = delete;
@@ -55,6 +57,7 @@ class Fpu
     statistics::Scalar divideByZeroBundles;
     statistics::Scalar invalidBundles;
     ClockedObject &owner;
+    const ExecutionParameters &parameters;
     ResultSender sendResult;
     std::optional<ExecutionState> active;
     EventFunctionWrapper executeEvent;

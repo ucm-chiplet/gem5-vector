@@ -45,9 +45,9 @@ class AraVLSU
     using CompletionSender = std::function<void(const UnitCompletion &)>;
 
     AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
-            unsigned address_bits, MemorySender send_memory,
-            ReadSender send_read, WriteSender send_write,
-            CompletionSender send_completion);
+            const VlsuParameters &parameters, unsigned address_bits,
+            MemorySender send_memory, ReadSender send_read,
+            WriteSender send_write, CompletionSender send_completion);
     ~AraVLSU();
 
     AraVLSU(const AraVLSU &) = delete;
@@ -127,6 +127,7 @@ class AraVLSU
     statistics::Scalar vrfWriteRetries;
     ClockedObject &owner;
     const AddressMapper &mapper;
+    const VlsuParameters &parameters;
     Addr addressMask;
     MemorySender sendMemory;
     ReadSender sendRead;

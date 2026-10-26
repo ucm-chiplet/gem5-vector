@@ -12,8 +12,9 @@ namespace gem5::vector_engine
 {
 
 LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
-                                   const AddressMapper &mapper, LaneId lane_id,
-                                   ResponsePort lane_responses,
+                                   const AddressMapper &mapper,
+                                   const BankParameters &parameters,
+                                   LaneId lane_id, ResponsePort lane_responses,
                                    ResponsePort vlsu_responses)
     : stats(&owner, "lrf" + std::to_string(lane_id), "VRF accesses"),
       reads(&stats, "reads", statistics::units::Count::get(),
@@ -25,10 +26,13 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
       writeBytes(&stats, "writeBytes", statistics::units::Byte::get(),
                  "Enabled bytes in accepted write accesses"),
       mapper(mapper),
+      parameters(parameters),
       laneId(lane_id),
       laneResponses(std::move(lane_responses)),
       vlsuResponses(std::move(vlsu_responses))
 {
+    fatal_if(!parameters.currentProfile(),
+             "VRF bank supports one pending access and one RW port");
     const auto &geometry = mapper.geometry();
     fatal_if(laneId >= geometry.numLanes,
              "LRF identity is outside the VRF geometry");
@@ -42,7 +46,7 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
     pending.resize(geometry.banksPerLane);
     for (BankId bank_id = 0; bank_id < geometry.banksPerLane; ++bank_id) {
         banks.push_back(std::make_unique<VectorRegBank>(
-            owner, mapper, laneId, bank_id,
+            owner, mapper, parameters, laneId, bank_id,
             [this, bank_id](const BankReadResponse &response) {
                 recvBankReadResponse(bank_id, response);
             },

@@ -102,7 +102,8 @@ class CommandQueue : public VpuCommandEndpoint
     CommandQueue(statistics::Group &stats_parent, std::size_t queue_depth,
                  uint32_t vlen_bytes,
                  const std::vector<VectorLmul> &supported_lmuls,
-                 CpuCompletionEndpoint &completion_endpoint);
+                 CpuCompletionEndpoint &completion_endpoint,
+                 uint16_t elen_bits = 64);
 
     // Copiar la cola duplicaría reservas y obligaciones de aceptación.
     CommandQueue(const CommandQueue &) = delete;
@@ -165,6 +166,7 @@ class CommandQueue : public VpuCommandEndpoint
     statistics::Scalar dispatched;
     const std::size_t queueDepth;
     const uint32_t vlenBytes;
+    const uint16_t elenBits;
 
     // Vista no propietaria de una configuración inmutable.
     const std::vector<VectorLmul> &supportedLmuls;

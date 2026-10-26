@@ -39,7 +39,8 @@ class AraLane
     using WriteSender = std::function<TransferResult(const VrfWriteRequest &)>;
     using CompletionSender = std::function<void(const LaneCompletion &)>;
 
-    AraLane(ClockedObject &owner, const AddressMapper &mapper, LaneId lane_id,
+    AraLane(ClockedObject &owner, const AddressMapper &mapper,
+            const LaneParameters &parameters, LaneId lane_id,
             ByteOrder target_byte_order, ReadSender send_read,
             WriteSender send_write, CompletionSender send_completion);
     ~AraLane();
@@ -108,6 +109,7 @@ class AraLane
     statistics::Scalar executionRetries;
     ClockedObject &owner;
     const AddressMapper &mapper;
+    const LaneParameters &parameters;
     const LaneId laneId;
     const ByteOrder targetByteOrder;
     ReadSender sendRead;

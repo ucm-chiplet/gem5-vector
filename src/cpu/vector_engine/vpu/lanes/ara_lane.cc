@@ -15,9 +15,9 @@ namespace gem5::vector_engine
 {
 
 AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
-                 LaneId lane_id, ByteOrder target_byte_order,
-                 ReadSender send_read, WriteSender send_write,
-                 CompletionSender send_completion)
+                 const LaneParameters &parameters, LaneId lane_id,
+                 ByteOrder target_byte_order, ReadSender send_read,
+                 WriteSender send_write, CompletionSender send_completion)
     : stats(&owner, "lane" + std::to_string(lane_id), "lane fragments"),
       vrfReads(&stats, "vrfReads", statistics::units::Count::get(),
                "Operand read accesses accepted by local VRF"),
@@ -33,6 +33,7 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
                        "Bundle attempts rejected by execution unit"),
       owner(owner),
       mapper(mapper),
+      parameters(parameters),
       laneId(lane_id),
       targetByteOrder(target_byte_order),
       sendRead(std::move(send_read)),
@@ -43,16 +44,18 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
           [this](const ExecutionResult &result) {
               recvExecutionResult(result);
           },
-          stats),
+          stats, parameters.alu),
       fpu(
           owner, lane_id,
           [this](const ExecutionResult &result) {
               recvExecutionResult(result);
           },
-          stats),
+          stats, parameters.fpu),
       progressEvent([this] { evaluate(); },
                     owner.name() + ".lane" + std::to_string(lane_id))
 {
+    fatal_if(!parameters.currentProfile(mapper.geometry().laneWordBytes),
+             "Lane configuration requires unimplemented resources");
     fatal_if(laneId >= mapper.geometry().numLanes,
              "AraLane identity is outside the VRF geometry");
     fatal_if(targetByteOrder != ByteOrder::little &&
@@ -88,7 +91,7 @@ AraLane::validateTask(const LaneTask &task) const
         uint64_t{task.elements.firstElement} * element_bytes;
     const uint64_t size = uint64_t{task.elements.elementCount} * element_bytes;
     panic_if(offset + size > std::numeric_limits<uint32_t>::max() ||
-                 size > mapper.geometry().laneWordBytes,
+                 size > parameters.maxBundleBytes,
              "Lane fragment exceeds one word or its byte range overflows");
     const ByteRange expected{static_cast<uint32_t>(offset),
                              static_cast<uint32_t>(size)};

@@ -146,6 +146,27 @@ intento, aceptación y entrega: retries no son paquetes nuevos. Contadores
 por enlace y recursos temporizados se incorporarán con el modelo activo.
 No se instancia red ni se permite habilitarla en fase 1.
 
+## Configuración y mapeo
+
+Se conservan los parámetros planos anteriores como entrada compatible.
+Anchos de bundle/FU con valor cero se resuelven a la palabra de lane antes
+de construir. Entradas son cantidades de contextos/bundles, anchos son
+bytes, y latencias/intervalos son ciclos. La latencia funcional actual de
+un evento no acredita fidelidad hardware Ara.
+
+Las capacidades nuevas no se aceptan silenciosamente: se exige una
+instrucción activa, un contexto/buffer por fuente/resultado, una ALU y una
+FPU por lane, una petición pendiente por banco, un puerto RW, un elemento
+de memoria activo y un paquete físico en vuelo. Las anchuras de FU/buffer
+coinciden con la palabra; otras configuraciones requieren sus fases.
+El máximo futuro de bloque es positivo y divisible por los tamaños de
+elementos habilitados. VLEN/ELEN y orden/ancho del objetivo coinciden con CPU.
+La descripción de interconexión declara máximo de paquete, entradas/bytes
+por destino, bytes por ciclo de origen/destino y ciclos de tránsito. Los
+anchos de red/buffer con cero se resuelven a una palabra de lane. Estos
+límites se validan, pero no crean servicio ni tráfico mientras la red esté
+deshabilitada.
+
 ## Referencia normativa y comprobaciones
 
 Autoridad: RVV 1.0, manual oficial **edición 20240411**:

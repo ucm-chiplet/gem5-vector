@@ -32,20 +32,123 @@
 #include <cstdint>
 #include <vector>
 
+#include "base/types.hh"
+#include "cpu/vector_engine/common/interconnect_types.hh"
 #include "cpu/vector_engine/common/vrf_types.hh"
 
 namespace gem5::vector_engine
 {
 
-/** Configuración propiedad de VectorEngine; no cambia durante su vida. */
+/** Selección de construcción; sólo existe el reparto actual por palabras. */
+enum class MappingPolicyKind : uint8_t
+{
+    WordStriped
+};
+
+/** Bytes por bundle, bundles pendientes y ciclos de latencia/iniciación. */
+struct ExecutionParameters
+{
+    uint32_t widthBytes = 0;
+    uint32_t capacity = 1;
+    Cycles latency{1};
+    Cycles initiationInterval{1};
+
+    /** Reconoce el único perfil funcional implementado, sin temporizarlo. */
+    bool
+    currentProfile(uint32_t word_bytes) const
+    {
+        return widthBytes == word_bytes && capacity == 1 &&
+               latency == Cycles(1) && initiationInterval == Cycles(1);
+    }
+};
+
+/**
+ * Contextos y buffers por lane/fuente, con máximo de bytes por bundle.
+ * El propietario resuelve los anchos antes de entregar esta vista a la lane.
+ */
+struct LaneParameters
+{
+    uint32_t taskEntries = 1;
+    uint32_t operandEntriesPerSource = 1;
+    uint32_t resultEntries = 1;
+    uint32_t maxBundleBytes = 0;
+    uint32_t alusPerLane = 1;
+    ExecutionParameters alu;
+    ExecutionParameters fpu;
+
+    /** Evita aceptar capacidades o particiones de FU todavía sin ejecución. */
+    bool
+    currentProfile(uint32_t word_bytes) const
+    {
+        return taskEntries == 1 && operandEntriesPerSource == 1 &&
+               resultEntries == 1 && maxBundleBytes == word_bytes &&
+               alusPerLane == 1 && alu.currentProfile(word_bytes) &&
+               fpu.currentProfile(word_bytes);
+    }
+};
+
+/** Puertos por banco, accesos pendientes y ciclos; no describe el layout. */
+struct BankParameters
+{
+    uint32_t readPorts = 0;
+    uint32_t writePorts = 0;
+    uint32_t readWritePorts = 1;
+    uint32_t accessEntries = 1;
+    Cycles latency{1};
+    Cycles initiationInterval{1};
+
+    /** El modelo actual sólo sirve un acceso pendiente mediante un puerto RW.
+     */
+    bool
+    currentProfile() const
+    {
+        return readPorts == 0 && writePorts == 0 && readWritePorts == 1 &&
+               accessEntries == 1 && latency == Cycles(1) &&
+               initiationInterval == Cycles(1);
+    }
+};
+
+/** Límite de bytes preparado para bloques; el recorrido activo es por
+ * elemento. */
+struct VlsuParameters
+{
+    uint32_t maxBlockBytes = 8;
+    uint32_t activeBlocks = 1;
+    // Prepared contract only: true is rejected until phase 4.
+    bool blockRequests = false;
+};
+
+/** Ancho de dirección del objetivo y límite de paquetes físicos en vuelo. */
+struct MemoryBackendParameters
+{
+    unsigned addressBits = 64;
+    uint32_t maxOutstandingPackets = 1;
+};
+
+/** Perfil de construcción sin red activa; tránsito excluye espera/servicio. */
+struct InterconnectParameters
+{
+    // No topology is implemented in phase 1.
+    bool enabled = false;
+    InterconnectCapabilities capabilities;
+    Cycles transitLatency{1};
+};
+
+/** Immutable composition, owned by VectorEngine, outliving all consumers. */
 struct VpuParameters
 {
     VrfGeometry vrf;
     std::vector<VectorLmul> supportedLmuls;
+    std::vector<uint16_t> supportedSews;
     uint32_t commandQueueEntries;
-    uint32_t laneTaskEntries;
-    uint32_t operandBufferEntriesPerSource;
-    uint32_t resultBufferEntries;
+    uint32_t maxActiveCommands = 1;
+    uint16_t elenBits = 64;
+    LaneParameters lane;
+    BankParameters bank;
+    VlsuParameters vlsu;
+    MemoryBackendParameters memory;
+    InterconnectParameters interconnect;
+    MappingPolicyKind mapping = MappingPolicyKind::WordStriped;
 };
 
 } // namespace gem5::vector_engine

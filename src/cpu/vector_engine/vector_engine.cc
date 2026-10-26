@@ -52,36 +52,96 @@ namespace gem5::vector_engine
 VpuParameters
 VectorEngine::makeConfiguration(const Params &params)
 {
-    VpuParameters config{{params.vlen_bytes, params.lane_word_bytes,
-                          params.num_lanes, params.banks_per_lane},
-                         {},
-                         params.command_queue_entries,
-                         params.lane_task_entries,
-                         params.operand_buffer_entries_per_source,
-                         params.result_buffer_entries};
+    VpuParameters config;
+    config.vrf = {params.vlen_bytes, params.lane_word_bytes, params.num_lanes,
+                  params.banks_per_lane};
+    config.commandQueueEntries = params.command_queue_entries;
+    config.maxActiveCommands = params.max_active_commands;
+    config.elenBits = params.elen_bits;
+    const auto word_bytes = config.vrf.laneWordBytes;
+    // Cero significa heredar la palabra física, no un recurso de cero bytes.
+    // La resolución sucede una vez, antes de construir cualquier consumidor.
+    const auto resolve_width = [word_bytes](uint32_t width) {
+        return width ? width : word_bytes;
+    };
+    config.lane = {params.lane_task_entries,
+                   params.operand_buffer_entries_per_source,
+                   params.result_buffer_entries,
+                   resolve_width(params.max_bundle_bytes),
+                   params.alus_per_lane,
+                   {resolve_width(params.alu_width_bytes), params.alu_capacity,
+                    params.alu_latency, params.alu_initiation_interval},
+                   {resolve_width(params.fpu_width_bytes), params.fpu_capacity,
+                    params.fpu_latency, params.fpu_initiation_interval}};
+    config.bank = {
+        params.bank_read_ports,       params.bank_write_ports,
+        params.bank_read_write_ports, params.bank_access_entries,
+        params.bank_latency,          params.bank_initiation_interval};
+    config.vlsu = {params.memory_max_block_bytes, params.memory_active_blocks,
+                   params.memory_block_requests};
+    config.memory = {params.address_bits,
+                     params.memory_max_outstanding_packets};
+    config.interconnect.enabled = params.interconnect_enabled;
+    config.interconnect.capabilities = {
+        config.vrf.numLanes,
+        resolve_width(params.interconnect_max_packet_bytes),
+        params.interconnect_packets_per_destination,
+        resolve_width(params.interconnect_bytes_per_destination),
+        resolve_width(params.interconnect_source_bytes_per_cycle),
+        resolve_width(params.interconnect_destination_bytes_per_cycle)};
+    config.interconnect.transitLatency = params.interconnect_transit_latency;
+    const auto &network = config.interconnect.capabilities;
+    fatal_if(!network.maxPacketBytes || !network.packetsPerDestination ||
+                 network.bytesPerDestination < network.maxPacketBytes ||
+                 !network.sourceBytesPerCycle ||
+                 !network.destinationBytesPerCycle,
+             "Invalid interconnect capacity contract");
 
-    // VLEN RVV es una potencia de dos, hasta 65536 bits. Este baseline
-    // requiere al menos un elemento de 32 bits en cada palabra de lane.
     const auto bytes = config.vrf.vlenBytes;
     fatal_if(bytes < 4 || bytes > 8192 || (bytes & (bytes - 1)),
              "VectorEngine requires a power-of-two VLEN of 4..8192 bytes");
-    fatal_if(!config.commandQueueEntries,
-             "VectorEngine requires at least one command entry");
-    fatal_if(config.laneTaskEntries != 1 ||
-                 config.operandBufferEntriesPerSource != 1 ||
-                 config.resultBufferEntries != 1,
-             "VectorEngine baseline requires one lane task, one buffer "
-             "per operand source and one result buffer");
-    fatal_if(params.address_bits != 32 && params.address_bits != 64,
+    fatal_if(!config.commandQueueEntries || config.maxActiveCommands != 1 ||
+                 config.maxActiveCommands > config.commandQueueEntries,
+             "Phase 1 requires one active command and a positive queue");
+    fatal_if(params.elen_bits != 32 && params.elen_bits != 64,
+             "VectorEngine requires ELEN of 32 or 64 bits");
+    fatal_if(uint64_t{bytes} * 8 < config.elenBits,
+             "VectorEngine requires VLEN >= ELEN");
+    fatal_if(!config.lane.currentProfile(word_bytes) ||
+                 !config.bank.currentProfile(),
+             "VectorEngine resource profile is not implemented in phase 1");
+    fatal_if(config.memory.addressBits != 32 &&
+                 config.memory.addressBits != 64,
              "VectorEngine requires a 32-bit or 64-bit address width");
+    fatal_if(config.memory.maxOutstandingPackets != 1 ||
+                 config.vlsu.activeBlocks != 1 || config.vlsu.blockRequests ||
+                 config.interconnect.enabled,
+             "Phase 1 has one memory element/packet and no interconnect");
+    fatal_if(params.mapping_policy != "word_striped",
+             "Only word_striped VRF mapping is implemented");
     fatal_if(params.target_byte_order != ByteOrder::little &&
                  params.target_byte_order != ByteOrder::big,
              "VectorEngine requires a valid target byte order");
-    fatal_if(params.supported_lmuls.empty(),
-             "VectorEngine requires explicit supported LMULs");
-
+    fatal_if(params.supported_sews.empty() || params.supported_lmuls.empty(),
+             "VectorEngine requires nonempty SEW and LMUL profiles");
+    fatal_if(!config.vlsu.maxBlockBytes,
+             "Memory block byte limit must be positive");
+    for (const auto sew : params.supported_sews) {
+        fatal_if(sew > config.elenBits ||
+                     !VectorSupport::supportsElementWidth(sew),
+                 "Configured SEW is not implemented in the current backend");
+        fatal_if(std::find(config.supportedSews.begin(),
+                           config.supportedSews.end(),
+                           sew) != config.supportedSews.end(),
+                 "VectorEngine has a duplicate supported SEW");
+        const auto element_bytes = VectorSupport::elementBytes(sew);
+        fatal_if(!word_bytes || word_bytes % element_bytes ||
+                     config.vlsu.maxBlockBytes < element_bytes ||
+                     config.vlsu.maxBlockBytes % element_bytes,
+                 "Word and block limits must contain whole elements");
+        config.supportedSews.push_back(sew);
+    }
     for (const int exponent : params.supported_lmuls) {
-        // Validar antes del cast al enum de 8 bits, sin truncar el parámetro.
         fatal_if(exponent < -3 || exponent > 3,
                  "VectorEngine LMUL exponent must be in [-3, 3]");
         const auto lmul = static_cast<VectorLmul>(exponent);
@@ -89,11 +149,14 @@ VectorEngine::makeConfiguration(const Params &params)
                            config.supportedLmuls.end(),
                            lmul) != config.supportedLmuls.end(),
                  "VectorEngine has a duplicate supported LMUL");
-        const uint64_t effective_bytes = exponent >= 0
-                                             ? uint64_t{bytes} << exponent
-                                             : uint64_t{bytes} >> -exponent;
-        fatal_if(effective_bytes < 4,
-                 "VectorEngine supported LMUL cannot hold a 32-bit element");
+        const bool usable = std::any_of(
+            config.supportedSews.begin(), config.supportedSews.end(),
+            [&](uint16_t sew) {
+                return VectorSupport::inTargetProfile(sew, lmul,
+                                                      config.elenBits) &&
+                       VectorSupport::maxElements(bytes, lmul, sew) != 0;
+            });
+        fatal_if(!usable, "Configured LMUL has no supported SEW combination");
         config.supportedLmuls.push_back(lmul);
     }
 
@@ -124,7 +187,8 @@ VectorEngine::VectorEngine(const Params &params)
     CpuCompletionEndpoint &completion_endpoint = *this;
     commandQueue = std::make_unique<CommandQueue>(
         *this, vpuParameters.commandQueueEntries, vpuParameters.vrf.vlenBytes,
-        vpuParameters.supportedLmuls, completion_endpoint);
+        vpuParameters.supportedLmuls, completion_endpoint,
+        vpuParameters.elenBits);
 
     sequencer = std::make_unique<AraSequencer>(
         *this, *commandQueue, completion_endpoint, vpuParameters.vrf.vlenBytes,
@@ -153,7 +217,7 @@ VectorEngine::VectorEngine(const Params &params)
     lanes.reserve(num_lanes);
     for (LaneId lane_id = 0; lane_id < num_lanes; ++lane_id) {
         registerFiles.push_back(std::make_unique<LaneRegisterFile>(
-            *this, mapper, lane_id,
+            *this, mapper, vpuParameters.bank, lane_id,
             LaneRegisterFile::ResponsePort{
                 // La lectura de operandos vuelve a la lane solicitante.
                 [this, lane_id](const ReadResponse &response) {
@@ -172,7 +236,7 @@ VectorEngine::VectorEngine(const Params &params)
                 [this](const WriteAck &ack) { vlsu->recvVrfWriteAck(ack); }}));
 
         lanes.push_back(std::make_unique<AraLane>(
-            *this, mapper, lane_id, targetByteOrder,
+            *this, mapper, vpuParameters.lane, lane_id, targetByteOrder,
             // Lee los operandos de la slice local del VRF.
             [this, lane_id](const VrfReadRequest &request) {
                 return registerFiles[lane_id]->read(request);
@@ -188,7 +252,7 @@ VectorEngine::VectorEngine(const Params &params)
     }
 
     vlsu = std::make_unique<AraVLSU>(
-        *this, mapper, addressBits,
+        *this, mapper, vpuParameters.vlsu, addressBits,
         // Entrega al backend la petición lógica de memoria.
         [this](const VectorMemoryRequest &request) {
             return memoryBackend->acceptRequest(request);
@@ -211,7 +275,7 @@ VectorEngine::VectorEngine(const Params &params)
         });
 
     memoryBackend = std::make_unique<VectorMemoryBackend>(
-        *this, addressBits,
+        *this, vpuParameters.memory,
         // Recupera el ThreadContext para traducir la petición.
         [this](ContextID context_id) { return resolveContext(context_id); },
         // Construye un fault de acceso con la semántica de la CPU.
@@ -251,8 +315,9 @@ VectorEngine::bindCpu(CpuCompletionEndpoint &endpoint, CpuBinding binding)
     fatal_if(binding.contextId == InvalidContextID ||
                  !binding.resolveContext || !binding.accessFault,
              "VectorEngine requires a context and CPU memory services");
-    fatal_if(binding.vlenBytes != vpuParameters.vrf.vlenBytes,
-             "VectorEngine VLEN differs from its CPU VLEN");
+    fatal_if(binding.vlenBytes != vpuParameters.vrf.vlenBytes ||
+                 binding.elenBits != vpuParameters.elenBits,
+             "VectorEngine VLEN/ELEN differ from the CPU");
     fatal_if(binding.addressBits != addressBits ||
                  binding.byteOrder != targetByteOrder,
              "VectorEngine address width or byte order differs from its CPU");
@@ -330,7 +395,19 @@ VectorEngine::requestGrant(const VectorCommand &command)
         ++stats.rejected;
         return GrantResult::rejected(RejectionReason::InvalidIdentity);
     }
-    // La validación estructural completa pertenece a CpuVectorInterface.
+    if (const auto reason = VectorSupport::checkCommand(
+            command, vpuParameters.vrf.vlenBytes, vpuParameters.supportedLmuls,
+            vpuParameters.elenBits)) {
+        ++stats.rejected;
+        return GrantResult::rejected(*reason);
+    }
+    if (std::find(vpuParameters.supportedSews.begin(),
+                  vpuParameters.supportedSews.end(), command.config.sewBits) ==
+        vpuParameters.supportedSews.end()) {
+        ++stats.rejected;
+        return GrantResult::rejected(
+            RejectionReason::UnsupportedConfiguration);
+    }
     const auto result = commandQueue->requestGrant(command);
     if (result.status == GrantStatus::Stall) {
         ++stats.retries;

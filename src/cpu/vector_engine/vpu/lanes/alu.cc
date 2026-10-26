@@ -14,17 +14,22 @@ namespace gem5::vector_engine
 {
 
 Alu::Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
-         statistics::Group &stats_parent)
+         statistics::Group &stats_parent,
+         const ExecutionParameters &parameters)
     : stats(&stats_parent, "alu", "integer bundles"),
       elements16(&stats, "elements16", statistics::units::Count::get(),
                  "Admitted 16-bit integer elements"),
       elements32(&stats, "elements32", statistics::units::Count::get(),
                  "Admitted 32-bit integer elements"),
       owner(owner),
+      parameters(parameters),
       sendResult(std::move(send_result)),
       executeEvent([this] { execute(); },
                    owner.name() + ".lane" + std::to_string(lane_id) + ".alu")
 {
+    fatal_if(!parameters.widthBytes ||
+                 !parameters.currentProfile(parameters.widthBytes),
+             "Execution unit supports one functional bundle only");
     fatal_if(!sendResult, "ALU requires a result receiver");
 }
 
@@ -54,7 +59,7 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
                  offset + size > std::numeric_limits<uint32_t>::max() ||
                  bundle.destinationRange.offset != offset ||
                  bundle.destinationRange.size != size ||
-                 bundle.lhs.size() != size ||
+                 size > parameters.widthBytes || bundle.lhs.size() != size ||
                  bundle.rhs.size() != size ||
                  (bundle.byteOrder != ByteOrder::little &&
                   bundle.byteOrder != ByteOrder::big),
@@ -77,7 +82,7 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
                                      0,
                                      bundle.byteOrder,
                                      bundle.emul};
-    owner.schedule(executeEvent, owner.clockEdge(Cycles(1)));
+    owner.schedule(executeEvent, owner.clockEdge(parameters.latency));
     return TransferResult::Accepted;
 }
 

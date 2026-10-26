@@ -12,8 +12,8 @@ namespace gem5::vector_engine
 {
 
 VectorRegBank::VectorRegBank(ClockedObject &owner, const AddressMapper &mapper,
-                             LaneId lane_id, BankId bank_id,
-                             ReadSender send_read,
+                             const BankParameters &parameters, LaneId lane_id,
+                             BankId bank_id, ReadSender send_read,
                              WriteAckSender send_write_ack,
                              statistics::Group &stats_parent)
     : stats(&stats_parent, "bank" + std::to_string(bank_id),
@@ -28,6 +28,7 @@ VectorRegBank::VectorRegBank(ClockedObject &owner, const AddressMapper &mapper,
                  "Enabled bytes in accepted write accesses"),
       owner(owner),
       geometry(mapper.geometry()),
+      parameters(parameters),
       laneId(lane_id),
       rowCount(mapper.rowsPerBank()),
       sendRead(std::move(send_read)),
@@ -36,6 +37,8 @@ VectorRegBank::VectorRegBank(ClockedObject &owner, const AddressMapper &mapper,
                                              std::to_string(lane_id) +
                                              ".bank" + std::to_string(bank_id))
 {
+    fatal_if(!parameters.currentProfile(),
+             "VRF bank supports one pending access and one RW port");
     fatal_if(laneId >= geometry.numLanes || bank_id >= geometry.banksPerLane,
              "VRF bank identity is outside its geometry");
     fatal_if(!sendRead || !sendWriteAck,
@@ -85,7 +88,7 @@ VectorRegBank::read(const BankReadRequest &request)
                             request.wordByteEnable.end(), 1);
     stats.accept(0, std::count(request.wordByteEnable.begin(),
                                request.wordByteEnable.end(), 1));
-    owner.schedule(accessEvent, owner.clockEdge(Cycles(1)));
+    owner.schedule(accessEvent, owner.clockEdge(parameters.latency));
     return TransferResult::Accepted;
 }
 
@@ -105,7 +108,7 @@ VectorRegBank::write(const BankWriteRequest &request)
                              request.wordByteEnable.end(), 1);
     stats.accept(0, std::count(request.wordByteEnable.begin(),
                                request.wordByteEnable.end(), 1));
-    owner.schedule(accessEvent, owner.clockEdge(Cycles(1)));
+    owner.schedule(accessEvent, owner.clockEdge(parameters.latency));
     return TransferResult::Accepted;
 }
 
