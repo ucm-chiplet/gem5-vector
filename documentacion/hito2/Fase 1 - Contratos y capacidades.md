@@ -11,6 +11,18 @@ resultados funcionales o temporales de las fases siguientes.
 
 ## Semántica, capacidades y datos
 
+`OperationTraits` describe las operaciones implementadas: clase de ejecución,
+formato, anchos, formas, contexto FP, faults posibles y admisibilidad en la
+frontera CPU--VPU. Esto último no acredita la ruta de decode de cada forma
+y ancho, que se registra por separado. `VectorSupport` consulta esos
+metadatos y separa:
+
+| Resultado | Respuesta | Efecto |
+| --- | --- | --- |
+| Descriptor inválido o configuración arquitectónica inválida | `Rejected` con motivo `Invalid*` | Sin reserva. |
+| Operación/configuración fuera del soporte activo | `Rejected` con motivo `Unsupported*` | Sin reserva. |
+| Falta temporal de capacidad | `Stall` en grants; `Retry` en enlaces internos | Sin transferencia ni efectos. |
+
 `describeOperands` produce una vista derivada de roles, acceso, formato,
 EEW y EMUL. No almacena una copia mutable paralela a los operandos del
 comando. El store identifica una fuente; la carga, un destino. Los roles
@@ -25,6 +37,24 @@ resultado. `ElementCodec` interpreta los patrones sin depender del host.
 Sus adaptadores representan 8/16/32/64 bits; esa capacidad de representación
 no habilita operaciones en todos esos anchos. La ALU y la FPU conservan
 sus capacidades anteriores.
+
+## Matriz objetivo y soporte activo
+
+El perfil objetivo de suma `.vv/.vx` y memoria unit-stride con EEW=SEW,
+para ELEN=64, es:
+
+| SEW | m1 | m2 | m4 | m8 | mf2 | mf4 | mf8 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 8 | Objetivo | Objetivo | Objetivo | Objetivo | Objetivo | Objetivo | Objetivo |
+| 16 | Objetivo | Objetivo | Objetivo | Objetivo | Objetivo | Objetivo | Fuera |
+| 32 | Objetivo | Objetivo | Objetivo | Objetivo | Objetivo | Fuera | Fuera |
+| 64 | Objetivo | Objetivo | Objetivo | Objetivo | Fuera | Fuera | Fuera |
+
+`inTargetProfile` expresa esta matriz, parametrizada por ELEN. «Fuera» no
+declara universalmente ilegal una combinación RVV. Para admitir trabajo
+deben cumplirse además soporte implementado, habilitación, geometría,
+VLMAX, alineación de grupos y restricciones de la operación. El grupo
+fraccional sigue usando un registro contenedor; no crea nombres nuevos.
 
 ## Propiedad, identidad y cierre
 

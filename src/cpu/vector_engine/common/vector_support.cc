@@ -30,23 +30,26 @@ VectorSupport::supportsElementBytes(uint32_t element_bytes)
 bool
 VectorSupport::supportsConfiguration(const VectorConfig &config)
 {
-    return isValid(config.lmul) && supportsElementWidth(config.sewBits) &&
-           !config.masked;
+    return !config.illegalVtype && isValid(config.lmul) &&
+           supportsElementWidth(config.sewBits) && !config.masked;
 }
 
 bool
 VectorSupport::supportsIntegerOperation(ArithmeticOperation operation,
                                         uint16_t sew_bits)
 {
-    return supportsElementWidth(sew_bits) &&
-           operation == ArithmeticOperation::Add;
+    const auto *traits = operationTraits(operation);
+    return traits && traits->execution == ExecutionClass::IntegerAlu &&
+           traits->supportsWidth(sew_bits);
 }
 
 bool
 VectorSupport::supportsFloatingPointOperation(ArithmeticOperation operation,
                                               uint16_t sew_bits)
 {
-    return operation == ArithmeticOperation::FloatAdd && sew_bits == 16;
+    const auto *traits = operationTraits(operation);
+    return traits && traits->execution == ExecutionClass::FloatingPoint &&
+           traits->supportsWidth(sew_bits);
 }
 
 bool
@@ -59,12 +62,11 @@ VectorSupport::supportsArithmetic(const ArithmeticCommand &arithmetic,
     }
     const bool vector_source =
         std::holds_alternative<VectorRegRef>(arithmetic.secondOperand);
-    if (supportsIntegerOperation(arithmetic.operation, sew_bits)) {
-        return vector_source ||
-               std::holds_alternative<RegVal>(arithmetic.secondOperand);
-    }
-    return supportsFloatingPointOperation(arithmetic.operation, sew_bits) &&
-           vector_source;
+    const auto *traits = operationTraits(arithmetic.operation);
+    return traits && traits->supportsWidth(sew_bits) &&
+           ((vector_source && traits->vectorVector) ||
+            (std::holds_alternative<RegVal>(arithmetic.secondOperand) &&
+             traits->vectorScalar));
 }
 
 bool
@@ -85,9 +87,8 @@ bool
 VectorSupport::supportsMemory(const MemoryCommand &memory, uint16_t sew_bits)
 {
     // Sólo EEW=SEW: EMUL=LMUL y todos los rangos usan el mismo ancho.
-    return supportsElementWidth(sew_bits) &&
-           (memory.direction == MemoryDirection::Load ||
-            memory.direction == MemoryDirection::Store) &&
+    const auto *traits = operationTraits(memory.direction);
+    return traits && traits->supportsWidth(sew_bits) &&
            std::holds_alternative<UnitStrideAddress>(memory.addressing) &&
            memory.elementWidthBits == sew_bits && memory.fieldCount == 1 &&
            !memory.faultOnlyFirst;
@@ -109,11 +110,85 @@ VectorSupport::elementMask(uint16_t element_bits)
     return ElementCodec::mask(element_bits);
 }
 
+bool
+VectorSupport::inTargetProfile(uint16_t sew_bits, VectorLmul lmul,
+                               uint16_t elen_bits)
+{
+    if (!ElementCodec::validWidth(sew_bits) || !isValid(lmul) ||
+        !ElementCodec::validWidth(elen_bits) || sew_bits > elen_bits) {
+        return false;
+    }
+    const int exponent = static_cast<int>(lmul);
+    return exponent >= 0 || sew_bits <= (elen_bits >> -exponent);
+}
+
+std::optional<RejectionReason>
+VectorSupport::checkStructure(const VectorCommand &command)
+{
+    if (!command.command.valid()) {
+        return RejectionReason::InvalidIdentity;
+    }
+    const auto &config = command.config;
+    if (config.illegalVtype || !isValid(config.lmul) ||
+        !ElementCodec::validWidth(config.sewBits) ||
+        config.vl > std::numeric_limits<uint32_t>::max() ||
+        config.vstart > std::numeric_limits<uint32_t>::max()) {
+        return RejectionReason::InvalidVectorConfig;
+    }
+    if (command.payload.valueless_by_exception() ||
+        command.requestorId == Request::invldRequestorId) {
+        return RejectionReason::InvalidPayload;
+    }
+    const unsigned expected_regs =
+        config.lmul > VectorLmul::M1 ? 1U << static_cast<int>(config.lmul) : 1;
+    const auto check_reg = [&](const VectorRegRef &reg) {
+        return reg.naturallyAligned() && reg.regCount == expected_regs;
+    };
+    if (const auto *arithmetic =
+            std::get_if<ArithmeticCommand>(&command.payload)) {
+        // Unsupported width relations have different group rules. Do not
+        // misdiagnose them using the current same-width group's size.
+        if (arithmetic->widthMode != ElementWidthMode::SameWidth ||
+            arithmetic->signedness != ElementSignedness::NotApplicable) {
+            return RejectionReason::UnsupportedOperation;
+        }
+        if (!check_reg(arithmetic->destination) ||
+            !check_reg(arithmetic->vectorSource)) {
+            return RejectionReason::InvalidRegisterGroup;
+        }
+        if (const auto *reg =
+                std::get_if<VectorRegRef>(&arithmetic->secondOperand);
+            reg && !check_reg(*reg)) {
+            return RejectionReason::InvalidRegisterGroup;
+        }
+        if (arithmetic->secondOperand.valueless_by_exception() ||
+            arithmetic->operation == ArithmeticOperation::Invalid) {
+            return RejectionReason::InvalidPayload;
+        }
+    } else {
+        const auto &memory = std::get<MemoryCommand>(command.payload);
+        if (!operationTraits(memory.direction) ||
+            memory.addressing.valueless_by_exception() ||
+            !ElementCodec::validWidth(memory.elementWidthBits) ||
+            memory.fieldCount == 0 || memory.fieldCount > 8) {
+            return RejectionReason::InvalidPayload;
+        }
+        if (memory.elementWidthBits != config.sewBits ||
+            memory.fieldCount != 1) {
+            return RejectionReason::UnsupportedConfiguration;
+        }
+        if (!check_reg(memory.dataReg)) {
+            return RejectionReason::InvalidRegisterGroup;
+        }
+    }
+    return std::nullopt;
+}
+
 uint64_t
 VectorSupport::maxElements(uint32_t vlen_bytes, VectorLmul lmul,
                            uint16_t sew_bits)
 {
-    panic_if(!isValid(lmul) || !supportsElementWidth(sew_bits),
+    panic_if(!isValid(lmul) || !ElementCodec::validWidth(sew_bits),
              "Invalid vector configuration for VLMAX");
     const int exponent = static_cast<int>(lmul);
     const uint64_t vlen_bits = uint64_t{vlen_bytes} * 8;
@@ -125,31 +200,36 @@ VectorSupport::maxElements(uint32_t vlen_bytes, VectorLmul lmul,
 
 std::optional<RejectionReason>
 VectorSupport::checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
-                            const std::vector<VectorLmul> &supported_lmuls)
+                            const std::vector<VectorLmul> &supported_lmuls,
+                            uint16_t elen_bits)
 {
+    if (const auto reason = checkStructure(command)) {
+        return reason;
+    }
     const auto &config = command.config;
+    if (config.vl > maxElements(vlen_bytes, config.lmul, config.sewBits)) {
+        return RejectionReason::InvalidVectorConfig;
+    }
     if (!supportsConfiguration(config) ||
+        !inTargetProfile(config.sewBits, config.lmul, elen_bits) ||
         std::find(supported_lmuls.begin(), supported_lmuls.end(),
                   config.lmul) == supported_lmuls.end()) {
-        return RejectionReason::UnsupportedConfiguration;
-    }
-    if (config.vl > maxElements(vlen_bytes, config.lmul, config.sewBits)) {
         return RejectionReason::UnsupportedConfiguration;
     }
 
     // Rango vacío admisible: el sequencer completa sin emitir tareas.
     if (const auto *arithmetic =
             std::get_if<ArithmeticCommand>(&command.payload)) {
-        // VectorCommand aún no captura frm ni VectorCompletion devuelve
-        // fflags. Rechazar FP aquí hasta integrar ambos en la frontera CPU;
-        // las tareas internas sí pueden suministrar su contexto explícito.
-        if (!supportsArithmetic(*arithmetic, config.sewBits) ||
-            !supportsIntegerOperation(arithmetic->operation, config.sewBits)) {
+        const auto *traits = operationTraits(arithmetic->operation);
+        // The FP messages are prepared, but phase 6 owns CPU FP activation.
+        if (!traits || !traits->cpuOffload ||
+            !supportsExecution(*arithmetic, config.sewBits,
+                               command.fpContext)) {
             return RejectionReason::UnsupportedOperation;
         }
     } else if (const auto *memory =
                    std::get_if<MemoryCommand>(&command.payload)) {
-        if (!supportsMemory(*memory, config.sewBits)) {
+        if (command.fpContext || !supportsMemory(*memory, config.sewBits)) {
             return RejectionReason::UnsupportedConfiguration;
         }
     } else {
