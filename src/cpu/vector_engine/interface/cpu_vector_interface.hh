@@ -168,6 +168,25 @@ class CpuVectorInterface : public VpuCommandEndpoint,
     CommandKey allocateCommandKey(ContextID contextId);
 
   private:
+    /** Protocolo de callbacks, independiente de ejecución y retirada CPU. */
+    enum class Phase
+    {
+        Reserved,
+        Dispatched,
+        Accepted,
+        Completed
+    };
+    /**
+     * Copia inmutable de la reserva para cotejar dispatch y su respuesta.
+     * Vive desde Granted hasta retornar completed; no es una entrada ROB.
+     */
+    struct CommandState
+    {
+        VectorCommand descriptor;
+        GrantToken token;
+        Phase phase = Phase::Reserved;
+    };
+
     ModuleStats stats;
     statistics::Scalar keysAllocated;
     statistics::Scalar grants;
@@ -179,6 +198,8 @@ class CpuVectorInterface : public VpuCommandEndpoint,
      * facilitate future expansion. Each context ID has its
      * own independent counter. */
     std::unordered_map<ContextID, uint64_t> nextCommandIds;
+    // Una entrada por crédito concedido; Stall/Rejected no crean contexto.
+    std::unordered_map<CommandKey, CommandState, CommandKeyHash> commands;
 };
 
 } // namespace gem5::vector_engine

@@ -23,6 +23,12 @@ metadatos y separa:
 | Operación/configuración fuera del soporte activo | `Rejected` con motivo `Unsupported*` | Sin reserva. |
 | Falta temporal de capacidad | `Stall` en grants; `Retry` en enlaces internos | Sin transferencia ni efectos. |
 
+La frontera valida estructura e identidad; admisión añade configuración,
+capacidad efectiva y soporte. La disponibilidad se consulta después de los
+rechazos permanentes. Minor conserva la construcción de la excepción local.
+Las identidades desconocidas, respuestas duplicadas y cambios de descriptor
+tras reservar son errores internos, no faults del programa.
+
 `describeOperands` produce una vista derivada de roles, acceso, formato,
 EEW y EMUL. No almacena una copia mutable paralela a los operandos del
 comando. El store identifica una fuente; la carga, un destino. Los roles
@@ -37,6 +43,11 @@ resultado. `ElementCodec` interpreta los patrones sin depender del host.
 Sus adaptadores representan 8/16/32/64 bits; esa capacidad de representación
 no habilita operaciones en todos esos anchos. La ALU y la FPU conservan
 sus capacidades anteriores.
+
+Minor captura una vez configuración, referencias y valores escalares. La
+normalización `.vx` se realiza al construir el comando. Ni `Stall` ni
+`Retry` vuelven a consultar registros CPU. El snapshot incluye `vill`,
+`vl`, `vstart`, SEW, LMUL y políticas tail/máscara.
 
 ## Matriz objetivo y soporte activo
 
@@ -56,6 +67,11 @@ deben cumplirse además soporte implementado, habilitación, geometría,
 VLMAX, alineación de grupos y restricciones de la operación. El grupo
 fraccional sigue usando un registro contenedor; no crea nombres nuevos.
 
+Se conserva prestart y tail, también con `ta`, y se capturan `mu/ma` sin
+ejecutar predicación. Con `vstart >= vl` no se emiten tareas ni escrituras;
+el comando conserva aceptación y finalización únicas. Los solapamientos
+de igual ancho y los límites de grupos se validan antes de efectos.
+
 ## Propiedad, identidad y cierre
 
 ```text
@@ -70,6 +86,33 @@ TransferKey = (TaskKey, transferId)
 La identidad del fragmento no sustituye a la tarea. Los accesos al VRF y
 las peticiones de memoria tienen contadores diferentes. No se reutilizan
 identificadores vivos y el agotamiento de un contador es un error interno.
+
+| Transición/recurso | Propietario y obligación |
+| --- | --- |
+| Grant | La cola copia el comando y reserva un crédito; todavía no hay `accepted`. |
+| Dispatch | Consume el token una vez y conserva el descriptor inmutable. |
+| Aceptación | Confirma inserción, sin prometer inicio ni resultado. |
+| Inicio | El sequencer conserva el crédito de comando y el contexto activo. |
+| Resultado | La lane retiene datos y flags hasta cerrar el writeback. |
+| `WriteAck` | Confirma bytes aplicados; no sólo aceptación del acceso. |
+| Finalización | Tras cerrar todas las obligaciones, se entrega `completed`. |
+| Cierre del callback | Se libera la cabeza/crédito y el contexto del sequencer. |
+| Retirada | Minor aplica estado o fault y libera su entrada CPU. |
+
+La interfaz CPU conserva un registro por comando concedido, verifica token,
+descriptor y secuencia de callbacks y lo libera tras entregar la respuesta
+terminal. El seguimiento es finito: corresponde a créditos concedidos.
+Minor conserva independientemente su entrada hasta retirada.
+
+Antes de enviar una petición, su emisor instala el estado receptor. Los
+callbacks pueden ser síncronos. `Accepted` obliga a una respuesta terminal;
+`Retry` conserva propiedad en el emisor y no permite respuestas. El retry
+interno mantiene identidad y mensaje y se evalúa en un ciclo posterior.
+El retry de `sendTimingReq` sigue esperando `recvReqRetry`.
+
+Drain cierra grants nuevos, permite consumir tokens ya concedidos y espera
+tareas, buffers, traducciones, paquetes, writebacks y callbacks. La VPU
+vacía no certifica que Minor haya procesado sus finalizaciones retenidas.
 
 ## Contratos preparados
 
@@ -87,6 +130,12 @@ en su estado privado; el mapper es su autoridad. `LoadData` conserva rango,
 ancho, datos y clave hasta cerrar la escritura. El backend sólo admite
 `elementCount == 1`; no se forma un bloque agrupado ni se aumenta el número
 de paquetes físicos en vuelo.
+
+`VectorCommand.fpContext` y `VectorCompletion.fpFlags` completan el contrato
+FP. El contexto contiene redondeo resuelto, y los flags se agregan por
+fragmento/tarea/comando. Los callbacks no escriben CSRs: Minor aplica los
+efectos al retirar. La autoridad de soporte mantiene cerrado el offload FP
+hasta aprobar e integrar la fase 6.
 
 `VectorInterconnect` define capacidades, binding de receptores, envío,
 recepción reservada y drain. Un paquete aceptado tiene entrega única y su

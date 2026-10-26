@@ -49,16 +49,30 @@ CpuVectorInterface::CpuVectorInterface(CpuCompletionEndpoint &cpu_endpoint,
       vpuEndpoint(vpu_endpoint)
 {}
 
-CpuVectorInterface::~CpuVectorInterface() = default;
+CpuVectorInterface::~CpuVectorInterface()
+{
+    panic_if(!commands.empty(), "Destroying CPU interface with live commands");
+}
 
 GrantResult
 CpuVectorInterface::requestGrant(const VectorCommand &command)
 {
-    panic_if(!command.command.valid(),
-             "CpuVectorInterface received an invalid CommandKey");
+    if (const auto reason = VectorSupport::checkStructure(command)) {
+        ++stats.rejected;
+        return GrantResult::rejected(*reason);
+    }
+    if (commands.count(command.command)) {
+        ++stats.rejected;
+        return GrantResult::rejected(RejectionReason::DuplicateCommand);
+    }
     const auto result = vpuEndpoint.requestGrant(command);
+    panic_if(!result.consistent(), "Inconsistent grant response");
     switch (result.status) {
         case GrantStatus::Granted:
+            panic_if(result.token->command != command.command,
+                     "Grant response belongs to another command");
+            commands.emplace(command.command,
+                             CommandState{command, *result.token});
             ++grants;
             break;
         case GrantStatus::Stall:
@@ -75,6 +89,14 @@ void
 CpuVectorInterface::dispatch(const GrantToken &token,
                              const VectorCommand &command)
 {
+    const auto found = commands.find(command.command);
+    panic_if(found == commands.end() ||
+                 found->second.phase != Phase::Reserved ||
+                 found->second.token != token ||
+                 found->second.descriptor != command,
+             "Dispatch does not match the reserved immutable command");
+    // A synchronous accepted/completed callback can consume this state.
+    found->second.phase = Phase::Dispatched;
     const auto count = command.config.vl > command.config.vstart
                            ? command.config.vl - command.config.vstart
                            : 0;
@@ -86,6 +108,11 @@ CpuVectorInterface::dispatch(const GrantToken &token,
 void
 CpuVectorInterface::accepted(CommandKey command)
 {
+    const auto found = commands.find(command);
+    panic_if(found == commands.end() ||
+                 found->second.phase != Phase::Dispatched,
+             "Unknown or duplicate CPU acceptance");
+    found->second.phase = Phase::Accepted;
     ++acceptedNotifications;
     completionEndpoint.accepted(command);
 }
@@ -93,8 +120,33 @@ CpuVectorInterface::accepted(CommandKey command)
 void
 CpuVectorInterface::completed(const VectorCompletion &completion)
 {
+    const auto found = commands.find(completion.command);
+    panic_if(found == commands.end() || found->second.phase != Phase::Accepted,
+             "Unknown, premature or duplicate CPU completion");
+    const auto &command = found->second.descriptor;
+    panic_if(!validFpFlags(completion.fpFlags) ||
+                 (!command.fpContext && completion.fpFlags) ||
+                 completion.scalarResult,
+             "Unexpected CPU completion effects");
+    if (completion.status == CompletionStatus::Success) {
+        panic_if(completion.fault || completion.finalVstart != 0,
+                 "Invalid successful completion");
+    } else {
+        const auto *memory = std::get_if<MemoryCommand>(&command.payload);
+        panic_if(
+            completion.status != CompletionStatus::MemoryFault || !memory ||
+                !completion.fault || completion.fault->fault == NoFault ||
+                !completion.fault->address ||
+                !completion.fault->elementIndex ||
+                completion.finalVstart != *completion.fault->elementIndex ||
+                completion.finalVstart < command.config.vstart ||
+                completion.finalVstart >= command.config.vl,
+            "Invalid memory fault completion");
+    }
+    found->second.phase = Phase::Completed;
     stats.complete(completion.status != CompletionStatus::Success);
     completionEndpoint.completed(completion);
+    commands.erase(completion.command);
 }
 
 CommandKey

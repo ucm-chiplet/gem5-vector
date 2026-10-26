@@ -88,7 +88,12 @@ AraSequencer::makeTask(const VectorCommand &command) const
     panic_if(config.vstart >= config.vl,
              "Cannot create a task for an empty range");
 
-    const ElementRange elements{config.vstart, config.vl - config.vstart};
+    panic_if(config.vl > std::numeric_limits<uint32_t>::max() ||
+                 config.vstart > std::numeric_limits<uint32_t>::max(),
+             "Task element range is not representable");
+    const ElementRange elements{
+        static_cast<uint32_t>(config.vstart),
+        static_cast<uint32_t>(config.vl - config.vstart)};
 
     // Calcular antes en 64 bits: ByteRange usa campos de 32 bits.
     const auto element_bytes = VectorSupport::elementBytes(config.sewBits);
@@ -120,22 +125,19 @@ AraSequencer::makeTask(const VectorCommand &command) const
     // Una sola tarea por comando: cero es único dentro de CommandKey.
     const TaskKey key{command.command, TaskId{0}};
 
+    for (const auto &operand : describeOperands(command)) {
+        if (const auto *reg = std::get_if<VectorRegRef>(&operand.value)) {
+            check_register(*reg);
+        }
+    }
+
     if (const auto *arithmetic =
             std::get_if<ArithmeticCommand>(&command.payload)) {
-        check_register(arithmetic->destination);
-        check_register(arithmetic->vectorSource);
-
-        if (const auto *source =
-                std::get_if<VectorRegRef>(&arithmetic->secondOperand)) {
-            check_register(*source);
-        }
-
         return ArithmeticTask{UnitTask{key, VectorUnitClass::Lanes, elements},
-                              config, *arithmetic, range};
+                              config, *arithmetic, range, command.fpContext};
     }
 
     const auto &memory = std::get<MemoryCommand>(command.payload);
-    check_register(memory.dataReg);
 
     return MemoryTask{UnitTask{key, VectorUnitClass::Vlsu, elements},
                       config,
@@ -226,6 +228,10 @@ AraSequencer::recvCompletion(const UnitCompletion &completion)
 
     const auto &task = currentTask();
 
+    panic_if(!validFpFlags(completion.fpFlags) ||
+                 (!active->command.fpContext && completion.fpFlags),
+             "Unexpected unit floating-point effects");
+
     panic_if(completion.key != task.key,
              "Completion does not match active TaskKey");
 
@@ -282,6 +288,9 @@ AraSequencer::finish()
     completion.command = active->command.command;
     completion.status = CompletionStatus::Success;
     completion.finalVstart = 0;
+    if (active->completion) {
+        completion.fpFlags = active->completion->fpFlags;
+    }
 
     if (active->completion &&
         active->completion->status == UnitCompletionStatus::MemoryFault) {
@@ -290,15 +299,14 @@ AraSequencer::finish()
         completion.finalVstart = *completion.fault->elementIndex;
     }
 
-    // Preparar todo el estado antes del callback externo.
+    // Closing still owns the command credit throughout the callback.
+    completionEndpoint.completed(completion);
     stats.complete(completion.status != CompletionStatus::Success);
     queue.releaseHead(completion.command);
     active.reset();
 
     // La siguiente instrucción no se ejecuta en esta llamada.
     wakeup();
-
-    completionEndpoint.completed(completion);
 }
 
 } // namespace gem5::vector_engine

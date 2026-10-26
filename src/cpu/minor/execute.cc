@@ -46,6 +46,7 @@
 #if USE_RISCV_ISA
 #include "arch/riscv/faults.hh"
 #include "arch/riscv/insts/static_inst.hh"
+#include "arch/riscv/isa.hh"
 #include "arch/riscv/regs/misc.hh"
 #include "arch/riscv/utility.hh"
 #endif
@@ -55,6 +56,8 @@
 #include "cpu/minor/fetch1.hh"
 #include "cpu/minor/lsq.hh"
 #include "cpu/op_class.hh"
+#include "cpu/vector_engine/common/element_codec.hh"
+#include "cpu/vector_engine/common/operation_traits.hh"
 #include "cpu/vector_engine/interface/vector_command.hh"
 #include "debug/Activity.hh"
 #include "debug/Branch.hh"
@@ -117,6 +120,8 @@ Execute::captureVectorConfig(ThreadContext *thread) const
 
     config.tailAgnostic = (vtype >> 6) & 1;
     config.maskAgnostic = (vtype >> 7) & 1;
+    // Use gem5's VTYPE representation, also for RV32 guests.
+    config.illegalVtype = pc.vtype().vill;
     return config;
 }
 
@@ -179,6 +184,24 @@ Execute::buildVectorCommand(MinorVectorState &state,
                 );
         }
 
+        if (auto *value = std::get_if<RegVal>(&arithmetic.secondOperand);
+            value &&
+            vector_engine::ElementCodec::validWidth(command.config.sewBits)) {
+            auto *isa = dynamic_cast<RiscvISA::ISA *>(thread->getIsaPtr());
+            panic_if(!isa, "RVV scalar normalization requires RISC-V ISA");
+            *value = vector_engine::ElementCodec::normalizeScalar(
+                *value, isa->rvType() == RiscvISA::RV32 ? 32 : 64,
+                command.config.sewBits);
+        }
+        const auto *traits =
+            vector_engine::operationTraits(arithmetic.operation);
+        if (traits && traits->requiresFpContext) {
+            const auto frm =
+                thread->readMiscRegNoEffect(RiscvISA::MISCREG_FRM);
+            command.fpContext = vector_engine::FpExecutionContext{
+                frm <= 4 ? static_cast<vector_engine::FpRoundingMode>(frm)
+                         : vector_engine::FpRoundingMode::Invalid};
+        }
         command.payload = arithmetic;
 
     } else if (auto *mem_op = std::get_if<DecodedMemoryOp>(&payload_variant)) {
@@ -1312,6 +1335,12 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                  */
                 break;
             case MinorVectorPhase::Completed:
+                if (vec_state->completion->fpFlags) {
+                    const auto flags = thread->readMiscReg(
+                        RiscvISA::MISCREG_FFLAGS);
+                    thread->setMiscReg(RiscvISA::MISCREG_FFLAGS,
+                                      flags | vec_state->completion->fpFlags);
+                }
                 thread->setMiscReg(RiscvISA::MISCREG_VSTART,
                                    vec_state->completion->finalVstart);
 
