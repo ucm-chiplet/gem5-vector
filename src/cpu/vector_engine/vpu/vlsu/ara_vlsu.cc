@@ -142,7 +142,7 @@ AraVLSU::prepareElement()
     request.requestId = state.nextRequestId++;
     request.direction = state.task.memory.direction;
     request.registerRef = state.task.memory.dataReg;
-    request.elementIndex = state.nextElement;
+    request.elements = ElementRange{state.nextElement, 1};
     // vstart limita qué elementos se ejecutan; no desplaza la base del vector.
     // La máscara aplica el ancho del objetivo a la suma sin signo.
     const auto element_bytes =
@@ -153,6 +153,7 @@ AraVLSU::prepareElement()
         (state.task.memory.base + Addr{state.nextElement} * element_bytes) &
         addressMask;
     request.size = element_bytes;
+    request.elementBytes = element_bytes;
     request.byteEnable.assign(element_bytes, 1);
     request.pc = state.task.pc;
     request.requestorId = state.task.requestorId;
@@ -163,8 +164,8 @@ AraVLSU::prepareElement()
     panic_if(mapping.size() != 1 ||
                  mapping.front().originalRange != request.dataRange,
              "A VLSU element must belong to one VRF word");
-    request.laneId = mapping.front().laneId;
-    // El emisor es Vlsu, sin lane propia; request.laneId es el destino.
+    element.laneId = mapping.front().laneId;
+    // The block has no physical lane; this element has one mapped owner.
     // La lectura del store y la escritura de la carga usan la misma forma
     // de acceso, pero cada elemento obtiene un accessId nuevo.
     element.vrfAccess = VrfAccess{
@@ -246,7 +247,7 @@ AraVLSU::evaluate()
         case Phase::SendRead: {
             const VrfReadRequest request{state.element->vrfAccess};
             state.phase = Phase::WaitRead;
-            handleTransfer(sendRead(state.element->request.laneId, request),
+            handleTransfer(sendRead(state.element->laneId, request),
                            Phase::SendRead, Phase::WaitRead);
             break;
         }
@@ -260,7 +261,7 @@ AraVLSU::evaluate()
             const VrfWriteRequest request{state.element->vrfAccess,
                                           state.element->load->data};
             state.phase = Phase::WaitWrite;
-            handleTransfer(sendWrite(state.element->request.laneId, request),
+            handleTransfer(sendWrite(state.element->laneId, request),
                            Phase::SendWrite, Phase::WaitWrite);
             break;
         }
@@ -340,9 +341,9 @@ AraVLSU::recvMemoryResponse(const VectorMemoryResponse &response)
                      "Invalid load response");
             // Los metadatos de destino proceden de la petición conservada.
             // Todavía falta escribir estos bytes en el LRF y recibir su ack.
-            element.load = LoadData{request.taskKey,     request.requestId,
-                                    request.registerRef, request.elementIndex,
-                                    request.laneId,      request.dataRange,
+            element.load = LoadData{request.taskKey,      request.requestId,
+                                    request.registerRef,  request.elements,
+                                    request.elementBytes, request.dataRange,
                                     response.data};
             active->phase = Phase::SendWrite;
             break;
@@ -360,7 +361,8 @@ AraVLSU::recvMemoryResponse(const VectorMemoryResponse &response)
                          response.fault->fault == NoFault ||
                          !response.fault->address ||
                          !response.fault->elementIndex ||
-                         *response.fault->elementIndex != request.elementIndex,
+                         *response.fault->elementIndex !=
+                             request.elements.firstElement,
                      "Incomplete or mismatched memory fault");
             panic_if(*response.fault->address > addressMask ||
                          ((*response.fault->address - request.virtualAddress) &

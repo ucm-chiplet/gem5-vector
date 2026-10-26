@@ -92,6 +92,8 @@ class AraVLSU
     {
         // Mantiene (TaskKey, requestId) hasta cerrar también el acceso al VRF.
         VectorMemoryRequest request;
+        // Physical placement belongs to local execution, not the block key.
+        LaneId laneId = 0;
         // Identidad independiente de memoria, asociada al mismo elemento.
         VrfAccess vrfAccess;
         // Conserva los bytes de carga mientras el LRF rechaza o confirma

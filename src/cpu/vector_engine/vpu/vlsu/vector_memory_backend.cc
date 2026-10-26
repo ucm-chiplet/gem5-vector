@@ -132,11 +132,11 @@ VectorMemoryBackend::validateRequest(const VectorMemoryRequest &request) const
     panic_if(request.direction != MemoryDirection::Load &&
                  request.direction != MemoryDirection::Store,
              "Invalid vector memory direction");
-    panic_if(!VectorSupport::supportsElementBytes(request.size) ||
+    panic_if(!request.validBlockShape() ||
+                 request.elements.elementCount != 1 ||
+                 !VectorSupport::supportsElementBytes(request.elementBytes) ||
                  !request.registerRef.valid() || !request.dataRange.valid() ||
                  request.dataRange.size != request.size ||
-                 uint64_t{request.elementIndex} * request.size !=
-                     request.dataRange.offset ||
                  request.virtualAddress > addressMask ||
                  request.byteEnable != ByteEnable(request.size, 1),
              "Invalid vector memory element descriptor");
@@ -437,7 +437,7 @@ VectorMemoryBackend::recordFault(FragmentState &fragment, const Fault &fault)
         // Conservar dirección del fragmento e índice del elemento original.
         // Un error de acceso no revierte stores ya confirmados anteriormente.
         active->fault = FaultInfo{fault, fragment.request->getVaddr(),
-                                  active->request.elementIndex};
+                                  active->request.elements.firstElement};
     }
 }
 

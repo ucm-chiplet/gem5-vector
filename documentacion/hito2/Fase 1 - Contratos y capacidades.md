@@ -43,6 +43,21 @@ identificadores vivos y el agotamiento de un contador es un error interno.
 
 ## Contratos preparados
 
+La petición de memoria distingue `elementBytes`, `elements`, `size` y
+`dataRange`. Se exige:
+
+```text
+size = elementCount * elementBytes
+dataRange.size = size
+dataRange.offset = firstElement * elementBytes
+```
+
+No tiene una lane física única. La VLSU conserva la ubicación del elemento
+en su estado privado; el mapper es su autoridad. `LoadData` conserva rango,
+ancho, datos y clave hasta cerrar la escritura. El backend sólo admite
+`elementCount == 1`; no se forma un bloque agrupado ni se aumenta el número
+de paquetes físicos en vuelo.
+
 `VectorInterconnect` define capacidades, binding de receptores, envío,
 recepción reservada y drain. Un paquete aceptado tiene entrega única y su
 entrega no implica `WriteAck`. El productor conserva asociaciones hasta

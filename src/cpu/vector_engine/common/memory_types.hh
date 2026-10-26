@@ -21,7 +21,8 @@ inline constexpr RequestId InvalidRequestId =
     std::numeric_limits<RequestId>::max();
 
 /**
- * Petición lógica de un elemento completo. El backend puede dividirla en
+ * Logical contiguous element block. Phase 1 admits elementCount == 1 only.
+ * El backend puede dividirla en
  * fragmentos físicos, pero devuelve una sola respuesta con la misma clave.
  * No transporta objetos de instrucción CPU ni paquetes de gem5.
  */
@@ -34,10 +35,9 @@ struct VectorMemoryRequest
     // Destino de carga o fuente de store; dataRange es relativo al grupo.
     VectorRegRef registerRef;
     ByteRange dataRange;
-    // Índice absoluto: dirección unit-stride = base + elementIndex * size.
-    uint32_t elementIndex = 0;
-    // Lane propietaria según AddressMapper, no identidad del emisor VLSU.
-    LaneId laneId = 0;
+    // Absolute elements; size = elementCount * elementBytes. No unique lane.
+    ElementRange elements;
+    uint32_t elementBytes = 0;
     Addr virtualAddress = 0;
     uint32_t size = 0;
     // Vacío en carga; size bytes ya capturados del VRF en store.
@@ -47,6 +47,21 @@ struct VectorMemoryRequest
     // Metadatos originales de CPU; contextId viaja dentro de taskKey.
     Addr pc = 0;
     RequestorID requestorId = Request::invldRequestorId;
+
+    /**
+     * Comprueba en 64 bits las relaciones elementos/bytes del descriptor.
+     * No valida soporte, direcciones ni buffers y no activa agrupación:
+     * el backend actual exige además elementCount == 1.
+     */
+    bool
+    validBlockShape() const
+    {
+        return elements.valid() && elementBytes && dataRange.valid() &&
+               uint64_t{elements.elementCount} * elementBytes == size &&
+               dataRange.size == size &&
+               uint64_t{elements.firstElement} * elementBytes ==
+                   dataRange.offset;
+    }
 };
 
 enum class MemoryResponseStatus : uint8_t
@@ -81,8 +96,8 @@ struct LoadData
     TaskKey taskKey;
     RequestId requestId = InvalidRequestId;
     VectorRegRef destinationReg;
-    uint32_t elementIndex = 0;
-    LaneId laneId = 0;
+    ElementRange elements;
+    uint32_t elementBytes = 0;
     ByteRange destinationByteRange;
     ByteBuffer data;
 };
