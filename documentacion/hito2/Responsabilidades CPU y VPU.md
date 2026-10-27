@@ -4,6 +4,9 @@ Guía de trabajo por fase, complementaria al [diseño del hito][diseno] y a
 su [matriz de instrucciones y anchos][hito2]. La [entrega de fase 1][fase1]
 distingue contratos implementados y capacidades pendientes. Las acciones
 siguientes describen responsabilidades; no certifican soporte comprobado.
+La [entrega VPU de fase 2](<Fase 2 - Anchos y grupos.md>) registra la
+ampliación de anchos y grupos del backend, sus comprobaciones y los
+pendientes de integración CPU; no cierra la fase conjunta por sí sola.
 
 El contexto y los límites se mantienen en los [objetivos globales][objetivos]
 (O2 y O6), el [resumen de hitos][resumen], el [plan de evolución][plan] y el

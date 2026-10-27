@@ -17,10 +17,14 @@ Alu::Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
          statistics::Group &stats_parent,
          const ExecutionParameters &parameters)
     : stats(&stats_parent, "alu", "integer bundles"),
+      elements8(&stats, "elements8", statistics::units::Count::get(),
+                "Admitted 8-bit integer elements"),
       elements16(&stats, "elements16", statistics::units::Count::get(),
                  "Admitted 16-bit integer elements"),
       elements32(&stats, "elements32", statistics::units::Count::get(),
                  "Admitted 32-bit integer elements"),
+      elements64(&stats, "elements64", statistics::units::Count::get(),
+                 "Admitted 64-bit integer elements"),
       owner(owner),
       parameters(parameters),
       sendResult(std::move(send_result)),
@@ -64,13 +68,27 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
                  (bundle.byteOrder != ByteOrder::little &&
                   bundle.byteOrder != ByteOrder::big),
              "Invalid integer ALU execution bundle");
+    panic_if(bundle.destination.regCount !=
+                 VectorSupport::groupRegisterCount(bundle.emul),
+             "ALU destination does not match its effective register group");
 
     active.emplace();
     active->bundle = bundle;
-    if (bundle.sewBits == 16) {
-        elements16 += bundle.elements.elementCount;
-    } else {
-        elements32 += bundle.elements.elementCount;
+    switch (bundle.sewBits) {
+        case 8:
+            elements8 += bundle.elements.elementCount;
+            break;
+        case 16:
+            elements16 += bundle.elements.elementCount;
+            break;
+        case 32:
+            elements32 += bundle.elements.elementCount;
+            break;
+        case 64:
+            elements64 += bundle.elements.elementCount;
+            break;
+        default:
+            panic("Invalid element width in an admitted integer bundle");
     }
     stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
     // Reservar tantos bytes de resultado como ocupan los elementos recibidos.
@@ -94,7 +112,10 @@ Alu::execute()
     panic_if(!active, "ALU evaluation without an accepted bundle");
     const auto &bundle = active->bundle;
     // Interpretar cada par de elementos usando el orden de bytes del objetivo.
-    // write conserva sólo los bits del ancho elegido si la suma lo supera.
+    // uint64_t suma módulo 2^64 sin overflow con signo del host; write
+    // conserva los bits bajos para 8/16/32. No se usan shifts por 64 bits.
+    // RVV 1.0, edición 20240411: Vector Integer Arithmetic Instructions,
+    // Vector Single-Width Integer Add and Subtract.
     for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
         const auto lhs = ElementCodec::read(bundle.lhs, i, bundle.sewBits,
                                             bundle.byteOrder);

@@ -46,10 +46,10 @@ class VectorEngine(ClockedObject):
         "Supported LMUL exponents: -3 (mf8) through 3 (m8)"
     )
     supported_sews = VectorParam.UInt32(
-        [16, 32], "Active backend SEWs in bits"
+        [16, 32], "Enabled backend SEWs; implemented widths: 8/16/32/64"
     )
     elen_bits = Param.UInt32(64, "Must match the connected CPU ELEN")
-    max_active_commands = Param.UInt32(1, "Phase 1 requires exactly one")
+    max_active_commands = Param.UInt32(1, "Width profile requires one")
     mapping_policy = Param.String("word_striped", "VRF placement policy")
     command_queue_entries = Param.UInt32(
         1, "Command capacity including reservations and the active head"
@@ -62,7 +62,7 @@ class VectorEngine(ClockedObject):
         1, "Result buffers per lane; baseline requires one"
     )
     max_bundle_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
-    alus_per_lane = Param.UInt32(1, "Phase 1 requires exactly one")
+    alus_per_lane = Param.UInt32(1, "Width profile requires one")
     alu_width_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
     alu_capacity = Param.UInt32(1, "Pending bundles per ALU")
     alu_latency = Param.Cycles(1, "Functional ALU response scheduling")
@@ -78,10 +78,10 @@ class VectorEngine(ClockedObject):
     bank_latency = Param.Cycles(1, "Functional bank response scheduling")
     bank_initiation_interval = Param.Cycles(1, "Prepared service contract")
     memory_max_block_bytes = Param.UInt32(8, "Prepared block byte limit")
-    memory_active_blocks = Param.UInt32(1, "Phase 1 requires exactly one")
+    memory_active_blocks = Param.UInt32(1, "One active memory element")
     memory_block_requests = Param.Bool(False, "Reserved for phase 4")
     memory_max_outstanding_packets = Param.UInt32(1, "Physical packet limit")
-    interconnect_enabled = Param.Bool(False, "No active network in phase 1")
+    interconnect_enabled = Param.Bool(False, "Reserved for phase 7")
     interconnect_max_packet_bytes = Param.UInt32(0, "Zero resolves to a word")
     interconnect_packets_per_destination = Param.UInt32(1, "Packet entries")
     interconnect_bytes_per_destination = Param.UInt32(

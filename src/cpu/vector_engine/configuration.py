@@ -114,7 +114,7 @@ class InterconnectConfiguration:
     """Espacio, velocidad y tiempo de viaje previstos para la futura red.
 
     Los tamaños son bytes y las velocidades, bytes por ciclo. Estos valores
-    se comprueban al construir, pero en la fase 1 enabled debe ser False.
+    se comprueban al construir, pero enabled sigue siendo False hasta fase 7.
     """
 
     enabled: bool = False
@@ -133,6 +133,12 @@ class VpuConfiguration:
     Cada parte describe un módulo y sus valores no cambian tras crearla.
     VectorEngine comprueba la composición al construir los recursos reales.
     Allí los anchos con valor cero toman el tamaño de palabra del VRF.
+
+    El backend admite suma y memoria de 8/16/32/64 bits en el perfil SEW/LMUL
+    de fase 2.2. supported_sews y supported_lmuls habilitan su intersección
+    con ese perfil, no todas las parejas del producto cartesiano. LMUL usa
+    exponentes de dos (-3 para mf8, 3 para m8). Los valores predeterminados
+    conservan 16/32 bits y m1; las rutas CPU se documentan por separado.
     """
 
     vrf: VrfConfiguration

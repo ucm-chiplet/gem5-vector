@@ -100,11 +100,9 @@ AraVLSU::validateTask(const MemoryTask &task) const
              "Memory byte range does not match its elements");
     // LMUL fraccionario usa un registro contenedor, pero sólo permite
     // acceder a su fracción inicial. regCount no expresa esa capacidad.
-    const uint64_t vlen_bytes = mapper.geometry().vlenBytes;
-    const int exponent = static_cast<int>(config.lmul);
-    const uint64_t capacity =
-        exponent >= 0 ? vlen_bytes << exponent : vlen_bytes >> -exponent;
-    const unsigned registers = exponent > 0 ? 1U << exponent : 1U;
+    const auto capacity =
+        VectorSupport::groupBytes(mapper.geometry().vlenBytes, config.lmul);
+    const auto registers = VectorSupport::groupRegisterCount(config.lmul);
     panic_if(uint64_t{config.vl} * element_bytes > capacity ||
                  end > capacity || !memory.dataReg.naturallyAligned() ||
                  memory.dataReg.regCount != registers,

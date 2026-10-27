@@ -49,8 +49,12 @@ AddressMapper::AddressMapper(const VrfGeometry &geometry,
                  !geometry.numLanes || !geometry.banksPerLane,
              "VRF geometry requires positive dimensions");
     fatal_if(geometry.laneWordBytes % 4 != 0,
-             "VRF words must contain whole 32-bit elements");
+             "VRF word size must be a multiple of four bytes");
 
+    // Cada registro empieza en la misma posición de una franja. Así el
+    // layout no depende de SEW ni del primer registro de un grupo entero.
+    // VectorEngine comprueba además divisibilidad por cada SEW habilitado:
+    // una palabra de cuatro bytes no puede habilitar elementos de 64 bits.
     // El producto de dos dimensiones de 32 bits cabe en 64 bits.
     const uint64_t stripe_bytes =
         uint64_t{geometry.laneWordBytes} * geometry.numLanes;

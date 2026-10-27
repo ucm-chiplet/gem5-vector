@@ -101,15 +101,13 @@ TaskDistributor::validateTask(const ArithmeticTask &task) const
              "Arithmetic byte range does not match its elements");
 
     const auto vlen_bytes = mapper.geometry().vlenBytes;
-    const int exponent = static_cast<int>(config.lmul);
-    const uint64_t effective_bytes = exponent >= 0
-                                         ? uint64_t{vlen_bytes} << exponent
-                                         : uint64_t{vlen_bytes} >> -exponent;
+    const auto effective_bytes =
+        VectorSupport::groupBytes(vlen_bytes, config.lmul);
     panic_if(uint64_t{config.vl} * element_bytes > effective_bytes ||
                  end > effective_bytes,
              "Arithmetic task exceeds effective LMUL capacity");
 
-    const unsigned expected_regs = exponent > 0 ? 1U << exponent : 1U;
+    const auto expected_regs = VectorSupport::groupRegisterCount(config.lmul);
     const auto check_register = [&](const VectorRegRef &reg) {
         panic_if(!reg.naturallyAligned() || reg.regCount != expected_regs ||
                      end > uint64_t{vlen_bytes} * reg.regCount,
@@ -144,6 +142,9 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
     }
 
     // Recorrer conjuntamente destino y fuentes, cortando en cada frontera.
+    // VLEN es múltiplo de una franja completa de lanes: el mismo offset de
+    // registros distintos pertenece a la misma lane, también en m2/m4/m8.
+    // El rango conserva índices globales al cruzar de un registro al otro.
     std::vector<std::size_t> positions(mappings.size(), 0);
     uint32_t offset = range.offset;
     while (offset < range.end()) {
@@ -171,6 +172,9 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
                  "Lane fragment identifiers exhausted");
         const auto fragment_id =
             static_cast<LaneFragmentId>(state.fragments.size());
+        // El rango ya está limitado por vl/vstart y la capacidad efectiva.
+        // En fraccionales no se amplía hasta el final de la palabra física:
+        // los byte enables preservarán el resto del registro contenedor.
         const ByteRange fragment_range{offset, end - offset};
 
         LaneTask fragment;

@@ -16,8 +16,8 @@ namespace gem5::vector_engine
 {
 
 /**
- * ALU entera de 16/32 bits con capacidad para un bundle. Copia los operandos
- * y reserva el resultado al aceptar; responde en una evaluación posterior.
+ * ALU de suma entera de 8/16/32/64 bits con capacidad para un bundle. Copia
+ * los operandos y reserva el resultado al aceptar; responde después.
  * El evento garantiza progreso, no modela una latencia de hardware Ara.
  * El propietario y el receptor sobreviven al módulo, hasta completar drain.
  */
@@ -50,8 +50,10 @@ class Alu
     };
 
     ModuleStats stats;
+    statistics::Scalar elements8;
     statistics::Scalar elements16;
     statistics::Scalar elements32;
+    statistics::Scalar elements64;
     ClockedObject &owner;
     const ExecutionParameters &parameters;
     ResultSender sendResult;

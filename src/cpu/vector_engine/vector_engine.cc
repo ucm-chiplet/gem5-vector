@@ -110,21 +110,22 @@ VectorEngine::makeConfiguration(const Params &params)
              "VectorEngine requires a power-of-two VLEN of 4..8192 bytes");
     fatal_if(!config.commandQueueEntries || config.maxActiveCommands != 1 ||
                  config.maxActiveCommands > config.commandQueueEntries,
-             "Phase 1 requires one active command and a positive queue");
+             "Width profile requires one active command and a positive queue");
     fatal_if(params.elen_bits != 32 && params.elen_bits != 64,
              "VectorEngine requires ELEN of 32 or 64 bits");
     fatal_if(uint64_t{bytes} * 8 < config.elenBits,
              "VectorEngine requires VLEN >= ELEN");
     fatal_if(!config.lane.currentProfile(word_bytes) ||
                  !config.bank.currentProfile(),
-             "VectorEngine resource profile is not implemented in phase 1");
+             "VectorEngine resource profile is not implemented");
     fatal_if(config.memory.addressBits != 32 &&
                  config.memory.addressBits != 64,
              "VectorEngine requires a 32-bit or 64-bit address width");
-    fatal_if(config.memory.maxOutstandingPackets != 1 ||
-                 config.vlsu.activeBlocks != 1 || config.vlsu.blockRequests ||
-                 config.interconnect.enabled,
-             "Phase 1 has one memory element/packet and no interconnect");
+    fatal_if(
+        config.memory.maxOutstandingPackets != 1 ||
+            config.vlsu.activeBlocks != 1 || config.vlsu.blockRequests ||
+            config.interconnect.enabled,
+        "Width profile has one memory element/packet and no interconnect");
     fatal_if(params.mapping_policy != "word_striped",
              "Only word_striped VRF mapping is implemented");
     fatal_if(params.target_byte_order != ByteOrder::little &&

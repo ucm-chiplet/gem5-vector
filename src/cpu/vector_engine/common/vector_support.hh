@@ -52,11 +52,24 @@ class VectorSupport
 
     /**
      * Indica si el ancho del elemento (SEW) y el tamaño del grupo (LMUL)
-     * caben en el perfil que queremos admitir para ese ELEN. Esa combinación
-     * puede necesitar trabajo pendiente antes de poder ejecutarse.
+     * caben en el perfil de suma y memoria de ese ELEN. No comprueba la
+     * habilitación de la configuración ni la ruta de decode de la CPU.
      */
     static bool inTargetProfile(uint16_t sew_bits, VectorLmul lmul,
                                 uint16_t elen_bits = 64);
+    /**
+     * Número de registros contenedores de un LMUL representable. Los grupos
+     * fraccionales usan un nombre completo aunque sólo accedan a una parte.
+     * No comprueba alineación, límites arquitectónicos ni soporte activo.
+     */
+    static uint8_t groupRegisterCount(VectorLmul lmul);
+    /**
+     * Capacidad efectiva en bytes: LMUL * vlen_bytes, con aritmética de
+     * 64 bits. LMUL debe ser representable y VLEN debe ser positivo.
+     * Los módulos la comprueban además del tamaño físico del contenedor
+     * para impedir que una tarea fraccional acceda a su tail.
+     */
+    static uint64_t groupBytes(uint32_t vlen_bytes, VectorLmul lmul);
     /**
      * Comprueba que el comando tiene identidad, configuración y operandos
      * coherentes antes de reservar espacio. Devuelve el motivo de rechazo

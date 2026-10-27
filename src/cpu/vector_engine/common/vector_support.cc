@@ -126,6 +126,28 @@ VectorSupport::inTargetProfile(uint16_t sew_bits, VectorLmul lmul,
     return sew_bits <= (elen_bits >> -exponent);
 }
 
+uint8_t
+VectorSupport::groupRegisterCount(VectorLmul lmul)
+{
+    panic_if(!isValid(lmul), "Invalid LMUL for a register group");
+    if (lmul > VectorLmul::M1) {
+        return 1U << static_cast<int>(lmul);
+    }
+    return 1;
+}
+
+uint64_t
+VectorSupport::groupBytes(uint32_t vlen_bytes, VectorLmul lmul)
+{
+    panic_if(!vlen_bytes || !isValid(lmul),
+             "Invalid VLEN or LMUL for an effective register group");
+    const int exponent = static_cast<int>(lmul);
+    if (exponent >= 0) {
+        return uint64_t{vlen_bytes} << exponent;
+    }
+    return uint64_t{vlen_bytes} >> -exponent;
+}
+
 std::optional<RejectionReason>
 VectorSupport::checkStructure(const VectorCommand &command)
 {
@@ -146,10 +168,7 @@ VectorSupport::checkStructure(const VectorCommand &command)
     }
     // Un grupo fraccional sigue usando un nombre de registro. Los grupos
     // mayores que m1 ocupan 2, 4 u 8 registros consecutivos.
-    unsigned expected_regs = 1;
-    if (config.lmul > VectorLmul::M1) {
-        expected_regs = 1U << static_cast<int>(config.lmul);
-    }
+    const auto expected_regs = groupRegisterCount(config.lmul);
     const auto check_reg = [&](const VectorRegRef &reg) {
         return reg.naturallyAligned() && reg.regCount == expected_regs;
     };
@@ -201,13 +220,8 @@ VectorSupport::maxElements(uint32_t vlen_bytes, VectorLmul lmul,
 {
     panic_if(!isValid(lmul) || !ElementCodec::validWidth(sew_bits),
              "Invalid vector configuration for VLMAX");
-    const int exponent = static_cast<int>(lmul);
-    const uint64_t vlen_bits = uint64_t{vlen_bytes} * 8;
-    // LMUL amplía o reduce el espacio disponible antes de contar elementos.
-    if (exponent >= 0) {
-        return (vlen_bits << exponent) / sew_bits;
-    }
-    return vlen_bits / (uint64_t{sew_bits} << -exponent);
+    // Contar sólo elementos completos dentro de la capacidad efectiva.
+    return groupBytes(vlen_bytes, lmul) / ElementCodec::bytes(sew_bits);
 }
 
 std::optional<RejectionReason>

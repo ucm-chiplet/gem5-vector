@@ -55,10 +55,10 @@ operationTraits(ArithmeticOperation operation)
                                          true}; // Admisible desde CPU.
     static constexpr OperationTraits float_add{ExecutionClass::FloatingPoint,
                                                ElementFormat::IeeeFloat,
-                                               {16, 0}, // Sólo binary16.
-                                               true,    // Dos vectores.
-                                               false,   // Sin forma escalar.
-                                               true,    // Necesita redondeo.
+                                               {16},   // Sólo binary16.
+                                               true,   // Dos vectores.
+                                               false,  // Sin forma escalar.
+                                               true,   // Necesita redondeo.
                                                false,  // Sin acceso a memoria.
                                                false}; // Sin offload CPU.
     switch (operation) {

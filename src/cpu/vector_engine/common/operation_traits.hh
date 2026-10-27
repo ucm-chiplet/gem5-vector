@@ -41,7 +41,7 @@ struct VectorCommand;
 
 // Anchos del backend actual, compartidos por suma y memoria; no son la
 // matriz objetivo SEW x LMUL ni una lista de rutas de decode comprobadas.
-inline constexpr std::array<uint16_t, 2> IntegerElementWidths{16, 32};
+inline constexpr std::array<uint16_t, 4> IntegerElementWidths{8, 16, 32, 64};
 
 /** Indica qué tipo de unidad se encarga de una operación enviada por CPU. */
 enum class ExecutionClass : uint8_t
@@ -61,7 +61,7 @@ struct OperationTraits
 {
     ExecutionClass execution;
     ElementFormat format;
-    std::array<uint16_t, 2> widths;
+    std::array<uint16_t, IntegerElementWidths.size()> widths;
     bool vectorVector;
     bool vectorScalar;
     bool requiresFpContext;

@@ -104,24 +104,14 @@ AraSequencer::makeTask(const VectorCommand &command) const
     panic_if(end > std::numeric_limits<uint32_t>::max(),
              "Task byte range is not representable");
 
-    const int exponent = static_cast<int>(config.lmul);
-    // LMUL multiplica o divide el espacio disponible de un registro.
-    uint64_t effective_bytes = uint64_t{vlenBytes};
-    if (exponent >= 0) {
-        effective_bytes <<= exponent;
-    } else {
-        effective_bytes >>= -exponent;
-    }
-
+    const auto effective_bytes =
+        VectorSupport::groupBytes(vlenBytes, config.lmul);
     panic_if(end > effective_bytes, "Task exceeds effective LMUL capacity");
 
     const ByteRange range{static_cast<uint32_t>(offset),
                           static_cast<uint32_t>(size)};
 
-    unsigned expected_regs = 1;
-    if (exponent > 0) {
-        expected_regs = 1U << exponent;
-    }
+    const auto expected_regs = VectorSupport::groupRegisterCount(config.lmul);
 
     const auto check_register = [&](const VectorRegRef &reg) {
         panic_if(!reg.naturallyAligned() || reg.regCount != expected_regs ||

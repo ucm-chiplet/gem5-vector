@@ -5,6 +5,10 @@ el soporte de instrucciones, la admisión, los mensajes ni el calendario de
 eventos. Se registran como grupos nativos de gem5 y aparecen en `stats.txt`
 con su descripción y unidad. El benchmark también las exporta a CSV.
 
+Esta referencia incluye los contadores añadidos por la [entrega VPU de
+fase 2 del hito 2](<../hito2/Fase 2 - Anchos y grupos.md>). Esa ampliación
+no añade evidencia funcional al baseline ni a las nuevas combinaciones.
+
 ## Dónde encontrarlas
 
 ```bash
@@ -84,7 +88,7 @@ son las demoras funcionales del modelo, no latencias calibradas de Ara.
 | Sequencer | `arithmeticCommands`, `loadCommands`, `storeCommands`, `emptyCommands` | Familias de comandos iniciados; un rango vacío se clasifica por familia y además no genera tarea. |
 | Distribuidor | `fragmentsCreated`, `fragmentsAccepted`, `fragmentsCompleted`, `laneRetries` | Fragmentación y entregas por lane. Un retry no crea fragmento nuevo. |
 | Lane | `vrfReads`, `vrfWrites`, `vrfReadRetries`, `vrfWriteRetries`, `executionRetries` | Accesos concedidos y reintentos en cada frontera; un escalar de `.vx` no provoca lectura de segunda fuente vectorial. |
-| ALU | `elements16`, `elements32` | Elementos admitidos por ancho; el offload Minor actual utiliza 32 bits. |
+| ALU | `elements8`, `elements16`, `elements32`, `elements64` | Elementos admitidos por ancho; 8/64 se añaden en la entrega VPU de fase 2 del hito 2. El baseline comprobado utiliza 32 bits. |
 | FPU | `inexactBundles`, `underflowBundles`, `overflowBundles`, `divideByZeroBundles`, `invalidBundles` | Bundles completados con cada flag, como máximo una vez por flag y bundle. Son causas no excluyentes. |
 | LRF/banco | `reads`, `writes`, `readBytes`, `writeBytes` | Accesos aceptados y bytes habilitados por dirección; excluyen intentos rechazados. |
 | VLSU | `loadTasks`, `storeTasks` | Tareas admitidas por dirección. |
@@ -110,6 +114,8 @@ En una ejecución completa sin reset ni faults:
   sequencer; las tareas de memoria concuerdan con cargas más stores.
 - Los fragmentos creados, aceptados y terminados del distribuidor concuerdan
   con la suma de fragmentos completados de todas las lanes.
+- En cada ALU, `elements8 + elements16 + elements32 + elements64` coincide
+  con `elements`: los cuatro contadores registran admisiones, sin retries.
 - `lrf<N>.accepted` concuerda con sus lecturas más escrituras y con la suma
   de accesos aceptados en sus bancos.
 - `memory.accepted == vlsu.memoryRequests`; los elementos de carga/store

@@ -100,11 +100,13 @@ AraLane::validateTask(const LaneTask &task) const
                  (second_source && *task.secondVectorSourceRange != expected),
              "Lane byte ranges do not match their elements");
 
+    // regCount describe el contenedor, no los bytes utilizables de un LMUL
+    // fraccional. Revisar ambos límites antes de solicitar cualquier acceso.
+    panic_if(offset + size > VectorSupport::groupBytes(
+                                 mapper.geometry().vlenBytes, task.lmul),
+             "Lane fragment exceeds effective LMUL capacity");
     const ByteEnable byte_enable(expected.size, 1);
-    unsigned expected_regs = 1;
-    if (task.lmul > VectorLmul::M1) {
-        expected_regs = 1U << static_cast<int>(task.lmul);
-    }
+    const auto expected_regs = VectorSupport::groupRegisterCount(task.lmul);
     const auto check_register = [&](const VectorRegRef &reg) {
         panic_if(!reg.naturallyAligned() || reg.regCount != expected_regs,
                  "Invalid architectural group in a lane fragment");
