@@ -16,18 +16,23 @@ namespace gem5::vector_engine
 
 AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
                  const LaneParameters &parameters, LaneId lane_id,
-                 ByteOrder target_byte_order, ReadSender send_read,
-                 WriteSender send_write, CompletionSender send_completion)
+                 ByteOrder target_byte_order, VrfWakeup wake_vrf,
+                 CompletionSender send_completion)
     : stats(&owner, "lane" + std::to_string(lane_id), "lane fragments"),
+      lhsBuffers(&stats, "lhsBuffers", "reserved LHS buffers"),
+      rhsBuffers(&stats, "rhsBuffers", "reserved RHS buffers"),
+      resultBuffers(&stats, "resultBuffers", "reserved result buffers"),
+      writebacks(&stats, "writebacks", "retained writebacks"),
       vrfReads(&stats, "vrfReads", statistics::units::Count::get(),
-               "Operand read accesses accepted by local VRF"),
+               "Operand reads granted by local VRF"),
       vrfWrites(&stats, "vrfWrites", statistics::units::Count::get(),
-                "Writeback accesses accepted by local VRF"),
-      vrfReadRetries(&stats, "vrfReadRetries", statistics::units::Count::get(),
-                     "Operand read attempts rejected by local VRF"),
-      vrfWriteRetries(&stats, "vrfWriteRetries",
-                      statistics::units::Count::get(),
-                      "Writeback attempts rejected by local VRF"),
+                "Writebacks granted by local VRF"),
+      operandWaitCycles(&stats, "operandWaitCycles",
+                        statistics::units::Cycle::get(),
+                        "Fragment-cycles waiting for operand buffer pairs"),
+      resultWaitCycles(&stats, "resultWaitCycles",
+                       statistics::units::Cycle::get(),
+                       "FIFO issue head cycles waiting for result space"),
       executionRetries(&stats, "executionRetries",
                        statistics::units::Count::get(),
                        "Bundle attempts rejected by execution unit"),
@@ -36,8 +41,7 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
       parameters(parameters),
       laneId(lane_id),
       targetByteOrder(target_byte_order),
-      sendRead(std::move(send_read)),
-      sendWrite(std::move(send_write)),
+      wakeVrf(std::move(wake_vrf)),
       sendCompletion(std::move(send_completion)),
       alu(
           owner, lane_id,
@@ -52,7 +56,8 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
           },
           stats, parameters.fpu),
       progressEvent([this] { evaluate(); },
-                    owner.name() + ".lane" + std::to_string(lane_id))
+                    owner.name() + ".lane" + std::to_string(lane_id), false,
+                    VpuProgressPriority)
 {
     fatal_if(!parameters.currentProfile(mapper.geometry().laneWordBytes),
              "Lane configuration requires unimplemented resources");
@@ -61,13 +66,75 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
     fatal_if(targetByteOrder != ByteOrder::little &&
                  targetByteOrder != ByteOrder::big,
              "AraLane requires the target byte order");
-    fatal_if(!sendRead || !sendWrite || !sendCompletion,
-             "AraLane requires VRF and completion endpoints");
+    fatal_if(!wakeVrf || !sendCompletion,
+             "AraLane requires VRF wakeup and completion endpoints");
+    fatal_if(parameters.taskEntries > contexts.max_size() ||
+                 uint64_t{parameters.taskEntries} * 3 >
+                     std::vector<VrfRequestPort>().max_size(),
+             "Lane context or port count exceeds host container capacity");
+    contexts.resize(parameters.taskEntries);
 }
 
 AraLane::~AraLane()
 {
     panic_if(!isIdle(), "Destroying AraLane before its work has drained");
+}
+
+bool
+AraLane::isIdle() const
+{
+    return std::none_of(contexts.begin(), contexts.end(),
+                        [](const auto &state) { return state.has_value(); }) &&
+           !operandBundles && !resultBundles && alu.isIdle() && fpu.isIdle() &&
+           !progressEvent.scheduled();
+}
+
+std::vector<VrfRequestPort>
+AraLane::vrfPorts()
+{
+    std::vector<VrfRequestPort> ports;
+    ports.reserve(contexts.size() * 3);
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        for (const auto role :
+             {AccessRole::Lhs, AccessRole::Rhs, AccessRole::Destination}) {
+            ports.push_back({[this, i, role] { return peekAccess(i, role); },
+                             [this, i, role](const VrfAccessKey &key) {
+                                 recvVrfGrant(i, role, key);
+                             }});
+        }
+    }
+    return ports;
+}
+
+std::optional<VrfOffer>
+AraLane::peekAccess(std::size_t context, AccessRole role) const
+{
+    if (!contexts[context]) {
+        return std::nullopt;
+    }
+    const auto &slot =
+        contexts[context]->pending[static_cast<std::size_t>(role)];
+    if (!slot || slot->granted) {
+        return std::nullopt;
+    }
+    return VrfOffer{&slot->request, slot->eligibleAt, slot->publishedAt};
+}
+
+void
+AraLane::recvVrfGrant(std::size_t context, AccessRole role,
+                      const VrfAccessKey &key)
+{
+    panic_if(!contexts[context], "VRF grant without a lane context");
+    auto &slot = contexts[context]->pending[static_cast<std::size_t>(role)];
+    panic_if(!slot || slot->granted || slot->eligibleAt > curTick() ||
+                 vrfAccess(slot->request).key != key,
+             "Unknown or duplicate lane VRF grant");
+    slot->granted = true;
+    if (role == AccessRole::Destination) {
+        ++vrfWrites;
+    } else {
+        ++vrfReads;
+    }
 }
 
 void
@@ -123,11 +190,12 @@ AraLane::validateTask(const LaneTask &task) const
 }
 
 VrfAccess
-AraLane::makeAccess(const VectorRegRef &reg, const ByteRange &range)
+AraLane::makeAccess(const TaskKey &task, const VectorRegRef &reg,
+                    const ByteRange &range)
 {
     panic_if(nextAccessId == InvalidVrfAccessId,
              "Lane VRF access identifiers exhausted");
-    return VrfAccess{VrfAccessKey{active->task.key.task,
+    return VrfAccess{VrfAccessKey{task,
                                   VrfRequester{VrfRequesterKind::Lane, laneId},
                                   nextAccessId++},
                      reg, range, ByteEnable(range.size, 1)};
@@ -136,27 +204,63 @@ AraLane::makeAccess(const VectorRegRef &reg, const ByteRange &range)
 TransferResult
 AraLane::acceptTask(const LaneTask &task)
 {
-    if (active) {
+    auto free = std::find_if(contexts.begin(), contexts.end(),
+                             [](const auto &state) { return !state; });
+    if (free == contexts.end()) {
         ++stats.retries;
         return TransferResult::Retry;
     }
     validateTask(task);
-    panic_if(!alu.isIdle() || !fpu.isIdle(),
-             "Idle lane still has an active execution unit");
     if (accessTask && *accessTask == task.key.task) {
-        // TaskDistributor entrega sus fragmentos en orden creciente por lane.
         panic_if(task.key.fragmentId <= lastFragmentId,
                  "Duplicate or out-of-order lane fragment");
     } else {
+        panic_if(std::any_of(contexts.begin(), contexts.end(),
+                             [](const auto &state) { return bool(state); }) ||
+                     !alu.isIdle() || !fpu.isIdle(),
+                 "Lane cannot admit a second task in phase 3");
         accessTask = task.key.task;
         nextAccessId = 0;
     }
     lastFragmentId = task.key.fragmentId;
-    active.emplace();
-    auto &state = *active;
-    state.task = task;
+    free->emplace();
+    (*free)->task = task;
     stats.accept(task.elements.elementCount, task.destinationRange.size);
-    // Los dos slots y sus buffers existen antes de emitir cualquier lectura.
+    wakeup();
+    return TransferResult::Accepted;
+}
+
+std::vector<std::size_t>
+AraLane::orderedContexts() const
+{
+    std::vector<std::size_t> order;
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        if (contexts[i]) {
+            order.push_back(i);
+        }
+    }
+    // Reused physical slots do not change fragment admission/issue order.
+    std::sort(order.begin(), order.end(), [&](auto a, auto b) {
+        return contexts[a]->task.key.fragmentId <
+               contexts[b]->task.key.fragmentId;
+    });
+    return order;
+}
+
+void
+AraLane::prepareOperands(LaneFragmentState &state)
+{
+    if (operandBundles == parameters.operandEntriesPerSource) {
+        ++operandWaitCycles;
+        return;
+    }
+    const auto &task = state.task;
+    ++operandBundles;
+    state.operandsReserved = true;
+    lhsBuffers.accept(task.elements.elementCount, task.destinationRange.size);
+    rhsBuffers.accept(task.elements.elementCount, task.destinationRange.size);
+    // Pair acquisition prevents two contexts each retaining only one source.
+    // A scalar is replicated in its reserved RHS buffer without a VRF read.
     state.bundle = ExecutionBundle{task.key,
                                    task.arithmetic.operation,
                                    task.sewBits,
@@ -168,141 +272,111 @@ AraLane::acceptTask(const LaneTask &task)
                                    task.fpContext,
                                    targetByteOrder,
                                    task.lmul};
+    const auto eligible = vpuClockEdge(owner, Cycles(1));
     state.pending[0] = PendingVrfAccess{
-        VrfReadRequest{
-            makeAccess(task.arithmetic.vectorSource, task.vectorSourceRange)},
-        task.key, AccessRole::Lhs};
+        VrfReadRequest{makeAccess(task.key.task, task.arithmetic.vectorSource,
+                                  task.vectorSourceRange)},
+        eligible, curTick()};
     if (const auto *source =
             std::get_if<VectorRegRef>(&task.arithmetic.secondOperand)) {
         state.pending[1] = PendingVrfAccess{
-            VrfReadRequest{makeAccess(*source, *task.secondVectorSourceRange)},
-            task.key, AccessRole::Rhs};
+            VrfReadRequest{makeAccess(task.key.task, *source,
+                                      *task.secondVectorSourceRange)},
+            eligible, curTick()};
     } else {
         const auto scalar = std::get<RegVal>(task.arithmetic.secondOperand);
-        // En .vx, todos los elementos usan el mismo escalar ya leído en CPU.
         for (uint32_t i = 0; i < task.elements.elementCount; ++i) {
             ElementCodec::write(state.bundle.rhs, i, task.sewBits, scalar,
                                 targetByteOrder);
         }
         state.rhsReady = true;
     }
-    wakeup();
-    return TransferResult::Accepted;
+    state.phase = Phase::Read;
+    wakeVrf();
 }
 
-bool
-AraLane::hasReadyWork() const
+void
+AraLane::tryExecute(LaneFragmentState &state)
 {
-    if (!active || active->phase == Phase::WaitExecution) {
-        return false;
+    if (!state.resultReserved) {
+        if (resultBundles == parameters.resultEntries) {
+            ++resultWaitCycles;
+            return;
+        }
+        ++resultBundles;
+        state.resultReserved = true;
+        resultBuffers.accept(state.task.elements.elementCount,
+                             state.task.destinationRange.size);
     }
-    if (active->phase == Phase::Execute || active->phase == Phase::Finish ||
-        (active->phase == Phase::Read && active->lhsReady &&
-         active->rhsReady)) {
-        return true;
+    // The single reservation covers waiting for FU admission, execution,
+    // retained data and writeback. FU capacity is a different resource.
+    state.phase = Phase::WaitExecution;
+    TransferResult accepted;
+    if (state.task.fpContext) {
+        accepted = fpu.acceptBundle(state.bundle);
+    } else {
+        accepted = alu.acceptBundle(state.bundle);
     }
-    return std::any_of(
-        active->pending.begin(), active->pending.end(), [](const auto &entry) {
-            return entry && entry->phase == AccessPhase::Prepared;
-        });
+    if (accepted == TransferResult::Retry) {
+        panic_if(state.phase != Phase::WaitExecution,
+                 "FU responded to a rejected lane bundle");
+        ++executionRetries;
+        state.phase = Phase::Execute;
+        return;
+    }
+    panic_if(accepted != TransferResult::Accepted,
+             "Invalid execution unit transfer result");
+    panic_if(!state.operandsReserved || !operandBundles,
+             "Missing operand reservation at execution admission");
+    state.operandsReserved = false;
+    --operandBundles;
+    lhsBuffers.complete();
+    rhsBuffers.complete();
+    // The FU owns its bounded copy until result delivery. Release lane bytes
+    // rather than keeping an unaccounted second operand buffer in each slot.
+    ByteBuffer().swap(state.bundle.lhs);
+    ByteBuffer().swap(state.bundle.rhs);
 }
 
 void
 AraLane::wakeup()
 {
-    if (hasReadyWork() && !progressEvent.scheduled()) {
-        owner.schedule(progressEvent, owner.clockEdge(Cycles(1)));
-    }
-}
-
-void
-AraLane::sendAccess(AccessRole role)
-{
-    auto &slot = active->pending[static_cast<std::size_t>(role)];
-    if (!slot || slot->phase != AccessPhase::Prepared) {
-        return;
-    }
-    // Copiar el mensaje permite que el callback retire la entrada original.
-    const auto request = slot->request;
-    slot->phase = AccessPhase::Waiting;
-    TransferResult result;
-    if (role == AccessRole::Destination) {
-        result = sendWrite(std::get<VrfWriteRequest>(request));
-    } else {
-        result = sendRead(std::get<VrfReadRequest>(request));
-    }
-    switch (result) {
-        case TransferResult::Accepted:
-            if (role == AccessRole::Destination) {
-                ++vrfWrites;
-            } else {
-                ++vrfReads;
-            }
-            // No recrear un slot que una respuesta síncrona ya consumió.
-            break;
-        case TransferResult::Retry:
-            if (role == AccessRole::Destination) {
-                ++vrfWriteRetries;
-            } else {
-                ++vrfReadRetries;
-            }
-            panic_if(!slot || slot->phase != AccessPhase::Waiting,
-                     "LRF responded to a lane access it rejected");
-            slot->phase = AccessPhase::Prepared;
-            break;
-        default:
-            panic("Invalid lane VRF transfer result");
+    const bool ready =
+        std::any_of(contexts.begin(), contexts.end(), [](const auto &state) {
+            return state && (state->phase == Phase::Prepare ||
+                             state->phase == Phase::Execute ||
+                             state->phase == Phase::Finish);
+        });
+    if (ready && !progressEvent.scheduled()) {
+        owner.schedule(progressEvent, vpuClockEdge(owner, Cycles(1)));
     }
 }
 
 void
 AraLane::evaluate()
 {
-    if (!active) {
-        return;
+    for (const auto i : orderedContexts()) {
+        if (contexts[i]->phase == Phase::Finish) {
+            finish(i);
+        }
     }
-    auto &state = *active;
-    switch (state.phase) {
-        case Phase::Read:
-            // Cada fuente puede responder antes que la otra, incluso dentro
-            // del envío. Ninguna respuesta ejecuta ni escribe recursivamente.
-            sendAccess(AccessRole::Lhs);
-            sendAccess(AccessRole::Rhs);
-            if (state.lhsReady && state.rhsReady) {
-                state.phase = Phase::Execute;
-            }
-            break;
-        case Phase::Execute: {
-            state.phase = Phase::WaitExecution;
-            // El contexto FP identifica el cálculo que necesita redondeo.
-            TransferResult result;
-            if (state.task.fpContext) {
-                result = fpu.acceptBundle(state.bundle);
-            } else {
-                result = alu.acceptBundle(state.bundle);
-            }
-            switch (result) {
-                case TransferResult::Accepted:
-                    break;
-                case TransferResult::Retry:
-                    ++executionRetries;
-                    panic_if(state.phase != Phase::WaitExecution,
-                             "Execution unit responded to a rejected bundle");
-                    state.phase = Phase::Execute;
-                    break;
-                default:
-                    panic("Invalid execution unit transfer result");
-            }
+    const auto order = orderedContexts();
+    for (const auto i : order) {
+        if (contexts[i]->phase == Phase::Prepare) {
+            prepareOperands(*contexts[i]);
+        }
+    }
+    // Start at most one bundle per edge, in fragment order. A younger ready
+    // fragment cannot bypass an older fragment still collecting operands.
+    for (const auto i : order) {
+        auto &state = *contexts[i];
+        if (state.phase == Phase::Prepare || state.phase == Phase::Read) {
             break;
         }
-        case Phase::Write:
-            sendAccess(AccessRole::Destination);
+        if (state.phase == Phase::Execute) {
+            tryExecute(state);
             break;
-        case Phase::Finish:
-            finish();
-            return;
-        case Phase::WaitExecution:
-            break;
+        }
     }
     wakeup();
 }
@@ -310,38 +384,37 @@ AraLane::evaluate()
 void
 AraLane::recvVrfReadResponse(const ReadResponse &response)
 {
-    panic_if(!active || active->phase != Phase::Read,
-             "Unexpected lane VRF read response");
-    auto &state = *active;
-    for (std::size_t i = 0; i < 2; ++i) {
-        auto &slot = state.pending[i];
-        if (!slot) {
+    for (auto &context : contexts) {
+        if (!context) {
             continue;
         }
-        const auto *request = std::get_if<VrfReadRequest>(&slot->request);
-        panic_if(!request, "Lane read slot contains a write request");
-        if (request->access.key != response.key) {
-            continue;
+        auto &state = *context;
+        for (std::size_t role = 0; role < 2; ++role) {
+            auto &slot = state.pending[role];
+            if (!slot || vrfAccess(slot->request).key != response.key) {
+                continue;
+            }
+            panic_if(!slot->granted || state.phase != Phase::Read ||
+                         !state.operandsReserved ||
+                         response.data.size() !=
+                             vrfAccess(slot->request).range.size,
+                     "Lane operand response has wrong phase or size");
+            if (role == 0) {
+                panic_if(state.lhsReady, "Lane LHS already received");
+                state.bundle.lhs = response.data;
+                state.lhsReady = true;
+            } else {
+                panic_if(state.rhsReady, "Lane RHS already received");
+                state.bundle.rhs = response.data;
+                state.rhsReady = true;
+            }
+            slot.reset();
+            if (state.lhsReady && state.rhsReady) {
+                state.phase = Phase::Execute;
+            }
+            wakeup();
+            return;
         }
-        panic_if(slot->phase != AccessPhase::Waiting ||
-                     slot->fragment != state.task.key ||
-                     slot->role != static_cast<AccessRole>(i) ||
-                     response.data.size() != request->access.range.size,
-                 "Lane VRF read response has wrong phase, owner or size");
-        // La clave ya identifica la lectura; guardar sus bytes en la fuente
-        // correspondiente. Las dos fuentes pueden llegar en cualquier orden.
-        if (i == 0) {
-            panic_if(state.lhsReady, "Lane operand was already received");
-            state.bundle.lhs = response.data;
-            state.lhsReady = true;
-        } else {
-            panic_if(state.rhsReady, "Lane operand was already received");
-            state.bundle.rhs = response.data;
-            state.rhsReady = true;
-        }
-        slot.reset();
-        wakeup();
-        return;
     }
     panic("Unknown or duplicate lane VRF read response");
 }
@@ -349,11 +422,15 @@ AraLane::recvVrfReadResponse(const ReadResponse &response)
 void
 AraLane::recvExecutionResult(const ExecutionResult &result)
 {
-    panic_if(!active || active->phase != Phase::WaitExecution,
-             "Unexpected lane execution result");
-    auto &state = *active;
+    auto found =
+        std::find_if(contexts.begin(), contexts.end(), [&](const auto &state) {
+            return state && state->task.key == result.key;
+        });
+    panic_if(found == contexts.end(), "Unknown lane execution result");
+    auto &state = **found;
     const auto &task = state.task;
-    panic_if(result.key != task.key || result.sewBits != task.sewBits ||
+    panic_if(state.phase != Phase::WaitExecution || !state.resultReserved ||
+                 state.operandsReserved || result.sewBits != task.sewBits ||
                  result.elements != task.elements ||
                  result.destination != task.arithmetic.destination ||
                  result.destinationRange != task.destinationRange ||
@@ -363,53 +440,59 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
                  (!task.fpContext && result.fpFlags != 0) || state.result ||
                  state.pending[0] || state.pending[1] || state.pending[2] ||
                  !state.lhsReady || !state.rhsReady,
-             "Lane execution result does not match its pending fragment");
-    // Recibir el cálculo no termina la tarea: falta escribirlo en el VRF
-    // y esperar a que éste confirme que aplicó los bytes.
+             "Lane result does not match its reserved fragment");
+    // Transfer the retained result bytes into the persistent write request.
+    // The metadata keeps flags; one output credit covers both until WriteAck.
     state.result = result;
     state.pending[2] = PendingVrfAccess{
-        VrfWriteRequest{
-            makeAccess(task.arithmetic.destination, task.destinationRange),
-            result.values},
-        task.key, AccessRole::Destination};
+        VrfWriteRequest{makeAccess(task.key.task, task.arithmetic.destination,
+                                   task.destinationRange),
+                        std::move(state.result->values)},
+        vpuClockEdge(owner, Cycles(1)), curTick()};
     state.phase = Phase::Write;
-    wakeup();
+    writebacks.accept(task.elements.elementCount, task.destinationRange.size);
+    wakeVrf();
 }
 
 void
 AraLane::recvVrfWriteAck(const WriteAck &ack)
 {
-    panic_if(!active || active->phase != Phase::Write,
-             "Unexpected lane VRF write acknowledgement");
-    auto &slot = active->pending[2];
-    panic_if(!slot || slot->phase != AccessPhase::Waiting ||
-                 slot->fragment != active->task.key ||
-                 slot->role != AccessRole::Destination,
-             "Lane write acknowledgement has no pending writeback");
-    const auto *request = std::get_if<VrfWriteRequest>(&slot->request);
-    panic_if(!request || request->access.key != ack.key,
-             "Lane write acknowledgement has wrong identity or direction");
-    slot.reset();
-    active->phase = Phase::Finish;
-    wakeup();
+    for (auto &context : contexts) {
+        if (!context || !context->pending[2] ||
+            vrfAccess(context->pending[2]->request).key != ack.key) {
+            continue;
+        }
+        auto &state = *context;
+        panic_if(state.phase != Phase::Write || !state.pending[2]->granted ||
+                     !state.resultReserved || !resultBundles,
+                 "Lane WriteAck without a granted writeback reservation");
+        state.pending[2].reset();
+        state.resultReserved = false;
+        --resultBundles;
+        resultBuffers.complete();
+        writebacks.complete();
+        state.phase = Phase::Finish;
+        wakeup();
+        return;
+    }
+    panic("Unknown or duplicate lane VRF write acknowledgement");
 }
 
 void
-AraLane::finish()
+AraLane::finish(std::size_t context)
 {
-    panic_if(!active || active->phase != Phase::Finish || !active->result ||
-                 !alu.isIdle() || !fpu.isIdle() ||
-                 std::any_of(active->pending.begin(), active->pending.end(),
+    auto &state = contexts[context];
+    panic_if(!state || state->phase != Phase::Finish || !state->result ||
+                 state->operandsReserved || state->resultReserved ||
+                 std::any_of(state->pending.begin(), state->pending.end(),
                              [](const auto &entry) { return bool(entry); }),
-             "Cannot finish a lane fragment with pending work");
-    const LaneCompletion completion{active->task.key,
+             "Cannot finish a lane fragment with pending obligations");
+    const LaneCompletion completion{state->task.key,
                                     UnitCompletionStatus::Success,
-                                    active->result->fpFlags};
-    // Sólo WriteAck habilita Finish. Se libera la capacidad antes de notificar
-    // para que el receptor pueda admitir el siguiente fragmento en el
-    // callback.
+                                    state->result->fpFlags};
+    // Other fragments may still occupy the FUs: only this fragment closes.
     stats.complete();
-    active.reset();
+    state.reset();
     sendCompletion(completion);
 }
 

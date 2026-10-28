@@ -14,8 +14,8 @@ namespace gem5::vector_engine
 
 AraVLSU::AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
                  const VlsuParameters &parameters, unsigned address_bits,
-                 MemorySender send_memory, ReadSender send_read,
-                 WriteSender send_write, CompletionSender send_completion)
+                 MemorySender send_memory, VrfWakeup wake_vrf,
+                 CompletionSender send_completion)
     : stats(&owner, "vlsu", "memory tasks"),
       loadTasks(&stats, "loadTasks", statistics::units::Count::get(),
                 "Accepted vector load tasks"),
@@ -33,19 +33,20 @@ AraVLSU::AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
                      "Logical requests accepted by memory backend"),
       memoryRetries(&stats, "memoryRetries", statistics::units::Count::get(),
                     "Logical request attempts rejected by backend"),
-      vrfReadRetries(&stats, "vrfReadRetries", statistics::units::Count::get(),
-                     "Store read attempts rejected by local VRF"),
-      vrfWriteRetries(&stats, "vrfWriteRetries",
+      vrfReadsGranted(&stats, "vrfReadsGranted",
                       statistics::units::Count::get(),
-                      "Load writeback attempts rejected by local VRF"),
+                      "Store reads granted by local VRF"),
+      vrfWritesGranted(&stats, "vrfWritesGranted",
+                       statistics::units::Count::get(),
+                       "Load writebacks granted by local VRF"),
       owner(owner),
       mapper(mapper),
       parameters(parameters),
       sendMemory(std::move(send_memory)),
-      sendRead(std::move(send_read)),
-      sendWrite(std::move(send_write)),
+      wakeVrf(std::move(wake_vrf)),
       sendCompletion(std::move(send_completion)),
-      progressEvent([this] { evaluate(); }, owner.name() + ".vlsu")
+      progressEvent([this] { evaluate(); }, owner.name() + ".vlsu", false,
+                    VpuProgressPriority)
 {
     fatal_if(parameters.activeBlocks != 1 || parameters.blockRequests ||
                  !parameters.maxBlockBytes,
@@ -54,7 +55,7 @@ AraVLSU::AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
              "VLSU requires a 32-bit or 64-bit target address width");
     addressMask = address_bits == 64 ? std::numeric_limits<Addr>::max()
                                      : Addr{0xffffffff};
-    fatal_if(!sendMemory || !sendRead || !sendWrite || !sendCompletion,
+    fatal_if(!sendMemory || !wakeVrf || !sendCompletion,
              "VLSU requires memory, VRF and completion endpoints");
 }
 
@@ -188,6 +189,45 @@ AraVLSU::prepareElement()
     }
 }
 
+VrfRequestPort
+AraVLSU::vrfPort(LaneId lane_id)
+{
+    panic_if(lane_id >= mapper.geometry().numLanes,
+             "Invalid VLSU VRF port destination");
+    return {[this, lane_id]() -> std::optional<VrfOffer> {
+                if (!active || !active->element ||
+                    active->element->laneId != lane_id ||
+                    (active->phase != Phase::OfferRead &&
+                     active->phase != Phase::OfferWrite)) {
+                    return std::nullopt;
+                }
+                const auto &element = *active->element;
+                panic_if(!element.vrfRequest,
+                         "VLSU offer has no stable request");
+                return VrfOffer{&*element.vrfRequest, element.vrfEligibleAt,
+                                element.vrfPublishedAt};
+            },
+            [this](const VrfAccessKey &key) { recvVrfGrant(key); }};
+}
+
+void
+AraVLSU::recvVrfGrant(const VrfAccessKey &key)
+{
+    panic_if(!active || !active->element || !active->element->vrfRequest ||
+                 active->element->vrfEligibleAt > curTick() ||
+                 active->element->vrfAccess.key != key,
+             "Unexpected VLSU VRF grant");
+    if (active->phase == Phase::OfferRead) {
+        active->phase = Phase::WaitRead;
+        ++vrfReadsGranted;
+    } else {
+        panic_if(active->phase != Phase::OfferWrite,
+                 "Duplicate VLSU VRF grant or wrong phase");
+        active->phase = Phase::WaitWrite;
+        ++vrfWritesGranted;
+    }
+}
+
 bool
 AraVLSU::hasReadyWork() const
 {
@@ -196,7 +236,9 @@ AraVLSU::hasReadyWork() const
     if (!active) {
         return false;
     }
-    return active->phase != Phase::WaitRead &&
+    return active->phase != Phase::OfferRead &&
+           active->phase != Phase::OfferWrite &&
+           active->phase != Phase::WaitRead &&
            active->phase != Phase::WaitMemory &&
            active->phase != Phase::WaitWrite;
 }
@@ -206,7 +248,7 @@ AraVLSU::wakeup()
 {
     // Incluso una respuesta inmediata continúa en el siguiente ciclo.
     if (hasReadyWork() && !progressEvent.scheduled()) {
-        owner.schedule(progressEvent, owner.clockEdge(Cycles(1)));
+        owner.schedule(progressEvent, vpuClockEdge(owner, Cycles(1)));
     }
 }
 
@@ -224,10 +266,6 @@ AraVLSU::handleTransfer(TransferResult result, Phase send, Phase wait)
         case TransferResult::Retry:
             if (send == Phase::SendMemory) {
                 ++memoryRetries;
-            } else if (send == Phase::SendRead) {
-                ++vrfReadRetries;
-            } else {
-                ++vrfWriteRetries;
             }
             // El receptor rechazó la entrega: conserva el mensaje y vuelve
             // a intentarlo. Responder y rechazar a la vez rompe el contrato.
@@ -247,20 +285,22 @@ AraVLSU::evaluate()
         return;
     }
     auto &state = *active;
-    // Se procesa una fase por evento. Antes de cada envío se habilita WAIT
-    // para que el receptor pueda responder dentro de la llamada. Si rechaza
-    // el mensaje, handleTransfer restaura SEND con los mismos datos y clave.
+    // One transition per event. VRF offers wait for arbitration without
+    // polling. Memory keeps the existing Accepted/Retry protocol, installing
+    // WAIT before sending because backend callbacks may be synchronous.
     switch (state.phase) {
         case Phase::Prepare:
             prepareElement();
             break;
-        case Phase::SendRead: {
-            const VrfReadRequest request{state.element->vrfAccess};
-            state.phase = Phase::WaitRead;
-            handleTransfer(sendRead(state.element->laneId, request),
-                           Phase::SendRead, Phase::WaitRead);
+        case Phase::SendRead:
+            // Store data reception is bounded by this element's request size.
+            state.element->vrfRequest =
+                VrfReadRequest{state.element->vrfAccess};
+            state.element->vrfEligibleAt = vpuClockEdge(owner, Cycles(1));
+            state.element->vrfPublishedAt = curTick();
+            state.phase = Phase::OfferRead;
+            wakeVrf(state.element->laneId);
             break;
-        }
         case Phase::SendMemory:
             state.phase = Phase::WaitMemory;
             handleTransfer(sendMemory(state.element->request),
@@ -268,11 +308,13 @@ AraVLSU::evaluate()
             break;
         case Phase::SendWrite: {
             panic_if(!state.element->load, "Load writeback has no data");
-            const VrfWriteRequest request{state.element->vrfAccess,
-                                          state.element->load->data};
-            state.phase = Phase::WaitWrite;
-            handleTransfer(sendWrite(state.element->laneId, request),
-                           Phase::SendWrite, Phase::WaitWrite);
+            // LoadData owns the bytes through contention and acknowledgement.
+            state.element->vrfRequest = VrfWriteRequest{
+                state.element->vrfAccess, state.element->load->data};
+            state.element->vrfEligibleAt = vpuClockEdge(owner, Cycles(1));
+            state.element->vrfPublishedAt = curTick();
+            state.phase = Phase::OfferWrite;
+            wakeVrf(state.element->laneId);
             break;
         }
         case Phase::NextElement:
@@ -296,6 +338,8 @@ AraVLSU::evaluate()
         case Phase::MemoryFault:
             finish();
             return;
+        case Phase::OfferRead:
+        case Phase::OfferWrite:
         case Phase::WaitRead:
         case Phase::WaitMemory:
         case Phase::WaitWrite:
@@ -316,6 +360,7 @@ AraVLSU::recvVrfReadResponse(const ReadResponse &response)
     // Capturar los bytes una vez: un retry posterior del backend no requiere
     // releer el registro ni permite cambiar el valor que se almacenará.
     element.request.storeData = response.data;
+    element.vrfRequest.reset();
     active->phase = Phase::SendMemory;
     wakeup();
 }
@@ -327,6 +372,7 @@ AraVLSU::recvVrfWriteAck(const WriteAck &ack)
              "Unexpected VLSU VRF write acknowledgement");
     panic_if(ack.key != active->element->vrfAccess.key,
              "VLSU VRF write acknowledgement has wrong identity");
+    active->element->vrfRequest.reset();
     active->phase = Phase::NextElement;
     wakeup();
 }

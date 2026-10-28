@@ -6,7 +6,7 @@
 #include <array>
 #include <functional>
 #include <optional>
-#include <variant>
+#include <vector>
 
 #include "cpu/vector_engine/common/lane_completion.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
@@ -19,104 +19,101 @@ namespace gem5::vector_engine
 {
 
 /**
- * Una lane física: un fragmento activo, dos slots de operandos y un slot
- * de writeback. Sólo completa después de consumir el WriteAck del LRF.
+ * Lane con contextos acotados para fragmentos de una misma tarea aritmética.
+ * Puede solapar lectura, cálculo y writeback sin admitir otra instrucción.
+ * Reserva conjuntamente ambos buffers de operandos antes de publicar las
+ * lecturas y reserva salida antes de enviar a una FU. El escalar capturado
+ * ocupa su buffer replicado, pero no solicita un puerto de lectura al VRF.
  *
- * El propietario conecta los callbacks al LRF local y al distribuidor.
- * Los envíos aceptados se copian; los callbacks pueden ser síncronos, pero
- * no pueden destruir la lane. Propietario, mapper y receptores sobreviven
- * al módulo. El propietario coordina drain y espera isIdle() antes de
- * destruirlo; no hay cancelación ni reset con trabajo activo.
+ * Los accesos se presentan persistentemente al LRF por contexto y papel.
+ * Cada retorno se localiza por su clave, nunca por orden de llegada.
+ * Sólo WriteAck permite completar el fragmento y liberar su resultado.
+ * Las fuentes de cada fragmento se leen antes de escribir su destino; los
+ * rangos de otros fragmentos de la tarea son disjuntos, incluso con alias
+ * legal de igual ancho. No se introduce chaining ni predicación.
  *
- * target_byte_order describe el objetivo simulado. La configuración RVV y
- * su capacidad efectiva se validan antes de crear LaneTask; aquí se validan
- * sus rangos físicos y su pertenencia a esta lane mediante AddressMapper.
+ * Propietario, mapper, LRF y receptor sobreviven al módulo hasta isIdle().
+ * Las respuestas se consumen sin rechazo porque su recepción está reservada.
  */
 class AraLane
 {
   public:
-    using ReadSender = std::function<TransferResult(const VrfReadRequest &)>;
-    using WriteSender = std::function<TransferResult(const VrfWriteRequest &)>;
+    using VrfWakeup = std::function<void()>;
     using CompletionSender = std::function<void(const LaneCompletion &)>;
 
     AraLane(ClockedObject &owner, const AddressMapper &mapper,
             const LaneParameters &parameters, LaneId lane_id,
-            ByteOrder target_byte_order, ReadSender send_read,
-            WriteSender send_write, CompletionSender send_completion);
+            ByteOrder target_byte_order, VrfWakeup wake_vrf,
+            CompletionSender send_completion);
     ~AraLane();
-
     AraLane(const AraLane &) = delete;
     AraLane &operator=(const AraLane &) = delete;
 
+    // Un puerto estable por contexto y papel; se enlazan durante construcción.
+    std::vector<VrfRequestPort> vrfPorts();
     TransferResult acceptTask(const LaneTask &task);
     void recvVrfReadResponse(const ReadResponse &response);
     void recvVrfWriteAck(const WriteAck &ack);
     void wakeup();
-
-    bool
-    isIdle() const
-    {
-        return !active && alu.isIdle() && fpu.isIdle() &&
-               !progressEvent.scheduled();
-    }
+    bool isIdle() const;
 
   private:
     enum class Phase
     {
+        Prepare,
         Read,
         Execute,
         WaitExecution,
         Write,
         Finish
     };
-    enum class AccessPhase
-    {
-        Prepared,
-        Waiting
-    };
-    enum class AccessRole
+    enum class AccessRole : std::size_t
     {
         Lhs = 0,
         Rhs = 1,
         Destination = 2
     };
-
     struct PendingVrfAccess
     {
-        std::variant<VrfReadRequest, VrfWriteRequest> request;
-        LaneFragmentKey fragment;
-        AccessRole role;
-        AccessPhase phase = AccessPhase::Prepared;
+        VrfRequest request;
+        Tick eligibleAt;
+        Tick publishedAt;
+        bool granted = false;
     };
-
     struct LaneFragmentState
     {
         LaneTask task;
-        Phase phase = Phase::Read;
+        Phase phase = Phase::Prepare;
         ExecutionBundle bundle;
         bool lhsReady = false;
         bool rhsReady = false;
+        bool operandsReserved = false;
+        bool resultReserved = false;
         std::optional<ExecutionResult> result;
-        // Índices de AccessRole; cada entrada se retira al consumir respuesta.
         std::array<std::optional<PendingVrfAccess>, 3> pending;
     };
 
     ModuleStats stats;
+    ModuleStats lhsBuffers;
+    ModuleStats rhsBuffers;
+    ModuleStats resultBuffers;
+    // Phase accounting within the result reservation, not another resource.
+    ModuleStats writebacks;
     statistics::Scalar vrfReads;
     statistics::Scalar vrfWrites;
-    statistics::Scalar vrfReadRetries;
-    statistics::Scalar vrfWriteRetries;
+    statistics::Scalar operandWaitCycles;
+    statistics::Scalar resultWaitCycles;
     statistics::Scalar executionRetries;
     ClockedObject &owner;
     const AddressMapper &mapper;
     const LaneParameters &parameters;
     const LaneId laneId;
     const ByteOrder targetByteOrder;
-    ReadSender sendRead;
-    WriteSender sendWrite;
+    VrfWakeup wakeVrf;
     CompletionSender sendCompletion;
-    std::optional<LaneFragmentState> active;
-    // Se conservan entre fragmentos: accessId no se reinicia por fragmento.
+    std::vector<std::optional<LaneFragmentState>> contexts;
+    uint32_t operandBundles = 0;
+    uint32_t resultBundles = 0;
     std::optional<TaskKey> accessTask;
     VrfAccessId nextAccessId = 0;
     LaneFragmentId lastFragmentId = InvalidLaneFragmentId;
@@ -125,12 +122,18 @@ class AraLane
     EventFunctionWrapper progressEvent;
 
     void validateTask(const LaneTask &task) const;
-    VrfAccess makeAccess(const VectorRegRef &reg, const ByteRange &range);
-    bool hasReadyWork() const;
+    VrfAccess makeAccess(const TaskKey &task, const VectorRegRef &reg,
+                         const ByteRange &range);
+    std::vector<std::size_t> orderedContexts() const;
+    void prepareOperands(LaneFragmentState &state);
+    void tryExecute(LaneFragmentState &state);
+    std::optional<VrfOffer> peekAccess(std::size_t context,
+                                       AccessRole role) const;
+    void recvVrfGrant(std::size_t context, AccessRole role,
+                      const VrfAccessKey &key);
     void evaluate();
-    void sendAccess(AccessRole role);
     void recvExecutionResult(const ExecutionResult &result);
-    void finish();
+    void finish(std::size_t context);
 };
 
 } // namespace gem5::vector_engine

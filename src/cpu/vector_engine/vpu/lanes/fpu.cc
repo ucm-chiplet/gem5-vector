@@ -4,6 +4,7 @@
 
 #include <softfloat.h>
 
+#include <algorithm>
 #include <limits>
 #include <string>
 #include <utility>
@@ -93,16 +94,25 @@ Fpu::Fpu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
                           "Completed bundles reporting divide by zero"),
       invalidBundles(&stats, "invalidBundles", statistics::units::Count::get(),
                      "Completed bundles reporting invalid operation"),
+      capacityStalls(&stats, "capacityStalls", statistics::units::Count::get(),
+                     "Bundle attempts blocked by execution capacity"),
+      intervalStalls(&stats, "intervalStalls", statistics::units::Count::get(),
+                     "Bundle attempts blocked by initiation interval"),
       owner(owner),
       parameters(parameters),
       sendResult(std::move(send_result)),
       executeEvent([this] { execute(); },
-                   owner.name() + ".lane" + std::to_string(lane_id) + ".fpu")
+                   owner.name() + ".lane" + std::to_string(lane_id) + ".fpu",
+                   false, VpuResponsePriority)
 {
     fatal_if(!parameters.widthBytes ||
                  !parameters.currentProfile(parameters.widthBytes),
-             "Execution unit supports one functional bundle only");
+             "Invalid timed execution unit profile");
     fatal_if(!sendResult, "FPU requires a result receiver");
+    fatal_if(parameters.capacity > pending.max_size(),
+             "FPU capacity exceeds host container capacity");
+    vpuClockEdge(owner, parameters.latency);
+    vpuClockEdge(owner, parameters.initiationInterval);
 }
 
 Fpu::~Fpu()
@@ -113,7 +123,13 @@ Fpu::~Fpu()
 TransferResult
 Fpu::acceptBundle(const ExecutionBundle &bundle)
 {
-    if (active) {
+    if (pending.size() >= parameters.capacity) {
+        ++capacityStalls;
+        ++stats.retries;
+        return TransferResult::Retry;
+    }
+    if (curTick() < nextIssue) {
+        ++intervalStalls;
         ++stats.retries;
         return TransferResult::Retry;
     }
@@ -138,60 +154,82 @@ Fpu::acceptBundle(const ExecutionBundle &bundle)
                   bundle.byteOrder != ByteOrder::big),
              "Invalid FP16 execution bundle");
 
-    active.emplace();
-    active->bundle = bundle;
+    panic_if(std::any_of(pending.begin(), pending.end(),
+                         [&](const auto &entry) {
+                             return entry.bundle.key == bundle.key;
+                         }),
+             "Duplicate pending execution bundle");
+    const auto ready = vpuClockEdge(owner, parameters.latency);
+    nextIssue = vpuClockEdge(owner, parameters.initiationInterval);
+    panic_if(ready <= curTick() || nextIssue <= curTick(),
+             "Execution timing overflow");
+    ExecutionState state;
+    state.bundle = bundle;
+    state.readyAt = ready;
     stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
-    active->result = ExecutionResult{bundle.key,
-                                     bundle.sewBits,
-                                     bundle.elements,
-                                     bundle.destination,
-                                     bundle.destinationRange,
-                                     ByteBuffer(size),
-                                     0,
-                                     bundle.byteOrder,
-                                     bundle.emul};
-    owner.schedule(executeEvent, owner.clockEdge(parameters.latency));
+    state.result = ExecutionResult{bundle.key,
+                                   bundle.sewBits,
+                                   bundle.elements,
+                                   bundle.destination,
+                                   bundle.destinationRange,
+                                   ByteBuffer(size),
+                                   0,
+                                   bundle.byteOrder,
+                                   bundle.emul};
+    pending.push_back(std::move(state));
+    if (!responding && !executeEvent.scheduled()) {
+        owner.schedule(executeEvent, pending.front().readyAt);
+    }
     return TransferResult::Accepted;
 }
 
 void
 Fpu::execute()
 {
-    panic_if(!active, "FPU evaluation without an accepted bundle");
-    const auto &bundle = active->bundle;
-    {
-        // Restaurar el estado antes del callback evita contaminar la CPU
-        // o una ejecución posterior, incluso si el receptor admite trabajo.
-        const SoftFloatScope scope(bundle.fpContext->roundingMode);
-        for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
-            const float16_t lhs{static_cast<uint16_t>(ElementCodec::read(
-                bundle.lhs, i, bundle.sewBits, bundle.byteOrder))};
-            const float16_t rhs{static_cast<uint16_t>(ElementCodec::read(
-                bundle.rhs, i, bundle.sewBits, bundle.byteOrder))};
-            const auto value = f16_add(lhs, rhs).v;
-            // RISC-V usa el NaN canónico binary16, incluido el generado
-            // por operaciones inválidas. SoftFloat conserva sus flags.
-            const bool nan = (value & 0x7c00) == 0x7c00 && (value & 0x03ff);
-            auto result_bits = value;
-            if (nan) {
-                result_bits = 0x7e00;
+    responding = true;
+    while (!pending.empty() && pending.front().readyAt <= curTick()) {
+        auto state = std::move(pending.front());
+        pending.pop_front();
+        const auto &bundle = state.bundle;
+        {
+            // Restaurar el estado antes del callback evita contaminar la CPU
+            // o una ejecución posterior, incluso si el receptor admite
+            // trabajo.
+            const SoftFloatScope scope(bundle.fpContext->roundingMode);
+            for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
+                const float16_t lhs{static_cast<uint16_t>(ElementCodec::read(
+                    bundle.lhs, i, bundle.sewBits, bundle.byteOrder))};
+                const float16_t rhs{static_cast<uint16_t>(ElementCodec::read(
+                    bundle.rhs, i, bundle.sewBits, bundle.byteOrder))};
+                const auto value = f16_add(lhs, rhs).v;
+                // RISC-V usa el NaN canónico binary16, incluido el generado
+                // por operaciones inválidas. SoftFloat conserva sus flags.
+                const bool nan =
+                    (value & 0x7c00) == 0x7c00 && (value & 0x03ff);
+                auto result_bits = value;
+                if (nan) {
+                    result_bits = 0x7e00;
+                }
+                ElementCodec::write(state.result.values, i, bundle.sewBits,
+                                    result_bits, bundle.byteOrder);
             }
-            ElementCodec::write(active->result.values, i, bundle.sewBits,
-                                result_bits, bundle.byteOrder);
+            state.result.fpFlags =
+                static_cast<FpExceptionFlags>(softfloat_exceptionFlags);
         }
-        active->result.fpFlags =
-            static_cast<FpExceptionFlags>(softfloat_exceptionFlags);
+        const auto flags = state.result.fpFlags;
+        inexactBundles += bool(flags & FpInexact);
+        underflowBundles += bool(flags & FpUnderflow);
+        overflowBundles += bool(flags & FpOverflow);
+        divideByZeroBundles += bool(flags & FpDivideByZero);
+        invalidBundles += bool(flags & FpInvalid);
+        auto result = std::move(state.result);
+        stats.complete();
+        sendResult(result);
     }
-    const auto flags = active->result.fpFlags;
-    inexactBundles += bool(flags & FpInexact);
-    underflowBundles += bool(flags & FpUnderflow);
-    overflowBundles += bool(flags & FpOverflow);
-    divideByZeroBundles += bool(flags & FpDivideByZero);
-    invalidBundles += bool(flags & FpInvalid);
-    auto result = std::move(active->result);
-    stats.complete();
-    active.reset();
-    sendResult(result);
+    responding = false;
+    if (!pending.empty() && !executeEvent.scheduled()) {
+        owner.schedule(executeEvent, pending.front().readyAt);
+    }
 }
 
 } // namespace gem5::vector_engine

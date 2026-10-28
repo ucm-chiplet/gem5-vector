@@ -54,12 +54,12 @@ struct ExecutionParameters
     Cycles latency{1};
     Cycles initiationInterval{1};
 
-    /** Comprueba si estos valores corresponden a la unidad actual. */
+    /** Perfil temporizado; las anchuras independientes quedan para fase 6. */
     bool
     currentProfile(uint32_t word_bytes) const
     {
-        return widthBytes == word_bytes && capacity == 1 &&
-               latency == Cycles(1) && initiationInterval == Cycles(1);
+        return word_bytes && widthBytes == word_bytes && capacity &&
+               latency >= Cycles(1) && initiationInterval >= Cycles(1);
     }
 };
 
@@ -82,9 +82,9 @@ struct LaneParameters
     bool
     currentProfile(uint32_t word_bytes) const
     {
-        return taskEntries == 1 && operandEntriesPerSource == 1 &&
-               resultEntries == 1 && maxBundleBytes == word_bytes &&
-               alusPerLane == 1 && alu.currentProfile(word_bytes) &&
+        return taskEntries && operandEntriesPerSource && resultEntries &&
+               maxBundleBytes == word_bytes && alusPerLane == 1 &&
+               alu.currentProfile(word_bytes) &&
                fpu.currentProfile(word_bytes);
     }
 };
@@ -99,14 +99,13 @@ struct BankParameters
     Cycles latency{1};
     Cycles initiationInterval{1};
 
-    /** Exige un acceso pendiente y un puerto compartido de lectura/escritura.
-     */
+    /** Exige capacidad, tiempos positivos y servicio de lectura/escritura. */
     bool
     currentProfile() const
     {
-        return readPorts == 0 && writePorts == 0 && readWritePorts == 1 &&
-               accessEntries == 1 && latency == Cycles(1) &&
-               initiationInterval == Cycles(1);
+        return (readPorts || readWritePorts) &&
+               (writePorts || readWritePorts) && accessEntries &&
+               latency >= Cycles(1) && initiationInterval >= Cycles(1);
     }
 };
 

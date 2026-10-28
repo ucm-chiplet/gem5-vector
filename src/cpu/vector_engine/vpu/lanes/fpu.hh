@@ -3,12 +3,13 @@
 #ifndef __CPU_VECTOR_ENGINE_VPU_LANES_FPU_HH__
 #define __CPU_VECTOR_ENGINE_VPU_LANES_FPU_HH__
 
+#include <deque>
 #include <functional>
-#include <optional>
 
 #include "cpu/vector_engine/common/execution_types.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/vpu_parameters.hh"
+#include "cpu/vector_engine/vpu/register_file/vrf_port.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
 
@@ -16,11 +17,12 @@ namespace gem5::vector_engine
 {
 
 /**
- * FPU funcional binary16: FloatAdd con redondeo explícito y flags acumulados.
- * Acepta un bundle, reserva el resultado y responde en un evento posterior.
- * El evento garantiza progreso; no representa la latencia hardware de Ara.
- * No accede al VRF, al estado CPU ni a otros módulos de control.
- * El propietario y el receptor sobreviven a la FPU hasta completar drain.
+ * FPU interna binary16: FloatAdd con redondeo y flags por bundle.
+ * Modela capacidad finita, latencia e intervalo de iniciación independientes.
+ * Reserva el resultado al aceptar y la lane garantiza su recepción.
+ * SoftFloat se aísla durante cada evaluación, sin callbacks en ese ámbito.
+ * No accede al VRF ni al estado CPU, y no habilita nuevas instrucciones.
+ * Propietario y receptor sobreviven a la FPU hasta completar drain.
  */
 class Fpu
 {
@@ -40,7 +42,7 @@ class Fpu
     bool
     isIdle() const
     {
-        return !active && !executeEvent.scheduled();
+        return pending.empty() && !responding && !executeEvent.scheduled();
     }
 
   private:
@@ -48,6 +50,7 @@ class Fpu
     {
         ExecutionBundle bundle;
         ExecutionResult result;
+        Tick readyAt;
     };
 
     ModuleStats stats;
@@ -56,10 +59,14 @@ class Fpu
     statistics::Scalar overflowBundles;
     statistics::Scalar divideByZeroBundles;
     statistics::Scalar invalidBundles;
+    statistics::Scalar capacityStalls;
+    statistics::Scalar intervalStalls;
     ClockedObject &owner;
     const ExecutionParameters &parameters;
     ResultSender sendResult;
-    std::optional<ExecutionState> active;
+    std::deque<ExecutionState> pending;
+    Tick nextIssue = 0;
+    bool responding = false;
     EventFunctionWrapper executeEvent;
 
     void execute();

@@ -123,6 +123,7 @@ class VectorEngine : public ClockedObject,
     std::unique_ptr<CommandQueue> commandQueue;
     std::unique_ptr<AraSequencer> sequencer;
     std::unique_ptr<TaskDistributor> distributor;
+    // Destruction explicitly releases LRFs before their bound producers.
     std::vector<std::unique_ptr<LaneRegisterFile>> registerFiles;
     std::vector<std::unique_ptr<AraLane>> lanes;
     std::unique_ptr<AraVLSU> vlsu;

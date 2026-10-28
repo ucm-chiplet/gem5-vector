@@ -54,7 +54,9 @@ class ExecutionConfiguration:
 
     width_bytes limita los bytes de cada grupo de elementos. latency cuenta
     los ciclos hasta responder; initiation_interval, los ciclos entre inicios.
-    La fase actual sólo acepta la capacidad y los tiempos ya implementados.
+    La capacidad cuenta bundles aceptados sin resultado entregado. La lane
+    reserva recepción antes de enviar. La fase 3 mantiene width_bytes igual
+    a la palabra del VRF, con latencia e intervalo positivos e independientes.
     """
 
     width_bytes: int = 0  # Cero usa el tamaño de palabra del VRF.
@@ -65,7 +67,13 @@ class ExecutionConfiguration:
 
 @dataclass(frozen=True)
 class LaneConfiguration:
-    """Espacio por lane para tareas, operandos y resultados, y sus ALU/FPU."""
+    """Recursos por lane para fragmentos de una sola instrucción activa.
+
+    task_entries limita contextos hasta confirmar writeback. Los buffers de
+    cada fuente se reservan por parejas; el escalar ocupa un RHS replicado
+    sin leer VRF. result_entries es el total por lane, desde la reserva previa
+    a ejecución hasta WriteAck. alus_per_lane permanece en uno en fase 3.
+    """
 
     task_entries: int = 1
     operand_entries_per_source: int = 1
@@ -80,8 +88,11 @@ class LaneConfiguration:
 class BankConfiguration:
     """Accesos que puede atender un banco y sus tiempos en ciclos.
 
-    El modelo actual exige un puerto compartido de lectura/escritura y un
-    solo acceso pendiente. Declarar más capacidad no habilita ese servicio.
+    Cada R/W sirve su dirección y cada RW sirve una sola dirección por
+    oportunidad. initiation_interval se aplica por puerto; latency fija el
+    retorno de cada acceso concedido. access_entries acota accesos en curso
+    por banco, compartidos entre todos sus puertos. Se necesitan caminos de
+    lectura y escritura. Los candidatos denegados permanecen en el emisor.
     """
 
     read_ports: int = 0
@@ -136,7 +147,9 @@ class VpuConfiguration:
 
     El backend admite suma y memoria de 8/16/32/64 bits en el perfil SEW/LMUL
     de fase 2.2. supported_sews y supported_lmuls habilitan su intersección
-    con ese perfil, no todas las parejas del producto cartesiano. LMUL usa
+    con ese perfil, no todas las parejas del producto cartesiano. La fase 3
+    temporiza sus recursos locales, todavía con una instrucción activa y
+    sin bloques agrupados, varias ALUs ni red. LMUL usa
     exponentes de dos (-3 para mf8, 3 para m8). Los valores predeterminados
     conservan 16/32 bits y m1; las rutas CPU se documentan por separado.
     """

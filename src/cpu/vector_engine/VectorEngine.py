@@ -49,34 +49,45 @@ class VectorEngine(ClockedObject):
         [16, 32], "Enabled backend SEWs; implemented widths: 8/16/32/64"
     )
     elen_bits = Param.UInt32(64, "Must match the connected CPU ELEN")
-    max_active_commands = Param.UInt32(1, "Width profile requires one")
+    max_active_commands = Param.UInt32(
+        1, "Phase 3 requires one active command"
+    )
     mapping_policy = Param.String("word_striped", "VRF placement policy")
     command_queue_entries = Param.UInt32(
         1, "Command capacity including reservations and the active head"
     )
-    lane_task_entries = Param.UInt32(1, "Baseline requires exactly one")
+    lane_task_entries = Param.UInt32(
+        1, "Fragment contexts per lane until writeback"
+    )
     operand_buffer_entries_per_source = Param.UInt32(
-        1, "Buffers per vector source and lane; baseline requires one"
+        1, "Reserved buffers per source and lane, including replicated scalar"
     )
     result_buffer_entries = Param.UInt32(
-        1, "Result buffers per lane; baseline requires one"
+        1,
+        "Result credits per lane, from pre-execution reservation to WriteAck",
     )
     max_bundle_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
-    alus_per_lane = Param.UInt32(1, "Width profile requires one")
+    alus_per_lane = Param.UInt32(1, "Phase 3 requires one ALU per lane")
     alu_width_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
     alu_capacity = Param.UInt32(1, "Pending bundles per ALU")
-    alu_latency = Param.Cycles(1, "Functional ALU response scheduling")
-    alu_initiation_interval = Param.Cycles(1, "Prepared service contract")
+    alu_latency = Param.Cycles(1, "ALU result latency in VPU cycles")
+    alu_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between bundle admissions"
+    )
     fpu_width_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
     fpu_capacity = Param.UInt32(1, "Pending bundles per FPU")
-    fpu_latency = Param.Cycles(1, "Functional FPU response scheduling")
-    fpu_initiation_interval = Param.Cycles(1, "Prepared service contract")
+    fpu_latency = Param.Cycles(1, "Internal FPU result latency in VPU cycles")
+    fpu_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between bundle admissions"
+    )
     bank_read_ports = Param.UInt32(0, "Dedicated read ports per bank")
     bank_write_ports = Param.UInt32(0, "Dedicated write ports per bank")
     bank_read_write_ports = Param.UInt32(1, "Shared RW ports per bank")
     bank_access_entries = Param.UInt32(1, "Pending accesses per bank")
-    bank_latency = Param.Cycles(1, "Functional bank response scheduling")
-    bank_initiation_interval = Param.Cycles(1, "Prepared service contract")
+    bank_latency = Param.Cycles(1, "Bank response latency in VPU cycles")
+    bank_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between accesses on each bank port"
+    )
     memory_max_block_bytes = Param.UInt32(8, "Prepared block byte limit")
     memory_active_blocks = Param.UInt32(1, "One active memory element")
     memory_block_requests = Param.Bool(False, "Reserved for phase 4")

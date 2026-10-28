@@ -2,6 +2,7 @@
 
 #include "cpu/vector_engine/vpu/lanes/alu.hh"
 
+#include <algorithm>
 #include <limits>
 #include <string>
 #include <utility>
@@ -25,16 +26,26 @@ Alu::Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
                  "Admitted 32-bit integer elements"),
       elements64(&stats, "elements64", statistics::units::Count::get(),
                  "Admitted 64-bit integer elements"),
+      capacityStalls(&stats, "capacityStalls", statistics::units::Count::get(),
+                     "Bundle attempts blocked by execution capacity"),
+      intervalStalls(&stats, "intervalStalls", statistics::units::Count::get(),
+                     "Bundle attempts blocked by initiation interval"),
       owner(owner),
       parameters(parameters),
       sendResult(std::move(send_result)),
       executeEvent([this] { execute(); },
-                   owner.name() + ".lane" + std::to_string(lane_id) + ".alu")
+                   owner.name() + ".lane" + std::to_string(lane_id) + ".alu",
+                   false, VpuResponsePriority)
 {
     fatal_if(!parameters.widthBytes ||
                  !parameters.currentProfile(parameters.widthBytes),
-             "Execution unit supports one functional bundle only");
+             "Invalid timed execution unit profile");
     fatal_if(!sendResult, "ALU requires a result receiver");
+    fatal_if(parameters.capacity > pending.max_size(),
+             "ALU capacity exceeds host container capacity");
+    // Validate configured deadlines before accepting any command effects.
+    vpuClockEdge(owner, parameters.latency);
+    vpuClockEdge(owner, parameters.initiationInterval);
 }
 
 Alu::~Alu()
@@ -45,7 +56,13 @@ Alu::~Alu()
 TransferResult
 Alu::acceptBundle(const ExecutionBundle &bundle)
 {
-    if (active) {
+    if (pending.size() >= parameters.capacity) {
+        ++capacityStalls;
+        ++stats.retries;
+        return TransferResult::Retry;
+    }
+    if (curTick() < nextIssue) {
+        ++intervalStalls;
         ++stats.retries;
         return TransferResult::Retry;
     }
@@ -72,8 +89,18 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
                  VectorSupport::groupRegisterCount(bundle.emul),
              "ALU destination does not match its effective register group");
 
-    active.emplace();
-    active->bundle = bundle;
+    panic_if(std::any_of(pending.begin(), pending.end(),
+                         [&](const auto &entry) {
+                             return entry.bundle.key == bundle.key;
+                         }),
+             "Duplicate pending execution bundle");
+    const auto ready = vpuClockEdge(owner, parameters.latency);
+    nextIssue = vpuClockEdge(owner, parameters.initiationInterval);
+    panic_if(ready <= curTick() || nextIssue <= curTick(),
+             "Execution timing overflow");
+    ExecutionState state;
+    state.bundle = bundle;
+    state.readyAt = ready;
     switch (bundle.sewBits) {
         case 8:
             elements8 += bundle.elements.elementCount;
@@ -93,42 +120,52 @@ Alu::acceptBundle(const ExecutionBundle &bundle)
     stats.accept(bundle.elements.elementCount, bundle.destinationRange.size);
     // Reservar tantos bytes de resultado como ocupan los elementos recibidos.
     // Conservar identidad y destino para que la lane pueda escribirlos luego.
-    active->result = ExecutionResult{bundle.key,
-                                     bundle.sewBits,
-                                     bundle.elements,
-                                     bundle.destination,
-                                     bundle.destinationRange,
-                                     ByteBuffer(size),
-                                     0,
-                                     bundle.byteOrder,
-                                     bundle.emul};
-    owner.schedule(executeEvent, owner.clockEdge(parameters.latency));
+    state.result = ExecutionResult{bundle.key,
+                                   bundle.sewBits,
+                                   bundle.elements,
+                                   bundle.destination,
+                                   bundle.destinationRange,
+                                   ByteBuffer(size),
+                                   0,
+                                   bundle.byteOrder,
+                                   bundle.emul};
+    pending.push_back(std::move(state));
+    if (!responding && !executeEvent.scheduled()) {
+        owner.schedule(executeEvent, pending.front().readyAt);
+    }
     return TransferResult::Accepted;
 }
 
 void
 Alu::execute()
 {
-    panic_if(!active, "ALU evaluation without an accepted bundle");
-    const auto &bundle = active->bundle;
-    // Interpretar cada par de elementos usando el orden de bytes del objetivo.
-    // uint64_t suma módulo 2^64 sin overflow con signo del host; write
-    // conserva los bits bajos para 8/16/32. No se usan shifts por 64 bits.
-    // RVV 1.0, edición 20240411: Vector Integer Arithmetic Instructions,
-    // Vector Single-Width Integer Add and Subtract.
-    for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
-        const auto lhs = ElementCodec::read(bundle.lhs, i, bundle.sewBits,
-                                            bundle.byteOrder);
-        const auto rhs = ElementCodec::read(bundle.rhs, i, bundle.sewBits,
-                                            bundle.byteOrder);
-        ElementCodec::write(active->result.values, i, bundle.sewBits,
-                            lhs + rhs, bundle.byteOrder);
+    responding = true;
+    while (!pending.empty() && pending.front().readyAt <= curTick()) {
+        auto state = std::move(pending.front());
+        pending.pop_front();
+        const auto &bundle = state.bundle;
+        // Interpretar cada par de elementos usando el orden de bytes del
+        // objetivo. uint64_t suma módulo 2^64 sin overflow con signo del host;
+        // write conserva los bits bajos para 8/16/32. No se usan shifts por 64
+        // bits. RVV 1.0, edición 20240411: Vector Integer Arithmetic
+        // Instructions, Vector Single-Width Integer Add and Subtract.
+        for (std::size_t i = 0; i < bundle.elements.elementCount; ++i) {
+            const auto lhs = ElementCodec::read(bundle.lhs, i, bundle.sewBits,
+                                                bundle.byteOrder);
+            const auto rhs = ElementCodec::read(bundle.rhs, i, bundle.sewBits,
+                                                bundle.byteOrder);
+            ElementCodec::write(state.result.values, i, bundle.sewBits,
+                                lhs + rhs, bundle.byteOrder);
+        }
+        auto result = std::move(state.result);
+        // Liberar capacidad antes del callback permite una nueva admisión.
+        stats.complete();
+        sendResult(result);
     }
-    auto result = std::move(active->result);
-    // Liberar capacidad antes del callback permite una nueva admisión.
-    stats.complete();
-    active.reset();
-    sendResult(result);
+    responding = false;
+    if (!pending.empty() && !executeEvent.scheduled()) {
+        owner.schedule(executeEvent, pending.front().readyAt);
+    }
 }
 
 } // namespace gem5::vector_engine

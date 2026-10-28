@@ -11,6 +11,7 @@
 #include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/unit_completion.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
+#include "cpu/vector_engine/vpu/register_file/vrf_port.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
 
@@ -23,9 +24,10 @@ namespace gem5::vector_engine
  * datos de memoria todavía no permite dar por terminada una carga.
  *
  * El propietario conecta los callbacks al backend, los LRF y el sequencer.
- * Los receptores copian los mensajes aceptados y pueden responder dentro de
- * la propia llamada de envío. Ningún callback puede destruir esta VLSU;
- * tanto el propietario como el mapper deben sobrevivir a ella.
+ * El backend copia los mensajes aceptados y puede responder dentro de la
+ * llamada de envío. El VRF consulta una petición persistente y notifica su
+ * concesión antes de devolver datos o WriteAck. Ningún callback puede destruir
+ * esta VLSU; tanto el propietario como el mapper deben sobrevivir a ella.
  *
  * address_bits indica el ancho de dirección del objetivo (32 o 64), igual
  * al configurado en el backend. Admisión comprueba los LMUL soportados; aquí
@@ -38,16 +40,13 @@ class AraVLSU
   public:
     using MemorySender =
         std::function<TransferResult(const VectorMemoryRequest &)>;
-    using ReadSender =
-        std::function<TransferResult(LaneId, const VrfReadRequest &)>;
-    using WriteSender =
-        std::function<TransferResult(LaneId, const VrfWriteRequest &)>;
+    using VrfWakeup = std::function<void(LaneId)>;
     using CompletionSender = std::function<void(const UnitCompletion &)>;
 
     AraVLSU(ClockedObject &owner, const AddressMapper &mapper,
             const VlsuParameters &parameters, unsigned address_bits,
-            MemorySender send_memory, ReadSender send_read,
-            WriteSender send_write, CompletionSender send_completion);
+            MemorySender send_memory, VrfWakeup wake_vrf,
+            CompletionSender send_completion);
     ~AraVLSU();
 
     AraVLSU(const AraVLSU &) = delete;
@@ -55,6 +54,9 @@ class AraVLSU
 
     // Copia la tarea si hay capacidad; Accepted no indica finalización.
     TransferResult acceptTask(const MemoryTask &task);
+
+    // One persistent input per LRF. Only the active element's LRF sees it.
+    VrfRequestPort vrfPort(LaneId lane_id);
 
     // Las respuestas actualizan el estado y programan progreso posterior.
     // No ejecutan recursivamente el siguiente elemento dentro del callback.
@@ -71,18 +73,19 @@ class AraVLSU
     }
 
   private:
-    // SEND intenta entregar el mensaje; WAIT espera su única respuesta.
-    // Carga: Prepare -> SendMemory -> SendWrite -> NextElement.
-    // Store: Prepare -> SendRead -> SendMemory -> NextElement.
-    // Cada envío aceptado pasa por su WAIT antes de habilitar el siguiente.
+    // SEND prepara el mensaje; OFFER conserva una solicitud VRF hasta grant.
+    // WAIT espera la única respuesta de una operación ya concedida/aceptada.
+    // La memoria conserva su protocolo Accepted/Retry y un elemento activo.
     enum class Phase
     {
         Prepare,
         SendRead,
+        OfferRead,
         WaitRead,
         SendMemory,
         WaitMemory,
         SendWrite,
+        OfferWrite,
         WaitWrite,
         NextElement,
         MemoryFault,
@@ -96,8 +99,12 @@ class AraVLSU
         LaneId laneId = 0;
         // Identidad independiente de memoria, asociada al mismo elemento.
         VrfAccess vrfAccess;
-        // Conserva los bytes de carga mientras el LRF rechaza o confirma
-        // su escritura. En stores los bytes están en request.storeData.
+        // Stable until the grant; retained until the response for correlation.
+        std::optional<VrfRequest> vrfRequest;
+        Tick vrfEligibleAt = 0;
+        Tick vrfPublishedAt = 0;
+        // Conserva los bytes de carga hasta concesión y confirmación de su
+        // escritura. En stores los bytes están en request.storeData.
         std::optional<LoadData> load;
     };
 
@@ -123,20 +130,20 @@ class AraVLSU
     statistics::Scalar storeBytes;
     statistics::Scalar memoryRequests;
     statistics::Scalar memoryRetries;
-    statistics::Scalar vrfReadRetries;
-    statistics::Scalar vrfWriteRetries;
+    statistics::Scalar vrfReadsGranted;
+    statistics::Scalar vrfWritesGranted;
     ClockedObject &owner;
     const AddressMapper &mapper;
     const VlsuParameters &parameters;
     Addr addressMask;
     MemorySender sendMemory;
-    ReadSender sendRead;
-    WriteSender sendWrite;
+    VrfWakeup wakeVrf;
     CompletionSender sendCompletion;
     std::optional<TaskState> active;
     // Un solo evento evita duplicar reintentos y no depende de actividad CPU.
     EventFunctionWrapper progressEvent;
 
+    void recvVrfGrant(const VrfAccessKey &key);
     void validateTask(const MemoryTask &task) const;
     void prepareElement();
     bool hasReadyWork() const;

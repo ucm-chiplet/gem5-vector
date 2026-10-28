@@ -15,26 +15,25 @@ namespace gem5::vector_engine
 {
 
 /**
- * Slice local del VRF, propietaria de banksPerLane bancos independientes.
- * Concede por orden de llegada un acceso por banco; la contención devuelve
- * Retry sin retener la solicitud ni alterar el almacenamiento. Las entradas
- * locales sólo conservan el retorno de operaciones aceptadas, no una FIFO.
+ * Slice local del VRF. Cada banco arbitra por ciclo entre puertos de entrada
+ * persistentes. Los emisores poseen las peticiones no concedidas; el LRF
+ * sólo conserva correlación y recepción de accesos aceptados. Sus entradas
+ * de retorno y las del banco representan los mismos accesos, no dos colas.
  *
- * El propietario conecta los puertos de respuesta a la lane local y a la
- * VLSU. Cada emisor reserva espacio de recepción antes de llamar read/write.
- * Accepted obliga a una respuesta única; ésta conserva la clave original.
- * Las respuestas pueden admitir accesos nuevos, pero no destruir el LRF.
+ * Los puertos se enlazan durante construcción y sus índices son estables.
+ * Round-robin por banco/puerto físico garantiza oportunidades a lecturas y
+ * writebacks compatibles. Un conflicto no adelanta a otro candidato anterior
+ * según (ciclo de elegibilidad, índice de entrada). Las respuestas conservan
+ * VrfAccessKey y pueden llegar en distinto orden entre bancos.
  *
- * Propietario, mapper y receptores sobreviven al módulo. Drain termina el
- * trabajo aceptado; sólo se destruye cuando isIdle(). La capacidad efectiva
- * según LMUL y el rango activo se validan antes de emitir accesos al VRF.
+ * Receptores, productores y mapper sobreviven al módulo hasta isIdle().
+ * Antes de conceder existe recepción reservada en el emisor, LRF y banco.
  */
 class LaneRegisterFile
 {
   public:
     using ReadSender = std::function<void(const ReadResponse &)>;
     using WriteAckSender = std::function<void(const WriteAck &)>;
-
     struct ResponsePort
     {
         ReadSender sendRead;
@@ -45,12 +44,13 @@ class LaneRegisterFile
                      const BankParameters &parameters, LaneId lane_id,
                      ResponsePort lane_responses, ResponsePort vlsu_responses);
     ~LaneRegisterFile();
-
     LaneRegisterFile(const LaneRegisterFile &) = delete;
     LaneRegisterFile &operator=(const LaneRegisterFile &) = delete;
 
-    TransferResult read(const VrfReadRequest &request);
-    TransferResult write(const VrfWriteRequest &request);
+    // Sólo construcción; no se pueden cambiar entradas durante ejecución.
+    void bindRequestPort(VrfRequestPort port);
+    // Un productor publica trabajo estable; compite desde el siguiente flanco.
+    void wakeup();
     bool isIdle() const;
 
   private:
@@ -59,14 +59,19 @@ class LaneRegisterFile
         Read,
         Write
     };
-
     struct PendingAccess
     {
         VrfAccess access;
         MappedVrfFragment mapping;
         AccessKind kind;
-        // Reservado antes de conceder una lectura; vacío para escrituras.
         ByteBuffer readData;
+    };
+    struct Candidate
+    {
+        VrfOffer offer;
+        MappedVrfFragment mapping;
+        bool write;
+        bool granted = false;
     };
 
     ModuleStats stats;
@@ -74,17 +79,34 @@ class LaneRegisterFile
     statistics::Scalar writes;
     statistics::Scalar readBytes;
     statistics::Scalar writeBytes;
+    statistics::Scalar grantWaitTicks;
+    statistics::Vector waitCycles;
+    statistics::Vector capacityWaitCycles;
+    statistics::Vector portWaitCycles;
+    statistics::Vector conflictWaitCycles;
+    ClockedObject &owner;
     const AddressMapper &mapper;
     const BankParameters &parameters;
     const LaneId laneId;
     ResponsePort laneResponses;
     ResponsePort vlsuResponses;
     std::vector<std::unique_ptr<VectorRegBank>> banks;
-    std::vector<std::optional<PendingAccess>> pending;
+    std::vector<std::vector<std::optional<PendingAccess>>> pending;
+    std::vector<VrfRequestPort> inputs;
+    std::vector<std::vector<std::size_t>> nextInput;
+    bool started = false;
+    EventFunctionWrapper arbitrationEvent;
 
+    bool hasOffers() const;
     MappedVrfFragment validateAccess(const VrfAccess &access) const;
-    void handleTransfer(BankId bank_id, TransferResult result,
-                        uint64_t previous_peak);
+    static bool conflicts(const Candidate &a, const Candidate &b);
+    bool blockedByOlder(
+        std::size_t input,
+        const std::vector<std::optional<Candidate>> &candidates) const;
+    void arbitrate();
+    void grant(std::size_t input, std::size_t port, Candidate &candidate);
+    std::optional<PendingAccess> &findPending(BankId bank,
+                                              const VrfAccessKey &key);
     void recvBankReadResponse(BankId bank_id,
                               const BankReadResponse &response);
     void recvBankWriteAck(BankId bank_id, const BankWriteAck &ack);

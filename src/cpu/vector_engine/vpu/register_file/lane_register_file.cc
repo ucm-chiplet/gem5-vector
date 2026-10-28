@@ -3,6 +3,7 @@
 #include "cpu/vector_engine/vpu/register_file/lane_register_file.hh"
 
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -18,43 +19,65 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
                                    ResponsePort vlsu_responses)
     : stats(&owner, "lrf" + std::to_string(lane_id), "VRF accesses"),
       reads(&stats, "reads", statistics::units::Count::get(),
-            "Accepted read accesses"),
+            "Granted operand and VLSU reads"),
       writes(&stats, "writes", statistics::units::Count::get(),
-             "Accepted write accesses"),
+             "Granted lane and VLSU writes"),
       readBytes(&stats, "readBytes", statistics::units::Byte::get(),
-                "Enabled bytes in accepted read accesses"),
+                "Enabled bytes in granted reads"),
       writeBytes(&stats, "writeBytes", statistics::units::Byte::get(),
-                 "Enabled bytes in accepted write accesses"),
+                 "Enabled bytes in granted writes"),
+      grantWaitTicks(&stats, "grantWaitTicks", statistics::units::Tick::get(),
+                     "Sum of publication-to-grant ticks; excludes responses"),
+      waitCycles(&stats, "waitCycles", statistics::units::Cycle::get(),
+                 "Ungranted eligible request-cycles per bank"),
+      capacityWaitCycles(&stats, "capacityWaitCycles",
+                         statistics::units::Cycle::get(),
+                         "Request-cycles without bank entry; may overlap"),
+      portWaitCycles(&stats, "portWaitCycles", statistics::units::Cycle::get(),
+                     "Request-cycles without ready compatible port; overlap"),
+      conflictWaitCycles(&stats, "conflictWaitCycles",
+                         statistics::units::Cycle::get(),
+                         "Request-cycles with row/order conflict; overlap"),
+      owner(owner),
       mapper(mapper),
       parameters(parameters),
       laneId(lane_id),
       laneResponses(std::move(lane_responses)),
-      vlsuResponses(std::move(vlsu_responses))
+      vlsuResponses(std::move(vlsu_responses)),
+      arbitrationEvent([this] { arbitrate(); },
+                       owner.name() + ".lrf" + std::to_string(lane_id) +
+                           ".arbitrate",
+                       false, VrfArbitrationPriority)
 {
-    fatal_if(!parameters.currentProfile(),
-             "VRF bank supports one pending access and one RW port");
+    fatal_if(!parameters.currentProfile(), "Invalid timed VRF bank profile");
     const auto &geometry = mapper.geometry();
-    fatal_if(laneId >= geometry.numLanes,
-             "LRF identity is outside the VRF geometry");
+    fatal_if(laneId >= geometry.numLanes, "LRF identity outside VRF geometry");
     fatal_if(!laneResponses.sendRead || !laneResponses.sendWriteAck ||
                  !vlsuResponses.sendRead || !vlsuResponses.sendWriteAck,
              "LRF requires read and write acknowledgement endpoints");
-    fatal_if(geometry.banksPerLane > banks.max_size() ||
-                 geometry.banksPerLane > pending.max_size(),
-             "LRF bank count exceeds the host container capacity");
-    banks.reserve(geometry.banksPerLane);
+    fatal_if(geometry.banksPerLane > std::numeric_limits<int>::max(),
+             "LRF bank statistics exceed representable size");
     pending.resize(geometry.banksPerLane);
-    for (BankId bank_id = 0; bank_id < geometry.banksPerLane; ++bank_id) {
+    nextInput.resize(geometry.banksPerLane);
+    for (BankId bank = 0; bank < geometry.banksPerLane; ++bank) {
+        fatal_if(parameters.accessEntries > pending[bank].max_size(),
+                 "LRF return entries exceed host container capacity");
         banks.push_back(std::make_unique<VectorRegBank>(
-            owner, mapper, parameters, laneId, bank_id,
-            [this, bank_id](const BankReadResponse &response) {
-                recvBankReadResponse(bank_id, response);
+            owner, mapper, parameters, laneId, bank,
+            [this, bank](const BankReadResponse &reply) {
+                recvBankReadResponse(bank, reply);
             },
-            [this, bank_id](const BankWriteAck &ack) {
-                recvBankWriteAck(bank_id, ack);
+            [this, bank](const BankWriteAck &ack) {
+                recvBankWriteAck(bank, ack);
             },
             stats));
+        pending[bank].resize(parameters.accessEntries);
+        nextInput[bank].resize(banks[bank]->portCount(), 0);
     }
+    waitCycles.init(geometry.banksPerLane);
+    capacityWaitCycles.init(geometry.banksPerLane);
+    portWaitCycles.init(geometry.banksPerLane);
+    conflictWaitCycles.init(geometry.banksPerLane);
 }
 
 LaneRegisterFile::~LaneRegisterFile()
@@ -62,13 +85,42 @@ LaneRegisterFile::~LaneRegisterFile()
     panic_if(!isIdle(), "Destroying LRF before its work has drained");
 }
 
+void
+LaneRegisterFile::bindRequestPort(VrfRequestPort port)
+{
+    fatal_if(started || !port.peek || !port.granted,
+             "LRF ports must be bound before execution with valid callbacks");
+    inputs.push_back(std::move(port));
+}
+
+bool
+LaneRegisterFile::hasOffers() const
+{
+    return std::any_of(inputs.begin(), inputs.end(), [](const auto &port) {
+        return port.peek().has_value();
+    });
+}
+
 bool
 LaneRegisterFile::isIdle() const
 {
-    return std::none_of(pending.begin(), pending.end(),
-                        [](const auto &entry) { return bool(entry); }) &&
+    return !arbitrationEvent.scheduled() && !hasOffers() &&
            std::all_of(banks.begin(), banks.end(),
-                       [](const auto &bank) { return bank->isIdle(); });
+                       [](const auto &bank) { return bank->isIdle(); }) &&
+           std::all_of(pending.begin(), pending.end(), [](const auto &b) {
+               return std::none_of(b.begin(), b.end(), [](const auto &entry) {
+                   return entry.has_value();
+               });
+           });
+}
+
+void
+LaneRegisterFile::wakeup()
+{
+    started = true;
+    if (!arbitrationEvent.scheduled()) {
+        owner.schedule(arbitrationEvent, vpuClockEdge(owner, Cycles(1)));
+    }
 }
 
 MappedVrfFragment
@@ -78,8 +130,6 @@ LaneRegisterFile::validateAccess(const VrfAccess &access) const
                  (access.key.requester.kind == VrfRequesterKind::Lane &&
                   *access.key.requester.laneId != laneId),
              "Invalid requester or identity in an LRF access");
-    // Rechazar antes del mapeo rangos mayores que una palabra evita crear
-    // fragmentos que este receptor no puede aceptar como una sola operación.
     panic_if(!access.range.valid() ||
                  access.range.size > mapper.geometry().laneWordBytes,
              "LRF access must fit in one word");
@@ -87,99 +137,196 @@ LaneRegisterFile::validateAccess(const VrfAccess &access) const
     panic_if(mapping.size() != 1 || mapping.front().laneId != laneId ||
                  mapping.front().originalRange != access.range,
              "LRF access does not belong to one local VRF word");
-    // Las claves en vuelo son únicas incluso si apuntan a bancos distintos.
-    panic_if(std::any_of(pending.begin(), pending.end(),
-                         [&](const auto &entry) {
-                             return entry && entry->access.key == access.key;
-                         }),
-             "Duplicate accepted LRF access");
+    for (const auto &bank : pending) {
+        for (const auto &entry : bank) {
+            panic_if(entry && entry->access.key == access.key,
+                     "Duplicate granted LRF access");
+        }
+    }
     return std::move(mapping.front());
 }
 
-TransferResult
-LaneRegisterFile::read(const VrfReadRequest &request)
+bool
+LaneRegisterFile::conflicts(const Candidate &a, const Candidate &b)
 {
-    const auto &access = request.access;
-    auto mapping = validateAccess(access);
-    const auto bank_id = mapping.bankId;
-    if (pending[bank_id]) {
-        ++stats.retries;
-        return TransferResult::Retry;
+    if (a.mapping.bankId != b.mapping.bankId ||
+        a.mapping.row != b.mapping.row || (!a.write && !b.write)) {
+        return false;
     }
-    // El descriptor y el buffer de retorno existen antes de llamar al banco.
-    // La petición de banco es local: una respuesta puede retirar pending.
-    const BankReadRequest bank_request{access.key, mapping.row,
-                                       mapping.wordByteEnable};
-    pending[bank_id] =
-        PendingAccess{access, std::move(mapping), AccessKind::Read,
-                      ByteBuffer(access.range.size, 0)};
-    const auto previous_peak = stats.peakOutstanding.value();
-    stats.accept(
-        0, std::count(access.byteEnable.begin(), access.byteEnable.end(), 1));
-    const auto result = banks[bank_id]->read(bank_request);
-    if (result == TransferResult::Accepted) {
-        ++reads;
-        readBytes +=
-            std::count(access.byteEnable.begin(), access.byteEnable.end(), 1);
+    if (a.write != b.write) {
+        return true;
     }
-    handleTransfer(bank_id, result, previous_peak);
-    return result;
+    for (std::size_t i = 0; i < a.mapping.wordByteEnable.size(); ++i) {
+        if (a.mapping.wordByteEnable[i] && b.mapping.wordByteEnable[i]) {
+            return true;
+        }
+    }
+    return false;
 }
 
-TransferResult
-LaneRegisterFile::write(const VrfWriteRequest &request)
+bool
+LaneRegisterFile::blockedByOlder(
+    std::size_t input,
+    const std::vector<std::optional<Candidate>> &candidates) const
 {
-    const auto &access = request.access;
-    auto mapping = validateAccess(access);
-    panic_if(request.data.size() != access.range.size,
-             "LRF write data does not match its byte range");
-    const auto bank_id = mapping.bankId;
-    if (pending[bank_id]) {
-        ++stats.retries;
-        return TransferResult::Retry;
+    const auto &current = *candidates[input];
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (!candidates[i] || candidates[i]->granted || i == input) {
+            continue;
+        }
+        const auto &older = *candidates[i];
+        const bool precedes =
+            older.offer.eligibleAt < current.offer.eligibleAt ||
+            (older.offer.eligibleAt == current.offer.eligibleAt && i < input);
+        if (precedes && conflicts(older, current)) {
+            return true;
+        }
     }
-    // Los bytes exteriores al rango quedan a cero y tienen máscara cero.
-    ByteBuffer word_data(mapper.geometry().laneWordBytes, 0);
-    std::copy(request.data.begin(), request.data.end(),
-              word_data.begin() + mapping.byteOffsetInWord);
-    const BankWriteRequest bank_request{
-        access.key, mapping.row, mapping.wordByteEnable, std::move(word_data)};
-    pending[bank_id] =
-        PendingAccess{access, std::move(mapping), AccessKind::Write, {}};
-    const auto previous_peak = stats.peakOutstanding.value();
-    stats.accept(
-        0, std::count(access.byteEnable.begin(), access.byteEnable.end(), 1));
-    const auto result = banks[bank_id]->write(bank_request);
-    if (result == TransferResult::Accepted) {
-        ++writes;
-        writeBytes +=
-            std::count(access.byteEnable.begin(), access.byteEnable.end(), 1);
-    }
-    handleTransfer(bank_id, result, previous_peak);
-    return result;
+    return false;
 }
 
 void
-LaneRegisterFile::handleTransfer(BankId bank_id, TransferResult result,
-                                 uint64_t previous_peak)
+LaneRegisterFile::arbitrate()
 {
-    switch (result) {
-        case TransferResult::Accepted:
-            // No recrear una entrada retirada por una respuesta síncrona.
-            break;
-        case TransferResult::Retry:
-            panic_if(!pending[bank_id],
-                     "VRF bank responded to an access it rejected");
-            stats.withdraw(
-                0,
-                std::count(pending[bank_id]->access.byteEnable.begin(),
-                           pending[bank_id]->access.byteEnable.end(), 1),
-                previous_peak);
-            pending[bank_id].reset();
-            break;
-        default:
-            panic("Invalid VRF bank transfer result");
+    // Snapshot all eligible inputs before granting any. Producers expose
+    // stable descriptors and stamp new offers for the following edge.
+    std::vector<std::optional<Candidate>> candidates(inputs.size());
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+        auto offer = inputs[i].peek();
+        if (!offer) {
+            continue;
+        }
+        panic_if(!offer->request, "Null request in a persistent VRF offer");
+        panic_if(offer->publishedAt >= offer->eligibleAt,
+                 "VRF offer must become eligible after publication");
+        if (offer->eligibleAt > curTick()) {
+            continue;
+        }
+        const auto &access = vrfAccess(*offer->request);
+        auto mapping = validateAccess(access);
+        for (std::size_t j = 0; j < i; ++j) {
+            panic_if(candidates[j] &&
+                         vrfAccess(*candidates[j]->offer.request).key ==
+                             access.key,
+                     "Duplicate offered LRF access");
+        }
+        if (const auto *write = std::get_if<VrfWriteRequest>(offer->request)) {
+            panic_if(write->data.size() != access.range.size,
+                     "LRF write data does not match its byte range");
+        }
+        candidates[i] =
+            Candidate{*offer, std::move(mapping), isVrfWrite(*offer->request)};
     }
+    for (BankId bank = 0; bank < banks.size(); ++bank) {
+        auto &resource = *banks[bank];
+        for (std::size_t port = 0; port < resource.portCount(); ++port) {
+            const auto start = nextInput[bank][port];
+            for (std::size_t n = 0; n < candidates.size(); ++n) {
+                const auto i = (start + n) % candidates.size();
+                if (!candidates[i] || candidates[i]->granted) {
+                    continue;
+                }
+                auto &candidate = *candidates[i];
+                if (candidate.mapping.bankId != bank ||
+                    !resource.hasCapacity() ||
+                    !resource.portReady(port, candidate.write) ||
+                    resource.conflicts(candidate.mapping.row,
+                                       candidate.mapping.wordByteEnable,
+                                       candidate.write) ||
+                    blockedByOlder(i, candidates)) {
+                    continue;
+                }
+                grant(i, port, candidate);
+                nextInput[bank][port] = (i + 1) % candidates.size();
+                break;
+            }
+        }
+    }
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        if (!candidates[i] || candidates[i]->granted) {
+            continue;
+        }
+        const auto &candidate = *candidates[i];
+        const auto bank = candidate.mapping.bankId;
+        const auto &resource = *banks[bank];
+        ++waitCycles[bank];
+        ++stats.retries;
+        if (!resource.hasCapacity()) {
+            ++capacityWaitCycles[bank];
+        }
+        bool ready_port = false;
+        for (std::size_t port = 0; port < resource.portCount(); ++port) {
+            ready_port |= resource.portReady(port, candidate.write);
+        }
+        if (!ready_port) {
+            ++portWaitCycles[bank];
+        }
+        if (resource.conflicts(candidate.mapping.row,
+                               candidate.mapping.wordByteEnable,
+                               candidate.write) ||
+            blockedByOlder(i, candidates)) {
+            ++conflictWaitCycles[bank];
+        }
+    }
+    if (hasOffers()) {
+        wakeup();
+    }
+}
+
+void
+LaneRegisterFile::grant(std::size_t input, std::size_t port,
+                        Candidate &candidate)
+{
+    // Copy before granted() lets the producer change its presentation state.
+    const auto request = *candidate.offer.request;
+    const auto &access = vrfAccess(request);
+    const auto bank = candidate.mapping.bankId;
+    auto free = std::find_if(pending[bank].begin(), pending[bank].end(),
+                             [](const auto &entry) { return !entry; });
+    panic_if(free == pending[bank].end(), "Missing reserved LRF return entry");
+    ByteBuffer read_data;
+    if (!candidate.write) {
+        read_data.resize(access.range.size, 0);
+    }
+    *free =
+        PendingAccess{access, candidate.mapping,
+                      candidate.write ? AccessKind::Write : AccessKind::Read,
+                      std::move(read_data)};
+    const auto bytes =
+        std::count(access.byteEnable.begin(), access.byteEnable.end(), 1);
+    stats.accept(0, bytes);
+    grantWaitTicks += curTick() - candidate.offer.publishedAt;
+    candidate.granted = true;
+    inputs[input].granted(access.key);
+    if (candidate.write) {
+        const auto &write = std::get<VrfWriteRequest>(request);
+        ByteBuffer word(mapper.geometry().laneWordBytes, 0);
+        std::copy(write.data.begin(), write.data.end(),
+                  word.begin() + candidate.mapping.byteOffsetInWord);
+        ++writes;
+        writeBytes += bytes;
+        banks[bank]->write(port,
+                           BankWriteRequest{access.key, candidate.mapping.row,
+                                            candidate.mapping.wordByteEnable,
+                                            std::move(word)});
+    } else {
+        ++reads;
+        readBytes += bytes;
+        banks[bank]->read(port,
+                          BankReadRequest{access.key, candidate.mapping.row,
+                                          candidate.mapping.wordByteEnable});
+    }
+}
+
+std::optional<LaneRegisterFile::PendingAccess> &
+LaneRegisterFile::findPending(BankId bank, const VrfAccessKey &key)
+{
+    panic_if(bank >= pending.size(), "Response from unknown VRF bank");
+    auto match = std::find_if(
+        pending[bank].begin(), pending[bank].end(),
+        [&](const auto &entry) { return entry && entry->access.key == key; });
+    panic_if(match == pending[bank].end(), "Unknown/duplicate LRF response");
+    return *match;
 }
 
 const LaneRegisterFile::ResponsePort &
@@ -188,40 +335,34 @@ LaneRegisterFile::responsePort(const VrfRequester &requester) const
     panic_if(!requester.valid() || (requester.kind == VrfRequesterKind::Lane &&
                                     *requester.laneId != laneId),
              "Invalid requester in an LRF response");
-    return requester.kind == VrfRequesterKind::Lane ? laneResponses
-                                                    : vlsuResponses;
+    if (requester.kind == VrfRequesterKind::Lane) {
+        return laneResponses;
+    }
+    return vlsuResponses;
 }
 
 void
-LaneRegisterFile::recvBankReadResponse(BankId bank_id,
+LaneRegisterFile::recvBankReadResponse(BankId bank,
                                        const BankReadResponse &response)
 {
-    panic_if(bank_id >= pending.size() || !pending[bank_id],
-             "VRF bank read response has no pending LRF access");
-    auto &slot = pending[bank_id];
-    panic_if(slot->kind != AccessKind::Read ||
-                 slot->access.key != response.key ||
-                 slot->mapping.bankId != bank_id ||
+    auto &slot = findPending(bank, response.key);
+    panic_if(slot->kind != AccessKind::Read || slot->mapping.bankId != bank ||
                  response.wordData.size() != mapper.geometry().laneWordBytes,
-             "VRF bank read response has wrong identity, direction or size");
+             "VRF read response has wrong direction or size");
     ReadResponse reply{response.key, std::move(slot->readData)};
     std::copy_n(response.wordData.begin() + slot->mapping.byteOffsetInWord,
                 reply.data.size(), reply.data.begin());
-    // Se libera antes de notificar: el solicitante puede emitir otro acceso.
     stats.complete();
     slot.reset();
     responsePort(reply.key.requester).sendRead(reply);
 }
 
 void
-LaneRegisterFile::recvBankWriteAck(BankId bank_id, const BankWriteAck &ack)
+LaneRegisterFile::recvBankWriteAck(BankId bank, const BankWriteAck &ack)
 {
-    panic_if(bank_id >= pending.size() || !pending[bank_id],
-             "VRF bank write acknowledgement has no pending LRF access");
-    auto &slot = pending[bank_id];
-    panic_if(slot->kind != AccessKind::Write || slot->access.key != ack.key ||
-                 slot->mapping.bankId != bank_id,
-             "VRF bank write acknowledgement has wrong identity or direction");
+    auto &slot = findPending(bank, ack.key);
+    panic_if(slot->kind != AccessKind::Write || slot->mapping.bankId != bank,
+             "VRF write acknowledgement has wrong direction or bank");
     const WriteAck reply{ack.key};
     stats.complete();
     slot.reset();

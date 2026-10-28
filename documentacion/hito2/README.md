@@ -9,12 +9,15 @@ Este hito es un diseño propuesto, organizado en ocho fases de trabajo.
 La [entrega de contratos de fase 1](<Fase 1 - Contratos y capacidades.md>)
 documenta su implementación y límites. La [entrega VPU de fase 2](
 <Fase 2 - Anchos y grupos.md>) amplía el backend de suma y memoria a
-8/16/32/64 bits y grupos enteros/fraccionales, sin modificar CPU ni acreditar
-ejecución funcional de toda la matriz. El resto del diseño conserva su
-estado de propuesta; los contratos preparados no habilitan sus operaciones.
+8/16/32/64 bits y grupos enteros/fraccionales. La [entrega VPU de fase 3](
+<Fase 3 - Recursos temporizados y arbitraje.md>) incorpora recursos locales
+finitos y temporizados, arbitraje del VRF y varios fragmentos de una misma
+instrucción en curso. Ambas mantienen las responsabilidades CPU y no
+acreditan por sí solas ejecución funcional de toda la matriz ni cierre de
+integración CPU--VPU. El resto del diseño conserva su estado de propuesta.
 El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
 para repetirlo. El diseño y el diagrama describen la organización objetivo;
-las entregas de fases 1--2 distinguen contratos, backend implementado,
+las entregas de fases 1--3 distinguen contratos, backend implementado,
 integración CPU y comprobaciones de los recursos y operaciones pendientes.
 
 Su papel dentro de VAMPIRE es aportar recursos finitos y observabilidad
@@ -26,6 +29,8 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   objetivos, responsabilidades, contratos y decisiones de arquitectura.
 - [Entrega VPU de fase 2](<Fase 2 - Anchos y grupos.md>): perfil SEW/LMUL,
   configuración explícita, comprobaciones y dependencia de integración CPU.
+- [Entrega VPU de fase 3](<Fase 3 - Recursos temporizados y arbitraje.md>):
+  reservas, arbitraje, temporización, estadísticas y límites de evidencia.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):
   orden, tareas, interfaces, resultados y criterios de cierre por fase.
 - [Plan de evolución: hitos 2 a 5](<../Plan de evolución - Hitos 2 a 5.md>):

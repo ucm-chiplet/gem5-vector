@@ -29,6 +29,8 @@
 #include "cpu/vector_engine/vector_engine.hh"
 
 #include <algorithm>
+#include <initializer_list>
+#include <limits>
 #include <utility>
 
 #include "base/logging.hh"
@@ -110,14 +112,38 @@ VectorEngine::makeConfiguration(const Params &params)
              "VectorEngine requires a power-of-two VLEN of 4..8192 bytes");
     fatal_if(!config.commandQueueEntries || config.maxActiveCommands != 1 ||
                  config.maxActiveCommands > config.commandQueueEntries,
-             "Width profile requires one active command and a positive queue");
+             "Timed resource profile requires one active command and positive "
+             "queue");
     fatal_if(params.elen_bits != 32 && params.elen_bits != 64,
              "VectorEngine requires ELEN of 32 or 64 bits");
     fatal_if(uint64_t{bytes} * 8 < config.elenBits,
              "VectorEngine requires VLEN >= ELEN");
     fatal_if(!config.lane.currentProfile(word_bytes) ||
                  !config.bank.currentProfile(),
-             "VectorEngine resource profile is not implemented");
+             "Invalid phase-3 resource profile or independent widths/multiple "
+             "ALUs");
+    // Check products before constructing any resource. A larger count may
+    // be legal but underutilized when another finite stage is the bottleneck.
+    const auto check_extent = [](std::initializer_list<uint64_t> factors) {
+        uint64_t size = 1;
+        for (const auto factor : factors) {
+            fatal_if(factor && size > std::numeric_limits<std::size_t>::max() /
+                                          factor,
+                     "VPU resource byte extent exceeds host address space");
+            size *= factor;
+        }
+    };
+    check_extent({config.vrf.numLanes, config.lane.taskEntries, 3,
+                  sizeof(VrfRequestPort)});
+    check_extent({config.vrf.numLanes, config.lane.operandEntriesPerSource, 2,
+                  word_bytes});
+    check_extent({config.vrf.numLanes, config.lane.resultEntries, word_bytes});
+    check_extent(
+        {config.vrf.numLanes, config.lane.alu.capacity, 3, word_bytes});
+    check_extent(
+        {config.vrf.numLanes, config.lane.fpu.capacity, 3, word_bytes});
+    check_extent({config.vrf.numLanes, config.vrf.banksPerLane,
+                  config.bank.accessEntries, word_bytes});
     fatal_if(config.memory.addressBits != 32 &&
                  config.memory.addressBits != 64,
              "VectorEngine requires a 32-bit or 64-bit address width");
@@ -248,14 +274,8 @@ VectorEngine::VectorEngine(const Params &params)
 
         lanes.push_back(std::make_unique<AraLane>(
             *this, mapper, vpuParameters.lane, lane_id, targetByteOrder,
-            // Lee los operandos de la slice local del VRF.
-            [this, lane_id](const VrfReadRequest &request) {
-                return registerFiles[lane_id]->read(request);
-            },
-            // Escribe el resultado en la slice local del VRF.
-            [this, lane_id](const VrfWriteRequest &request) {
-                return registerFiles[lane_id]->write(request);
-            },
+            // Producer storage is stable until the LRF grants the offer.
+            [this, lane_id] { registerFiles[lane_id]->wakeup(); },
             // Devuelve al distribuidor el fragmento terminado.
             [this](const LaneCompletion &completion) {
                 distributor->recvCompletion(completion);
@@ -268,17 +288,11 @@ VectorEngine::VectorEngine(const Params &params)
         [this](const VectorMemoryRequest &request) {
             return memoryBackend->acceptRequest(request);
         },
-        // Para un store, lee los datos de la lane propietaria.
-        [this](LaneId lane_id, const VrfReadRequest &request) {
+        // Both load writeback and store reads arbitrate in the owning LRF.
+        [this](LaneId lane_id) {
             panic_if(lane_id >= registerFiles.size(),
                      "VectorEngine received an invalid VRF destination");
-            return registerFiles[lane_id]->read(request);
-        },
-        // Para una carga, escribe los datos en la lane propietaria.
-        [this](LaneId lane_id, const VrfWriteRequest &request) {
-            panic_if(lane_id >= registerFiles.size(),
-                     "VectorEngine received an invalid VRF destination");
-            return registerFiles[lane_id]->write(request);
+            registerFiles[lane_id]->wakeup();
         },
         // Informa al sequencer de la carga o store terminados.
         [this](const UnitCompletion &completion) {
@@ -301,6 +315,15 @@ VectorEngine::VectorEngine(const Params &params)
         [this](const VectorMemoryResponse &response) {
             vlsu->recvMemoryResponse(response);
         });
+
+    // Bind every persistent input before any module can receive work.
+    // Context/role indices and the final VLSU input have a stable order.
+    for (LaneId lane_id = 0; lane_id < num_lanes; ++lane_id) {
+        for (auto &port : lanes[lane_id]->vrfPorts()) {
+            registerFiles[lane_id]->bindRequestPort(std::move(port));
+        }
+        registerFiles[lane_id]->bindRequestPort(vlsu->vrfPort(lane_id));
+    }
 }
 
 /**
@@ -313,6 +336,9 @@ VectorEngine::~VectorEngine()
     if (drainEvent.scheduled()) {
         deschedule(drainEvent);
     }
+    // LRF idle checks consult bound producer ports. Destroy the arbiters
+    // while lanes and VLSU still exist, before reverse member destruction.
+    registerFiles.clear();
 }
 
 /**
