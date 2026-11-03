@@ -69,6 +69,12 @@ la ALU, sin unidades dedicadas adicionales. El objetivo entero es admitir
 Una división no tiene por qué ocupar el mismo tiempo que una suma. Cada fase
 requerirá una propuesta y aprobación de código independientes.
 
+El adelanto equilibrado aprobado el 3 de noviembre de 2026 añade Pathfinder
+como benchmark de cierre del 2, AXPY en el 3 y MatMul en el 4. La fase 2.8
+incorpora el subconjunto adicional de Pathfinder sobre los recursos de
+2.1--2.7; no modifica el estado de las entregas ya registradas. Véase el
+[plan de benchmarks](<../Plan de benchmarks.md>) para inventario y límites.
+
 ## Instrucciones y anchos previstos al terminar el hito 2
 
 Esta matriz describe el resultado que se quiere construir, no el soporte
@@ -85,6 +91,7 @@ una [explicación con ejemplo][predicacion].
 | Operación | Forma prevista | 8 bits | 16 bits | 32 bits | 64 bits |
 | --- | --- | --- | --- | --- | --- |
 | Suma entera `vadd` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
+| Mínimo entero con signo `vmin`, para Pathfinder | `.vv`, sin predicación | — | — | Objetivo | — |
 | Multiplicación entera `vmul` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
 | División entera `vdiv`, `vdivu` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
 | Resto entero `vrem`, `vremu` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
@@ -97,8 +104,14 @@ una [explicación con ejemplo][predicacion].
 `vsetvli` permanece en CPU y configura `vl` y `vtype` para las combinaciones
 legales y soportadas. Las columnas describen el ancho del elemento, no VLEN
 ni el ancho físico de una ALU. En memoria se mantiene EEW=SEW y no se habilitan
-otros modos de direccionamiento. Las formas `.vv` usan dos vectores; `.vx`
-usa un vector y el escalar capturado por CPU.
+otros modos de direccionamiento en memoria ordinaria. Las formas `.vv`
+usan dos vectores; `.vx` usa un vector y el escalar capturado por CPU.
+
+Pathfinder añade `vl2re32.v` y `vs2r.v`: transfieren dos registros completos,
+con geometría y longitud efectiva propias según RVV. No se restringen al
+`vl` ni al LMUL de una carga/store ordinaria. Se integran en 2.8 con sus
+restricciones de codificación, alineación, `vstart` y faults, manteniendo
+una instrucción de memoria, un bloque y un paquete físico activos.
 
 En concreto, multiplicación incluye `vmul.vv` y `vmul.vx`; división incluye
 `vdiv.vv`, `vdiv.vx`, `vdivu.vv` y `vdivu.vx`; resto incluye `vrem.vv`,
@@ -238,6 +251,9 @@ los pendientes sin reducir el alcance actual de este hito:
   progreso escalar con comandos vectoriales pendientes, incluida preparación
   de operandos para nuevos despachos y control de bucle resuelto;
   contratos y recursos de ejecución colectiva para las familias de 4--5.
+  Incluye AXPY al cierre: se anticipan `vfmacc.vf` y `vfmv.v.f` FP64 con
+  captura del escalar, lectura del acumulador y flags; se heredan memoria
+  de 64 bits y `vs2r.v`. No incorpora todo FP64 ni precisión mixta.
   Incluye las variantes con máscara de ambas slide1. Chaining y memoria
   concurrente son objetivos de cierre, no optimizaciones opcionales.
   También prepara la [clusterización][clusters]: agrupar lanes y recursos
@@ -245,14 +261,19 @@ los pendientes sin reducir el alcance actual de este hito:
   global. El 3 dejará las interfaces preparadas con un único grupo inicial;
   el primer experimento multiclúster se concreta en el nuevo hito 4.
 - **Hito 4, precisión mixta y ampliaciones HPC/ML:** FP16/BF16 junto a
-  FP32/FP64, conversiones entre anchos, FMA y acumulación en mayor precisión,
-  reducciones y auxiliares del perfil; segmentados y compactación. Incluye
+  FP32 y la ampliación del subconjunto FP64 de AXPY, conversiones entre
+  anchos, FMA y acumulación en mayor precisión, reducciones y auxiliares del
+  perfil; segmentados y compactación. Incluye
   evaluación FP8 y revisión de FP4 para CSA, calidad numérica y perfiles
   temporales; comparación de la organización plana con un modelo acotado
   de dos clústeres como punto inicial parametrizable. Esa comparación es
   lógica; no demuestra una ventaja planar/3D sin costes tecnológicos.
   Se admiten las operaciones de los casos seleccionados, sin exigir todo FP.
-- **Hito 5, repertorio e integración HPC/ML:** enteras habituales,
+  MatMul se incorpora al cierre del 4: `vfmacc.vv`/`vfredosum.vs` FP64,
+  `vlse64.v`, `vmv.v.i` y `vmv1r.v`, con configuración también `vsetivli`
+  en CPU. El adelanto acota strided y movimientos a las formas necesarias.
+- **Hito 5, repertorio e integración HPC/ML:** reutiliza los subconjuntos
+  de Pathfinder, AXPY y MatMul y amplía enteras habituales,
   comparación, selección y máscaras; reducciones adicionales, slides de
   distancia variable, gathers y memoria strided/indexed. Completa formas FP
   y bibliotecas necesarias para los kernels acordados, reutilizando el 4.
@@ -276,6 +297,12 @@ durante el propio hito 2. Son decisiones pendientes de sus fases, no
 ampliaciones que se trasladan automáticamente al hito siguiente.
 
 ## Benchmarks acordados
+
+El adelanto equilibrado añade Pathfinder al cierre del 2, AXPY al del 3 y
+MatMul al del 4. El hito 2 debe cerrar el recorrido CPU--VPU de Pathfinder,
+incluida la copia inicial, con resultado contrastado. Se medirán tráfico y
+esperas por recurso según la validación que defina el equipo; ejecutar el
+caso no demuestra por sí solo solapamiento ni fidelidad de ciclos con Ara.
 
 La campaña se organiza en tres bloques:
 

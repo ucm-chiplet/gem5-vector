@@ -15,6 +15,12 @@ comprobaciones indicadas son propuestas para acordar con el equipo.
 
 ## Tabla de responsabilidades
 
+El adelanto equilibrado aprobado añade Pathfinder al cierre del 2, AXPY al
+del 3 y MatMul al del 4. Las acciones de fases ya entregadas no se dan por
+reabiertas ni completadas por este cambio de planificación. En el hito 2,
+la fase 2.8 incorpora mínimo y transferencias completas del perfil de
+Pathfinder; el [plan de benchmarks][benchmarks] registra el inventario.
+
 CPU incluye la integración con Minor y las rutas ISA necesarias para
 traducir instrucciones a comandos. VPU incluye frontend, lanes, VRF, VLSU,
 backend de memoria e interconexión. Los contratos de `common/` e `interface/`
@@ -29,7 +35,7 @@ requieren revisión de ambas partes; cada edición tendrá un responsable.
 | 2.5 Concurrencia | Contextos y reservas | Envío y retirada | Solapamiento |
 | 2.6 FUs | FP32 y varias ALUs | Operaciones y flags | Cálculo y efectos |
 | 2.7 Red | Crossbar y slides | Traducción de slides | Transporte y writeback |
-| 2.8 Cierre | Recursos y métricas | Estado CPU | Evidencia y límites |
+| 2.8 Cierre y Pathfinder | Mínimo de 32 bits, transferencias completas, recursos y métricas | Traducción, grupos y retirada | Ejecución de Pathfinder, evidencia y límites |
 
 ## Acciones en CPU y Minor
 
@@ -254,6 +260,11 @@ con sus restricciones y estado arquitectónico correctos. La existencia del
 crossbar por sí sola no acredita soporte de estas instrucciones.
 
 ### Fase 2.8. Consolidación de la integración CPU
+
+Para Pathfinder, traducir `vmin.vv`, `vl2re32.v` y `vs2r.v`, capturando
+configuración, base y grupos sin asumir que una transferencia completa usa
+el `vl` ordinario. Conservar barreras de memoria, faults y retirada de
+comandos completos. La matriz CPU--VPU debe incluir inicialización y cálculo.
 
 **Puntos de trabajo:** matriz de soporte, documentación de integración,
 estadísticas de Minor y revisión del ciclo de vida completo.
@@ -515,6 +526,12 @@ con tráfico observado cuando cruzan lanes. Se puede sustituir el modelo de
 red conservando sus contratos; no se exige implementar otra topología.
 
 ### Fase 2.8. Consolidación de recursos y entrega al hito 3
+
+Incorporar el mínimo con signo de 32 bits en ALU y las transferencias
+completas de dos registros en VLSU/VRF, con rangos, longitud efectiva,
+dependencias, reservas e identidades explícitos. Mantener una instrucción
+de memoria, un bloque y un paquete físico activos. El cierre incluye
+Pathfinder con resultado contrastado, según la validación del equipo.
 
 **Puntos de trabajo:** matrices, fichas de operación, configuración,
 estadísticas, documentación y revisión de los módulos anteriores.

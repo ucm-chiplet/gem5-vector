@@ -30,6 +30,12 @@ La campaña de [benchmarks acordados][benchmarks] reúne micro-kernels RVV,
 kernels densos de BLIS y los bloques de atención CSA/HCA de DeepSeek V4
 Flash. Sus variantes, tamaños y ROI se concretan en fichas antes de ejecutar.
 
+El adelanto equilibrado aprobado añade **Pathfinder al cierre del hito 2**,
+**AXPY al del 3** y **MatMul al del 4**. El plan de benchmarks detalla el
+subconjunto añadido: mínimo/transferencias completas en el 2, FP64/FMA
+acotadas en el 3 y strided/movimientos auxiliares en el 4. Es alcance
+planificado; no acredita implementación ni ejecución de esas cargas.
+
 Para entender el código actual, empieza por el hito 1. Para preparar las
 siguientes extensiones, consulta el hito 2 y conserva los contratos del hito 1.
 El hito 3 tiene como objetivos chaining y varias instrucciones de memoria

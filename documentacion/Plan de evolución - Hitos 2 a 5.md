@@ -33,6 +33,12 @@ de soporte. Tampoco el número de hitos es cerrado: se prevén hitos 6 y
 siguientes, por definir según los resultados (véase
 [continuidad](#continuidad-de-investigación-y-líneas-paralelas)).
 
+El adelanto equilibrado aprobado el 3 de noviembre de 2026 incorpora
+**Pathfinder al cierre del 2, AXPY al del 3 y MatMul al del 4**. Amplía el
+alcance planificado para esos subconjuntos; no certifica soporte actual
+ni autoriza implementar código. El [plan de benchmarks][benchmarks] recoge
+inventarios, procedencia, responsabilidades y evidencia esperada.
+
 Recorrido del documento:
 
 - [Hito 2: Concurrencia aritmética, FP32 y recursos temporizados](#hito-2-concurrencia-aritmética-fp32-y-recursos-temporizados).
@@ -214,6 +220,12 @@ y `.vx`, memoria unit-stride con EEW=SEW, y FP32 `vfadd`, `vfmul` y `vfdiv`
 `.vv`. La red ejecuta `vslide1up.vx` y `vslide1down.vx` sin predicación en
 los cuatro anchos. La matriz del README concreta las formas y restricciones.
 
+El cierre añade Pathfinder: `vmin.vv` de 32 bits, `vl2re32.v` y `vs2r.v`,
+además de las instrucciones ya previstas. Se integra en 2.8 sobre los
+recursos anteriores, con una propuesta específica para esas operaciones.
+Las transferencias completas tienen geometría y longitud efectiva propias;
+la restricción EEW=SEW anterior corresponde a memoria ordinaria del perfil.
+
 ### Fase 2.1. Contratos y capacidades
 
 Definir mensajes, operandos, geometría, formatos y estados compartidos
@@ -338,6 +350,12 @@ rehacer la comprobación cerrada del hito 1 ni adelanta chaining o máscaras.
 Los criterios completos se mantienen en la
 [sección 15.3 del diseño][cierre-h2].
 
+Incorporar aquí el subconjunto adicional de Pathfinder y reunir su evidencia
+CPU--VPU, incluida la copia inicial, según el plan de benchmarks. La ALU
+ejecuta mínimo entero; VRF/VLSU transfieren los grupos completos respetando
+identidades, reservas, faults y drain. Se conservan barreras y límites de
+memoria del hito; la ejecución funcional no acredita chaining.
+
 ### Ejemplos al cierre: enteros de 16 bits y FP32
 
 Se aplican las [convenciones comunes][convenciones-ejemplos].
@@ -405,7 +423,9 @@ de capacidad finita. Preparar interfaces para agrupar lanes y sus recursos
 locales en clústeres sin rediseñar el recorrido de cada instrucción.
 
 Se trabaja primero con las instrucciones del hito 2 y sus ampliaciones de
-predicación admitidas. Los nuevos opcodes HPC/ML se incorporan en 4--5.
+predicación admitidas. Como adelanto acotado, el cierre incorpora AXPY:
+`vfmacc.vf` y `vfmv.v.f` FP64, memoria de 64 bits y `vs2r.v` heredados.
+El resto de las ampliaciones numéricas y opcodes HPC/ML permanece en 4--5.
 Preparar una familia significa dejar resueltos sus contratos de datos,
 planificación, transporte, terminación y recursos; no basta nombrar una
 unidad futura ni reservar un directorio.
@@ -426,7 +446,8 @@ para los accesos segmentados del 4, sin activarlos en el 3.
 Separar desde aquí identidad y ubicación de los participantes, siguiendo
 los contratos de preparación para clústeres que integra la fase 3.7.
 El cierre entrega un esquema que representa las familias de 4--5 sin
-forzarlas a dos fuentes del mismo tipo ni implementar sus opcodes aún.
+forzarlas a dos fuentes del mismo tipo. AXPY activa sólo el subconjunto
+FP64/FMA acordado en 3.8; los demás opcodes siguen en sus hitos.
 Se documentarán también los puntos que requeriría un futuro comando IME:
 grupos de A/B/C, fases y propiedad del acumulador. Es una preparación de
 contratos; la semántica y las rutas activas necesitan su propuesta específica.
@@ -708,8 +729,17 @@ utilizar por bloqueo de despacho en Minor, según la fase 3.5.
 El cierre incluye funcionamiento con capacidades pequeñas y contrapresión,
 sin asumir que aumentar buffers corrige un bloqueo de protocolo.
 
+Integrar el adelanto de AXPY: escalar FP capturado, lectura del destino,
+`vfmacc.vf` fusionada y `vfmv.v.f` FP64, con reservas finitas y flags
+aplicados por Minor al retirar. Reutilizar 3.1 y los mecanismos de 3.3--3.5
+para dependencias, chaining y memoria. El cierre incluye inicialización y
+resultado contrastado, y separa ejecución funcional de evidencia temporal.
+FP64 queda limitado a estas formas; el 4 amplía formatos y operaciones.
+
 ### Criterios de cierre del hito 3
 
+- AXPY ejecuta el perfil acordado, incluida inicialización, con resultado
+  contrastado y evidencia del recorrido CPU--VPU y sus efectos FP.
 - Las instrucciones del hito 2 conservan su semántica y tienen predicación
   en las variantes que la admiten; ambas slide1 incluyen esa ampliación.
 - Un consumidor usa rangos listos antes de completar todo su productor.
@@ -812,9 +842,14 @@ reparto acotado de esas lanes en dos clústeres: grupos con recursos locales
 e interfaces de comunicación.
 
 Dar prioridad a FP16 y BF16, las conversiones entre precisiones y la
-acumulación en un formato más amplio. Mantener FP32 y añadir el perfil FP64
-para cálculo científico. Incorporar también accesos segmentados y
-compactación de datos sobre los mecanismos del hito 3.
+acumulación en un formato más amplio. Mantener FP32 y ampliar el subconjunto
+FP64 de AXPY del hito 3 para cálculo científico. Incorporar accesos
+segmentados y compactación de datos sobre los mecanismos del hito 3.
+
+El cierre incorpora MatMul con `vfmacc.vv`, `vfredosum.vs`, `vlse64.v`,
+`vmv.v.i` y `vmv1r.v`, además de memoria/configuración heredadas. Strided y
+movimientos se adelantan como dependencias concretas de este caso, no como
+incorporación completa del repertorio del 5.
 
 La selección cubre todas las operaciones que usen los casos acordados,
 incluidos movimiento, configuración, formas escalares y auxiliares. No se
@@ -841,6 +876,10 @@ reproducible. Una conversión hecha por software no se contabiliza como una
 instrucción vectorial nativa de ese formato ni habilita opcodes nuevos.
 
 ### Fase 4.1. Cerrar casos ML/HPC, formatos y dependencias
+
+Incluir MatMul en los casos ejecutables del hito y fijar su perfil completo,
+incluidos `vsetivli`, inicialización, strided, movimientos y reducción
+ordenada. El inventario comunicado está en el plan de benchmarks.
 
 Concretar los micro-kernels de widening, geometría y formatos y una primera
 selección de kernels densos de BLIS compatibles con el hito. Para CSA/HCA
@@ -888,6 +927,9 @@ todas las combinaciones SEW×LMUL.
 
 ### Fase 4.3. FPU con varios formatos y conversiones
 
+Reutilizar las formas FP64 de AXPY del 3 y ampliar su matriz; no se exige
+reimplementar sus contratos de escalar FP, acumulador o flags.
+
 Registrar FP16, FP32 y FP64 como perfiles explícitos, y BF16 para sus
 operaciones especificadas. La CPU captura el escalar en su formato correcto;
 el backend no identifica tipos sólo por tamaño. Completar movimiento y
@@ -912,6 +954,11 @@ Usar las operaciones definidas por las extensiones correspondientes, como
 `vfwmacc` y `vfwmaccbf16`, junto con FMA del mismo ancho `vfmacc`.
 El adaptador debe respetar la fusión y el redondeo que indique cada una.
 
+Para MatMul, cerrar `vfmacc.vv` FP64 y la reducción `vfredosum.vs` FP64.
+Esta última usa los recursos colectivos de 3.6, con semilla y resultado en
+el elemento 0 de sus registros y orden de suma según RVV; no sustituir
+la reducción ordenada por un árbol arbitrario.
+
 Integrar reducciones de suma ordenada/no ordenada y mínimo/máximo del
 perfil, y las widening que se necesiten para precisión mixta. Definir
 tratamiento de máscara, inicialización, resultado y combinación de
@@ -920,6 +967,12 @@ El cierre permite recorrer carga--cálculo--acumulación--conversión--store
 con chaining y gestionar correctamente sus dependencias y flags.
 
 ### Fase 4.5. Datos intercalados y compactación
+
+Incorporar también las dependencias auxiliares de MatMul: `vlse64.v`,
+`vmv.v.i` y `vmv1r.v`. CPU captura base, stride e inmediato; VLSU y VRF
+ejecutan el acceso o movimiento con los contratos de dependencias, orden,
+faults y drain existentes. Este adelanto no exige stores strided, indexed
+ni todas las formas de movimiento del hito 5.
 
 Incorporar al menos cargas/stores unit-stride de dos campos para los anchos
 seleccionados, útiles para pares o datos complejos intercalados. Cerrar
@@ -988,6 +1041,9 @@ con evidencia acordada y perfiles temporales. Incluir configuración de
 clústeres, límites de precisión mixta y rutas reales de FP8/FP4. Documentar
 cómo añadir una operación a una FPU existente sin duplicar protocolos globales.
 
+Reunir la ejecución y evidencia de MatMul, con todas sus dependencias
+resueltas en el 4. Mantener AXPY y Pathfinder dentro del soporte heredado.
+
 El hito 5 recibe una base numérica y de transporte implementada, no sólo
 una lista de formatos posibles. Sus nuevas instrucciones reutilizan
 conversión, máscaras, chaining, ejecución colectiva, retiro y transporte.
@@ -995,6 +1051,8 @@ Las dependencias pendientes de bibliotecas se registran con su fase del 5.
 
 ### Criterios de cierre del hito 4
 
+- MatMul ejecuta el perfil acordado con resultado contrastado, incluida su
+  reducción ordenada FP64, carga strided y movimientos auxiliares.
 - FP16, BF16, FP32 y FP64 tienen perfiles explícitos y recorridos completos
   para las operaciones acordadas, incluidas sus dependencias escalares.
 - Funcionan conversiones y acumulaciones de precisión mixta con sus reglas
@@ -1106,6 +1164,9 @@ aceptación; no un compromiso de ejecutar suites completas sin inspección.
 
 ### Fase 5.2. Enteras, comparación, máscaras y movimientos
 
+Reutilizar `vmin.vv` de Pathfinder y `vmv.v.i`/`vmv1r.v` de MatMul en sus
+perfiles ya incorporados; ampliar sólo las formas y configuraciones restantes.
+
 Añadir operaciones ALU, formas inmediatas, comparación, selección y
 movimientos del perfil. Las comparaciones producen máscaras y las
 selecciones leen la máscara como operando según su semántica; no se aplica
@@ -1144,6 +1205,9 @@ sus dependencias de enteras, máscaras, reducción o permutación; no exige
 implementar todo el repertorio FP ni una biblioteca matemática completa.
 
 ### Fase 5.5. Permutaciones y memoria irregular
+
+Reutilizar `vlse64.v` de MatMul del hito 4 y ampliar el perfil de memoria
+irregular; esta fase no aplaza la carga requerida por ese benchmark.
 
 Añadir slides de distancia variable y gathers sobre el transporte común,
 con sus reglas de índices, rangos y solapamiento. El crossbar puede seguir
@@ -1252,9 +1316,9 @@ habilitan efectos jóvenes sin resolver las garantías del comando anterior.
 
 | Entrega | Debe quedar resuelto | Debe quedar identificado para después |
 | --- | --- | --- |
-| Cierre del 2 | Repertorio completo del hito, recursos y perfiles, identidad, propiedad, límites y observabilidad. | Contratos a ampliar para rangos, predicación, escalares, colectivos y memoria concurrente. |
-| Cierre del 3 | Chaining, memoria concurrente, progreso escalar con comandos vectoriales pendientes, predicación, colectivos, publicación segura y fronteras para clústeres. | Perfiles numéricos del 4, repertorio del 5 y experimento de clústeres. |
-| Cierre del 4 | Perfiles FP, precisión mixta, datos seleccionados, calidad numérica y evaluación temporal/de clústeres. | Formas adicionales, integración BLIS y CSA/HCA del 5; alcance real de los experimentos FP8/FP4. |
+| Cierre del 2 | Repertorio del hito y Pathfinder, recursos y perfiles, identidad, propiedad, límites y observabilidad. | Contratos a ampliar para rangos, predicación, escalares, colectivos y memoria concurrente. |
+| Cierre del 3 | AXPY con el subconjunto FP64/FMA, chaining, memoria concurrente, progreso escalar, predicación, colectivos, publicación segura y fronteras para clústeres. | Ampliación de perfiles numéricos del 4, repertorio del 5 y experimento de clústeres. |
+| Cierre del 4 | MatMul con strided y movimientos auxiliares, perfiles FP, precisión mixta, calidad numérica y evaluación temporal/de clústeres. | Formas adicionales, integración BLIS y CSA/HCA del 5; alcance real de los experimentos FP8/FP4. |
 | Cierre del 5 | Repertorio y kernels acordados con evidencia por forma, formato y ancho. | Instrucciones no cubiertas, restricciones y experimentos posteriores. |
 
 ## Fuera del compromiso de estos hitos

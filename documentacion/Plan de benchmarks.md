@@ -15,6 +15,7 @@ no demuestra por sí solo una ventaja CMOS 2.0.
 | Micro-kernels RVV | Loads/stores unit-stride, strided e indexed; gathers, máscaras, reducciones, permutaciones, widening, LMUL, configuración `vsetvl` y tratamiento del tail. |
 | Álgebra lineal densa | Kernels procedentes de [BLIS][blis], con versión, configuración y ruta vectorial identificadas. |
 | LLM | Compressed Sparse Attention (CSA) y Heavily Compressed Attention (HCA) de [DeepSeek V4 Flash][flash], como bloques de atención. |
+| Benchmarks de incorporación temprana | Pathfinder al cerrar el hito 2, AXPY al cerrar el 3 y MatMul al cerrar el 4, con el subconjunto y las dependencias definidos en la sección 5. |
 
 Las familias están acordadas. Los tamaños, operaciones concretas de BLIS,
 implementaciones de CSA/HCA y formatos de cada experimento se fijarán en sus
@@ -30,7 +31,7 @@ estudia; una distribución de tiempos no sustituye comprobar sus resultados.
 | Familia | Qué concretar en la ficha | Disponibilidad prevista |
 | --- | --- | --- |
 | Loads/stores unit-stride | Ancho, alineamiento, longitud, límites de bloque/línea/página y volumen de datos. | 2; concurrencia y predicación en 3. |
-| Loads/stores strided | Strides legales elegidos, patrón de direcciones y presión sobre memoria. | 5. |
+| Loads/stores strided | Strides legales elegidos, patrón de direcciones y presión sobre memoria. | `vlse64.v` para MatMul en 4; ampliación del perfil en 5. |
 | Loads/stores indexed | Ancho de índice y de dato por separado, distribución, repetición de direcciones y forma ordenada/no ordenada requerida. | 5. |
 | Gathers y permutaciones | Patrón local y entre lanes/clústeres; separar gather de registros de carga indexed desde memoria. | Ambas slide1 en 2; gathers y otras permutaciones en 5. |
 | Máscaras | Lectura y producción de máscaras, densidad/patrón, escrituras parciales y operaciones auxiliares. | Predicación en 3; comparación FP seleccionada en 4; resto del perfil en 5. |
@@ -204,9 +205,9 @@ hardware real necesita una correspondencia de configuración explícita.
 
 | Hito | Papel de los benchmarks |
 | --- | --- |
-| 2 | Micro-kernels del soporte de este hito: unit-stride, anchos, ALU/FP32 y slide1, con su geometría y tail. No exige repetir el baseline cerrado. |
-| 3 | Casos de predicación, chaining y varias instrucciones de memoria en vuelo; infraestructura colectiva y fronteras preparadas para clústeres. |
-| 4 | Micro-kernels de precisión mixta/widening y reducciones FP; primeros kernels seleccionados de BLIS; formatos y referencias por etapas CSA/HCA; comparación plana/dos clústeres. |
+| 2 | Micro-kernels del soporte de este hito y Pathfinder: unit-stride, anchos, ALU/FP32, slide1, mínimo entero y transferencias completas del perfil. No exige repetir el baseline cerrado. |
+| 3 | Predicación, chaining y memoria concurrente; AXPY con el subconjunto FP64/FMA anticipado; infraestructura colectiva y fronteras preparadas para clústeres. |
+| 4 | Precisión mixta/widening y reducciones FP; MatMul con strided y movimientos auxiliares; primeros kernels BLIS; referencias por etapas CSA/HCA; comparación plana/dos clústeres. |
 | 5 | Completar micro-kernels del perfil, integración BLIS e integración de CSA/HCA con las dependencias de cada ROI resueltas. |
 | Líneas coordinadas | Caracterización, ports RVV/IME, plantillas candidatas y sus perfiles; calibración y DSE posteriores con comparaciones equivalentes. |
 
@@ -216,6 +217,89 @@ de los casos que sí deben ejecutarse al cerrar el 4.
 La integración RVV del 5 no acredita la implementación IME ni la evaluación
 de T1/T2/T3. Los ports se preparan en paralelo y se ejecutan en cada modelo
 cuando su subconjunto y sus interfaces hayan sido aprobados e implementados.
+
+### Adelanto equilibrado: Pathfinder, AXPY y MatMul
+
+Planificación aprobada por el usuario el 3 de noviembre de 2026: incorporar
+Pathfinder al cierre del hito 2, AXPY al del 3 y MatMul al del 4. Es alcance
+de desarrollo acordado, pendiente de implementación, integración y evidencia;
+no declara estos binarios ejecutables ni autoriza cambios de código o pruebas.
+Se mantienen los objetivos y la numeración de las fases. Estas cargas se
+añaden a la campaña; no sustituyen los micro-kernels, BLIS ni CSA/HCA.
+
+Atiende O1, O2 y O6: obtener demanda de aplicaciones reales sobre ALU/FPU,
+VRF, memoria y red, y referencias numéricas y temporales trazables. Prepara
+O3; O4/O5 requieren escenarios y calibración tecnológica posteriores.
+
+El inventario procede del recuento estático aportado por el equipo sobre
+`.text`: cada mnemónico se cuenta una vez, distinguiendo formas y conservando
+alias. No se han reinspeccionado los dumps ni obtenido frecuencias dinámicas
+en esta revisión. Las rutas originales identifican su procedencia; no son
+dependencias portables del repositorio.
+
+| Cierre | Benchmark y procedencia comunicada | Inventario RVV completo comunicado | Ampliación y encaje |
+| --- | --- | --- | --- |
+| 2 | Pathfinder, `_pathfinder/bin/pathfinder_vector.dump` | `vsetvli`, `vle32.v`, `vse32.v`, `vslide1up.vx`, `vslide1down.vx`, `vmin.vv`, `vadd.vv`, `vl2re32.v`, `vs2r.v` (9). | Añadir mínimo entero de 32 bits y transferencias completas de dos registros sobre ALU, VRF y VLSU; reutilizar memoria y slides del hito. Buen encaje con sus recursos. |
+| 3 | AXPY, `_axpy/bin/axpy_vector.dump` | `vsetvli`, `vle64.v`, `vse64.v`, `vfmacc.vf`, `vfmv.v.f`, `vs2r.v` (6). | Anticipar del 4 exclusivamente FP64 y las formas FMA/movimiento necesarias, reutilizando memoria de 64 bits y `vs2r.v`. Adelanto deliberado para estudiar memoria/cálculo y chaining. |
+| 4 | MatMul, `_matmul/bin/matmul_vector.dump` | `vsetvli`, `vsetivli`, `vle64.v`, `vlse64.v`, `vse64.v`, `vfmacc.vv`, `vfredosum.vs`, `vmv.v.i`, `vmv1r.v` (9). | Reutilizar FP64 del 3 y completar FMA/reducción del 4; anticipar `vlse64.v` y movimientos auxiliares del 5. Cerrar un caso científico sin adelantar toda la memoria irregular. |
+
+Los dumps se comunicaron bajo
+`/home/dani/riscv-vectorized-benchmark-suite/`. En Pathfinder las dos
+transferencias completas corresponden a la copia inicial. En AXPY,
+`vfmv.v.f` y `vs2r.v` aparecen en `init_vector`; los otros cuatro, en
+`axpy_vector`. En MatMul los nueve aparecen en `matrixmul_intrinsics`.
+La inicialización también debe poder ejecutarse: excluirla de la ROI de
+medida no elimina sus dependencias funcionales. MatMul no se identifica
+automáticamente con un kernel de BLIS por realizar multiplicación matricial.
+
+**Integración por hito y responsabilidades.**
+
+- **Hito 2:** las fases 2.6--2.7 aportan ALU y slides. La 2.8 integra
+  `vmin.vv` de 32 bits, `vl2re32.v` y `vs2r.v`, con comandos semánticos,
+  geometría, dependencias por grupos, recursos finitos, faults y drain.
+  Las transferencias completas usan su longitud efectiva propia; no se
+  limitan al `vl` de una carga/store ordinaria. Se conserva memoria barrera,
+  una instrucción de memoria, un bloque y un paquete físico activos.
+- **Hito 3:** 3.1 define fuentes FP y lectura del destino acumulador;
+  3.3--3.5 integran sus dependencias y progreso con memoria. La 3.8 cierra
+  AXPY con `vfmacc.vf` y `vfmv.v.f` FP64. Minor captura el escalar FP y el
+  contexto; FPU/VRF reservan operandos y resultado; los flags vuelven en la
+  finalización y Minor los aplica al retirar. No se adelanta todo FP64,
+  precisión mixta ni otras formas FMA del 4.
+- **Hito 4:** 4.1 fija el perfil de MatMul; 4.3--4.4 integran
+  `vfmacc.vv` y `vfredosum.vs` FP64 con el transporte colectivo de 3.6.
+  La 4.5 incorpora `vlse64.v`, `vmv.v.i` y `vmv1r.v` como dependencias
+  auxiliares; la 4.8 reúne ejecución y evidencia. Minor conserva base,
+  stride e inmediato capturados; VLSU calcula direcciones y VRF conserva
+  fuentes/destinos. `vsetvli`/`vsetivli` permanecen en CPU. El 5 reutiliza
+  estas formas y amplía las restantes, sin aplazar MatMul a su cierre.
+
+**Perfil, referencia y evidencia de cierre.**
+
+Referencia normativa: RVV 1.0, [manual oficial, edición 20240411][rvv].
+Secciones consultadas para este reparto: *Configuration-Setting
+Instructions*, *Vector Integer Min/Max Instructions*, *Vector Slide1up*,
+*Vector Slide1down Instruction*, *Vector Load/Store Whole Register
+Instructions*, *Vector Single-Width Floating-Point Fused Multiply-Add
+Instructions*, *Vector Floating-Point Move Instruction*, *Vector Strided
+Instructions*, *Vector Ordered Single-Width Floating-Point Sum Reduction*,
+*Vector Integer Move Instructions* y *Whole Vector Register Move*.
+FMA conserva la fusión; la reducción conserva el orden de elementos.
+
+Antes de implementar cada caso, su propuesta fijará revisión, toolchain,
+binario, entradas, ROI y perfil SEW/EEW/LMUL/EMUL, máscaras y solapamientos.
+Concretará codificaciones, `vl`, `vstart`, tail, redondeo, flags y faults
+según la instrucción. Las formas completas, inmediatas y escalares no
+heredan sin revisión las reglas de una operación vector--vector ordinaria.
+El adelanto cubre las formas y configuraciones necesarias para estas cargas,
+no familias RVV completas ni todos los anchos de las operaciones añadidas.
+
+El objetivo de cada cierre incluye ejecución CPU--VPU del benchmark con
+resultado contrastado y perfil registrado. La evidencia temporal identificará
+tráfico y esperas por recurso; AXPY permitirá estudiar solapamiento/chaining,
+pero ejecutarlo correctamente no demuestra esos mecanismos por sí solo.
+El equipo definirá la validación. No se crean fichas de ejecución, pruebas,
+ports, binarios ni resultados como parte de esta actualización documental.
 
 ## 6. Ficha y criterios de evaluación
 

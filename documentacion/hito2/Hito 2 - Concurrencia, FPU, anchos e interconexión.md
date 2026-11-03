@@ -3,6 +3,12 @@
 Estado: diseño propuesto y plan de trabajo. Revisión documental aprobada el
 20 de octubre de 2026; no autoriza implementar código ni crear pruebas.
 
+Ampliación documental aprobada el 3 de noviembre de 2026: Pathfinder al
+cierre del hito 2, AXPY al del 3 y MatMul al del 4. Para este hito se añade
+en 2.8 `vmin.vv` de 32 bits, `vl2re32.v` y `vs2r.v`, sobre los recursos
+anteriores. El [plan de benchmarks][benchmarks] fija inventario y límites;
+las entregas de fases ya registradas conservan su estado y evidencia.
+
 El equipo da por comprobado y cerrado el baseline del hito 1. El trabajo
 pendiente se organiza en ocho fases, sin repetir su comprobación. La FPU se
 dedica exclusivamente a coma flotante; multiplicación, división y resto
@@ -25,7 +31,9 @@ El [plan de evolución de los hitos 2 a 5][plan-evolucion] conserva este
 alcance y desarrolla la continuación: el 3 resolverá predicación, chaining,
 memoria concurrente y ejecución colectiva. El 4 añadirá precisión mixta,
 formatos FP y ampliaciones de datos para HPC/ML; el 5 completará repertorio
-y kernels. El [resumen de hitos][resumen-hitos] ofrece una lectura breve.
+y kernels. El adelanto de AXPY incorpora en el 3 sólo sus formas FP64/FMA;
+el 4 amplía ese perfil. El [resumen de hitos][resumen-hitos] ofrece una
+lectura breve.
 El 3 también preparará las interfaces para agrupar lanes en clústeres dentro
 de una VPU; el 4 recoge un primer experimento con dos clústeres.
 
@@ -1108,8 +1116,9 @@ Widening y narrowing se reservan para un hito posterior.
 La campaña acordada comprende micro-kernels RVV, kernels de álgebra lineal
 densa de BLIS y bloques CSA/HCA de DeepSeek V4 Flash. Sus fuentes, fichas y
 distribución están en el [plan de benchmarks][benchmarks]. Esa selección
-sustituye los ejemplos genéricos anteriores, sin ampliar el repertorio
-comprometido para el hito 2.
+sustituye los ejemplos genéricos anteriores. El adelanto equilibrado añade
+Pathfinder al cierre del 2, AXPY al del 3 y MatMul al del 4; sólo los
+subconjuntos acordados amplían el repertorio de esos hitos.
 
 Los micro-kernels cubren loads/stores unit-stride, strided e indexed,
 gathers, máscaras, reducciones, permutaciones, widening, LMUL, `vsetvl` y
@@ -1163,7 +1172,7 @@ pruebas. Las comprobaciones sugeridas se acordarán con el equipo.
 | [5. Concurrencia](#135-fase-5-concurrencia-desde-minor-hasta-las-lanes) | Varias instrucciones independientes y retirada ordenada. |
 | [6. FPU y ALUs](#136-fase-6-fpu-y-varias-alus-por-lane) | FP32, Mul/Div/resto enteros en ALU y varias instancias. |
 | [7. Interconexión](#137-fase-7-interconexión-y-operación-entre-lanes) | Transporte modular y ambas slide1 `.vx` en 8/16/32/64 bits. |
-| [8. Extensión y cierre](#138-fase-8-extensión-observabilidad-y-cierre) | Soporte documentado y procedimiento para la siguiente operación. |
+| [8. Extensión y cierre](#138-fase-8-extensión-observabilidad-y-cierre) | Subconjunto adicional y ejecución de Pathfinder, soporte documentado y procedimiento para la siguiente operación. |
 
 El orden de integración previsto es 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. La fase 4
 usa el transporte de anchos y los recursos definidos en 2--3; la fase 5
@@ -1540,7 +1549,18 @@ flits ni topologías avanzadas.
 
 **Objetivo y entrada.** Consolidar lo construido en 1--7 para que el estado
 del hito y la siguiente ampliación sean revisables. Se parte de las matrices,
-fichas y métricas mantenidas en cada fase, no de una lista nueva de objetivos.
+fichas y métricas mantenidas en cada fase. El adelanto aprobado añade aquí
+el subconjunto de Pathfinder que falta respecto a 1--7.
+
+**Ampliación para Pathfinder.** Incorporar `vmin.vv` de 32 bits en ALU y
+`vl2re32.v`/`vs2r.v` en VLSU/VRF con su geometría y longitud efectiva
+propias. Minor traduce operaciones, captura configuración/base y conserva
+la retirada; el backend recibe semántica y conserva identidades y reservas.
+Las transferencias completas mantienen memoria barrera, un comando de memoria,
+un bloque y un paquete físico activos. La propuesta de código concretará
+operandos, grupos, codificaciones, `vstart`, faults y drain según RVV.
+El cierre incluye la copia inicial y el cálculo de Pathfinder con resultado
+contrastado; no incorpora otros anchos de mínimo ni familias completas.
 
 **Trabajo que realizar.**
 
@@ -1768,6 +1788,10 @@ pendiente. Los criterios siguientes se refieren a las ampliaciones del hito 2.
     y se identifica su ampliación para las familias futuras. La entrega al
     hito 3 distingue contratos preparados de capacidades activas; no exige
     máscaras, chaining ni varias instrucciones de memoria en este cierre.
+16. Pathfinder ejecuta el perfil acordado, incluidas `vmin.vv` de 32 bits,
+    `vl2re32.v` y `vs2r.v`, con resultado contrastado y recursos finitos.
+    Su evidencia distingue ejecución funcional, tráfico y comportamiento
+    temporal, según la ficha y la validación que defina el equipo.
 
 La equivalencia funcional no demuestra fidelidad de ciclos con Ara. Los
 experimentos iniciales estudiarán tendencias y recursos del modelo; una

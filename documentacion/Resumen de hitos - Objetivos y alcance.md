@@ -25,6 +25,12 @@ y distribución; las antiguas listas genéricas de kernels quedan sustituidas.
 | 4. Precisión mixta y evaluación de clústeres | Ejecutar casos científicos y de aprendizaje automático con distintas precisiones y comparar su error numérico y tiempos en organizaciones planas y agrupadas. | FP16/BF16/FP32/FP64, conversiones, acumulación en mayor precisión y primer experimento acotado de dos clústeres. |
 | 5. Repertorio RVV y ejecución de kernels BLIS y atención | Cubrir las instrucciones vectoriales RISC-V que necesitan los micro-kernels, el álgebra lineal de BLIS y los bloques de atención seleccionados, y ejecutar esas cargas. | Resultados numéricos y temporales de los kernels acordados, con instrucciones, formatos y límites identificados. |
 
+**Adelanto equilibrado aprobado:** Pathfinder al finalizar el **hito 2**,
+AXPY al finalizar el **3** y MatMul al finalizar el **4**. Es planificación,
+no soporte comprobado. El [plan de benchmarks][benchmarks] conserva el
+inventario comunicado, los límites y la evidencia de cierre esperada para
+O1, O2 y O6. Cada implementación requiere su propuesta específica.
+
 ### Cómo leer los ejemplos
 
 Son fragmentos RV64 en sintaxis GNU, con registros de entrada preparados
@@ -136,10 +142,15 @@ seleccionable, contadores por recurso y tráfico medido por enlace.
 
 **Límite de cierre:** el consumidor espera al productor completo; memoria
 mantiene una instrucción, un bloque y un paquete físico activos. Precisión
-mixta y nuevos formatos FP se incorporan en el 4. La fase 2.1 fija la
+mixta y nuevos perfiles FP se incorporan en el 4, salvo el subconjunto de
+AXPY anticipado en el 3. La fase 2.1 fija la
 matriz SEW×LMUL y la 2.2 cierra suma y memoria con los grupos enteros y
 fraccionales acordados, aplicando `tu/ta`. Ese soporte se conserva en las
 ampliaciones posteriores del hito.
+
+**Benchmark de cierre:** Pathfinder. Añade `vmin.vv` de 32 bits,
+`vl2re32.v` y `vs2r.v` sobre memoria y slides ya previstas; la fase 2.8
+integra el subconjunto y la copia inicial con las barreras del hito.
 
 ### Ejemplo al cierre: aritmética FP32 independiente
 
@@ -194,6 +205,12 @@ seguimiento hasta cerrar comandos; ampliar colas por sí solo no basta.
 El experimento parametrizable de clústeres pertenece
 al 4 y sus tamaños iniciales no fijan la arquitectura final.
 
+**Benchmark de cierre:** AXPY. Se anticipan del 4 `vfmacc.vf` y
+`vfmv.v.f` FP64, con escalar FP capturado, lectura del acumulador,
+redondeo/flags y recursos finitos; memoria de 64 bits y `vs2r.v` se heredan.
+La fase 3.8 integra el caso para estudiar memoria/cálculo y chaining.
+Este adelanto no incorpora todo FP64 ni precisión mixta.
+
 ### Ejemplo al cierre: alimentar la VPU desde trabajo escalar
 
 Entradas: `a0=N>0`, `a1=A`, `a2=B`, `a3=C` y `a4=K`,
@@ -246,6 +263,12 @@ además particiones y costes tecnológicos explícitos.
 compatibles y referencias por etapas de CSA/HCA. La integración de los
 bloques de atención corresponde al 5. Los experimentos FP8/FP4 y el soporte
 de instrucciones nativas se declaran por separado; no se exige todo FP.
+
+**Benchmark de cierre:** MatMul. Reutiliza el subconjunto FP64 de AXPY y
+añade `vfmacc.vv`, `vfredosum.vs`, `vlse64.v`, `vmv.v.i` y `vmv1r.v`,
+con configuración en CPU, incluido `vsetivli`. Strided y movimientos se
+adelantan del 5 para cerrar este caso; el resto del repertorio permanece
+en su hito. La fase 4.8 reúne su evidencia funcional y temporal.
 
 ### Ejemplo al cierre: FP16 con acumulador FP32 y salida FP16
 
