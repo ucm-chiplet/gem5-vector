@@ -53,7 +53,8 @@ isVrfWrite(const VrfRequest &request)
 }
 
 /**
- * A persistent request owned by a lane context or the active VLSU element.
+ * A persistent request owned by a lane context or a word access of the
+ * active VLSU block.
  * The producer reserves response space before exposing this descriptor and
  * keeps its address, identity and contents stable until granted().
  * eligibleAt is fixed when the request is prepared, at the next VPU edge.

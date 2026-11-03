@@ -105,11 +105,17 @@ class BankConfiguration:
 
 @dataclass(frozen=True)
 class VlsuConfiguration:
-    """Límite de bytes por petición; hoy sólo se envía un elemento cada vez."""
+    """Bloques unit-stride y entradas de la VLSU en cada LRF.
 
-    max_block_bytes: int = 8
+    max_block_bytes limita cada bloque y su buffer, en bytes; debe contener
+    elementos enteros de cada SEW habilitado. Los bloques se recortan
+    además por línea, página y final del rango. vrf_inputs_per_lane fija
+    cuántos accesos por palabra puede ofrecer la VLSU a la vez a cada LRF.
+    """
+
+    max_block_bytes: int = 64
     active_blocks: int = 1
-    block_requests: bool = False
+    vrf_inputs_per_lane: int = 1
 
 
 @dataclass(frozen=True)
@@ -148,9 +154,9 @@ class VpuConfiguration:
     El backend admite suma y memoria de 8/16/32/64 bits en el perfil SEW/LMUL
     de fase 2.2. supported_sews y supported_lmuls habilitan su intersección
     con ese perfil, no todas las parejas del producto cartesiano. La fase 3
-    temporiza sus recursos locales, todavía con una instrucción activa y
-    sin bloques agrupados, varias ALUs ni red. LMUL usa
-    exponentes de dos (-3 para mf8, 3 para m8). Los valores predeterminados
+    temporiza sus recursos locales y la fase 4 agrupa la memoria unit-stride
+    en bloques, todavía con una instrucción activa y sin varias ALUs ni red.
+    LMUL usa exponentes de dos (-3 para mf8, 3 para m8). Los predeterminados
     conservan 16/32 bits y m1; las rutas CPU se documentan por separado.
     """
 
@@ -201,7 +207,7 @@ class VpuConfiguration:
             "alus_per_lane": self.lane.alus_per_lane,
             "memory_max_block_bytes": self.vlsu.max_block_bytes,
             "memory_active_blocks": self.vlsu.active_blocks,
-            "memory_block_requests": self.vlsu.block_requests,
+            "memory_vrf_inputs_per_lane": self.vlsu.vrf_inputs_per_lane,
             "address_bits": self.memory.address_bits,
             "memory_max_outstanding_packets": (
                 self.memory.max_outstanding_packets

@@ -74,6 +74,9 @@ VectorMemoryBackend::VectorMemoryBackend(
       fragmentsCreated(&stats, "fragmentsCreated",
                        statistics::units::Count::get(),
                        "Physical fragments created before translation"),
+      fragmentedRequests(&stats, "fragmentedRequests",
+                         statistics::units::Count::get(),
+                         "Logical requests split across line or page"),
       translations(&stats, "translations", statistics::units::Count::get(),
                    "Physical fragment translation requests started"),
       translationFaults(&stats, "translationFaults",
@@ -122,12 +125,32 @@ VectorMemoryBackend::~VectorMemoryBackend()
     panic_if(!isIdle(), "Destroying vector memory before its work drained");
 }
 
+MemoryBoundaries
+VectorMemoryBackend::contextBoundaries(ThreadContext &context) const
+{
+    const MemoryBoundaries result{context.getSystemPtr()->cacheLineSize(),
+                                  context.getProcessPtr()->pTable->pageSize()};
+    fatal_if(!result.valid(),
+             "Vector memory requires power-of-two cache line and page sizes");
+    return result;
+}
+
+MemoryBoundaries
+VectorMemoryBackend::boundaries(ContextID context_id) const
+{
+    auto *context = resolveContext(context_id);
+    panic_if(!context || context->contextId() != context_id ||
+                 !context->getProcessPtr() || !context->getSystemPtr(),
+             "Vector memory boundaries have no matching SE context");
+    return contextBoundaries(*context);
+}
+
 void
 VectorMemoryBackend::validateRequest(const VectorMemoryRequest &request) const
 {
     // Son invariantes de mensajes internos, no fallos de traducción/acceso.
-    // El rango y los buffers describen un elemento entero, aun cuando después
-    // se necesiten varios paquetes físicos para transportarlo.
+    // El rango y los buffers describen elementos enteros; uno solo puede
+    // necesitar varios paquetes físicos si cruza una línea o una página.
     panic_if(!request.taskKey.valid() ||
                  request.requestId == InvalidRequestId ||
                  request.requestorId == Request::invldRequestorId,
@@ -136,13 +159,12 @@ VectorMemoryBackend::validateRequest(const VectorMemoryRequest &request) const
                  request.direction != MemoryDirection::Store,
              "Invalid vector memory direction");
     panic_if(!request.validBlockShape() ||
-                 request.elements.elementCount != 1 ||
                  !VectorSupport::supportsElementBytes(request.elementBytes) ||
                  !request.registerRef.valid() || !request.dataRange.valid() ||
                  request.dataRange.size != request.size ||
                  request.virtualAddress > addressMask ||
                  request.byteEnable != ByteEnable(request.size, 1),
-             "Invalid vector memory element descriptor");
+             "Invalid vector memory block descriptor");
     // Sólo un store trae datos de entrada; una carga los recibirá de memoria.
     uint32_t store_bytes = 0;
     if (request.direction == MemoryDirection::Store) {
@@ -177,7 +199,7 @@ VectorMemoryBackend::acceptRequest(const VectorMemoryRequest &request)
     } else {
         ++stores;
     }
-    stats.accept(1, request.size);
+    stats.accept(request.elements.elementCount, request.size);
     active->context = context;
     active->data = request.direction == MemoryDirection::Store
                        ? request.storeData
@@ -191,12 +213,9 @@ void
 VectorMemoryBackend::makeFragments()
 {
     const auto &logical = active->request;
-    const Addr line_bytes = active->context->getSystemPtr()->cacheLineSize();
-    const Addr page_bytes =
-        active->context->getProcessPtr()->pTable->pageSize();
-    fatal_if(!line_bytes || (line_bytes & (line_bytes - 1)) || !page_bytes ||
-                 (page_bytes & (page_bytes - 1)),
-             "Vector memory requires power-of-two cache line and page sizes");
+    const auto limits = contextBoundaries(*active->context);
+    const Addr line_bytes = limits.lineBytes;
+    const Addr page_bytes = limits.pageBytes;
 
     // Crear todos los fragmentos antes de publicar callbacks a la MMU.
     // offset avanza exactamente los bytes cubiertos: no hay huecos ni
@@ -216,6 +235,16 @@ VectorMemoryBackend::makeFragments()
             *this, active->fragments.size(), offset, std::move(request)));
         ++fragmentsCreated;
         offset += size;
+    }
+    // La VLSU sólo agrupa elementos que caben en una línea y una página. Si
+    // un bloque de varios elementos necesitara dividirse, un fallo en su
+    // segundo fragmento dejaría escritos elementos del primero sin poder
+    // asociarlos a firstElement: es un error del generador de bloques.
+    panic_if(logical.elements.elementCount > 1 &&
+                 active->fragments.size() != 1,
+             "A multi-element vector block crosses a line or page boundary");
+    if (active->fragments.size() > 1) {
+        ++fragmentedRequests;
     }
 }
 
@@ -260,8 +289,8 @@ VectorMemoryBackend::evaluate()
         return;
     }
     // Traducir todos los fragmentos antes del primer envío. Así un fallo de
-    // traducción en el segundo fragmento de un store no deja escrito el
-    // primero. Las cargas siguen el mismo recorrido para simplificar estado.
+    // traducción en el segundo fragmento de un elemento dividido no deja
+    // escrito el primero. Las cargas siguen el mismo recorrido.
     if (active->nextTranslation < active->fragments.size()) {
         auto &fragment = *active->fragments[active->nextTranslation];
         panic_if(fragment.phase != Phase::PendingTranslation,
@@ -440,8 +469,11 @@ VectorMemoryBackend::recordFault(FragmentState &fragment, const Fault &fault)
     fragment.fault = fault;
     fragment.phase = Phase::Failed;
     if (!active->fault) {
-        // Conservar dirección del fragmento e índice del elemento original.
-        // Un error de acceso no revierte stores ya confirmados anteriormente.
+        // Conservar la dirección del fragmento y firstElement. Un bloque de
+        // varios elementos es un único paquete en una página: si falla, no
+        // se ha escrito ninguno de sus bytes. Un bloque de un elemento sólo
+        // puede fallar en ese elemento. Un error de acceso no revierte
+        // stores de bloques anteriores, ya confirmados.
         active->fault = FaultInfo{fault, fragment.request->getVaddr(),
                                   active->request.elements.firstElement};
     }

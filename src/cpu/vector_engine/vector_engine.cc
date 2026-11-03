@@ -85,7 +85,7 @@ VectorEngine::makeConfiguration(const Params &params)
         params.bank_read_write_ports, params.bank_access_entries,
         params.bank_latency,          params.bank_initiation_interval};
     config.vlsu = {params.memory_max_block_bytes, params.memory_active_blocks,
-                   params.memory_block_requests};
+                   params.memory_vrf_inputs_per_lane};
     config.memory = {params.address_bits,
                      params.memory_max_outstanding_packets};
     // Validar también los límites de la futura red aunque esté deshabilitada.
@@ -135,6 +135,8 @@ VectorEngine::makeConfiguration(const Params &params)
     };
     check_extent({config.vrf.numLanes, config.lane.taskEntries, 3,
                   sizeof(VrfRequestPort)});
+    check_extent({config.vrf.numLanes, config.vlsu.vrfInputsPerLane,
+                  sizeof(VrfRequestPort)});
     check_extent({config.vrf.numLanes, config.lane.operandEntriesPerSource, 2,
                   word_bytes});
     check_extent({config.vrf.numLanes, config.lane.resultEntries, word_bytes});
@@ -147,11 +149,12 @@ VectorEngine::makeConfiguration(const Params &params)
     fatal_if(config.memory.addressBits != 32 &&
                  config.memory.addressBits != 64,
              "VectorEngine requires a 32-bit or 64-bit address width");
-    fatal_if(
-        config.memory.maxOutstandingPackets != 1 ||
-            config.vlsu.activeBlocks != 1 || config.vlsu.blockRequests ||
-            config.interconnect.enabled,
-        "Width profile has one memory element/packet and no interconnect");
+    // Fase 4: un bloque unit-stride activo y un paquete físico en vuelo.
+    fatal_if(config.memory.maxOutstandingPackets != 1 ||
+                 config.vlsu.activeBlocks != 1 ||
+                 !config.vlsu.vrfInputsPerLane || config.interconnect.enabled,
+             "Memory profile has one block/packet, positive VLSU VRF inputs "
+             "and no interconnect");
     fatal_if(params.mapping_policy != "word_striped",
              "Only word_striped VRF mapping is implemented");
     fatal_if(params.target_byte_order != ByteOrder::little &&
@@ -161,7 +164,7 @@ VectorEngine::makeConfiguration(const Params &params)
              "VectorEngine requires nonempty SEW and LMUL profiles");
     fatal_if(!config.vlsu.maxBlockBytes,
              "Memory block byte limit must be positive");
-    // Cada tamaño habilitado debe caber entero en una palabra y una petición.
+    // Cada tamaño habilitado debe caber entero en una palabra y un bloque.
     for (const auto sew : params.supported_sews) {
         fatal_if(sew > config.elenBits ||
                      !VectorSupport::supportsElementWidth(sew),
@@ -288,6 +291,10 @@ VectorEngine::VectorEngine(const Params &params)
         [this](const VectorMemoryRequest &request) {
             return memoryBackend->acceptRequest(request);
         },
+        // Fronteras de línea y página del contexto, para formar bloques.
+        [this](ContextID context_id) {
+            return memoryBackend->boundaries(context_id);
+        },
         // Both load writeback and store reads arbitrate in the owning LRF.
         [this](LaneId lane_id) {
             panic_if(lane_id >= registerFiles.size(),
@@ -317,12 +324,16 @@ VectorEngine::VectorEngine(const Params &params)
         });
 
     // Bind every persistent input before any module can receive work.
-    // Context/role indices and the final VLSU input have a stable order.
+    // Context/role indices precede the VLSU inputs; the order is stable.
     for (LaneId lane_id = 0; lane_id < num_lanes; ++lane_id) {
         for (auto &port : lanes[lane_id]->vrfPorts()) {
             registerFiles[lane_id]->bindRequestPort(std::move(port));
         }
-        registerFiles[lane_id]->bindRequestPort(vlsu->vrfPort(lane_id));
+        for (uint32_t input = 0; input < vpuParameters.vlsu.vrfInputsPerLane;
+             ++input) {
+            registerFiles[lane_id]->bindRequestPort(
+                vlsu->vrfPort(lane_id, input));
+        }
     }
 }
 

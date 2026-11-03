@@ -3,4 +3,5 @@
 Import("*")
 
 Source("ara_vlsu.cc")
+Source("memory_block_planner.cc")
 Source("vector_memory_backend.cc")

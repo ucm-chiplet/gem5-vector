@@ -21,9 +21,38 @@ inline constexpr RequestId InvalidRequestId =
     std::numeric_limits<RequestId>::max();
 
 /**
- * Petición de acceso a elementos consecutivos. En esta fase sólo se envía
- * uno cada vez. El backend puede necesitar varios accesos físicos para
- * atenderla, pero devuelve una única respuesta con la misma identidad.
+ * Fronteras de memoria del contexto que limitan un bloque unit-stride.
+ * El backend las obtiene del sistema y del proceso SE; la VLSU sólo recibe
+ * estos valores y no accede a ThreadContext, MMU ni objetos de gem5.
+ * Ambos tamaños son bytes y potencias de dos.
+ */
+struct MemoryBoundaries
+{
+    Addr lineBytes = 0;
+    Addr pageBytes = 0;
+
+    bool
+    valid() const
+    {
+        return lineBytes && !(lineBytes & (lineBytes - 1)) && pageBytes &&
+               !(pageBytes & (pageBytes - 1));
+    }
+};
+
+/**
+ * Bloque de elementos consecutivos de una carga o store unit-stride.
+ *
+ * Un bloque de varios elementos no cruza una línea de caché, una página ni
+ * el final del espacio de direcciones del objetivo, de modo que el backend
+ * lo traduce una vez y lo transporta en un solo paquete físico. Un elemento
+ * que no cabe entero antes de una de esas fronteras viaja en un bloque de un
+ * elemento, y el backend lo divide en los fragmentos físicos necesarios.
+ * En ambos casos el backend devuelve una única respuesta con esta identidad.
+ *
+ * Fault: un bloque de varios elementos está en una sola página y en un solo
+ * paquete, así que un fallo de traducción o de acceso afecta a todos sus
+ * bytes y ninguno se ha escrito. El índice del fault es firstElement, que
+ * pertenece a la parte que falla. Los bloques anteriores ya están cerrados.
  */
 struct VectorMemoryRequest
 {
@@ -51,8 +80,8 @@ struct VectorMemoryRequest
     /**
      * Comprueba que el número de elementos coincide con los bytes pedidos
      * y con su posición en el grupo de registros. No comprueba la dirección
-     * de memoria ni el contenido de los buffers. El backend exige además
-     * un solo elemento por petición en esta fase.
+     * de memoria ni el contenido de los buffers; el backend comprueba
+     * además que un bloque de varios elementos no cruce sus fronteras.
      */
     bool
     validBlockShape() const
@@ -75,9 +104,10 @@ enum class MemoryResponseStatus : uint8_t
 
 /**
  * Única respuesta terminal de una petición aceptada, sin fragmentos en vuelo.
- * LoadData lleva los bytes del elemento y ningún fault; StoreAck sin datos ni
- * fault. Fault sólo lleva causa, dirección virtual e índice del elemento.
- * La respuesta de carga aún debe convertirse en un writeback al VRF.
+ * LoadData lleva los bytes del bloque y ningún fault; StoreAck sin datos ni
+ * fault. Fault sólo lleva causa, dirección virtual del paquete o fragmento
+ * que falla e índice firstElement del bloque.
+ * La respuesta de carga aún debe repartirse en writebacks al VRF.
  */
 struct VectorMemoryResponse
 {
@@ -89,7 +119,8 @@ struct VectorMemoryResponse
 };
 
 /**
- * AraVLSU conserva aquí los datos y la identidad de memoria hasta WriteAck.
+ * AraVLSU conserva aquí los datos y la identidad de memoria hasta recibir
+ * todos los WriteAck de las palabras locales en que se reparte el bloque.
  * Los metadatos de destino se copian de la petición original conservada;
  * no se deducen de la respuesta ni se envían a la ALU.
  */

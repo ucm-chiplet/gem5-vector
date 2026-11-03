@@ -88,9 +88,13 @@ class VectorEngine(ClockedObject):
     bank_initiation_interval = Param.Cycles(
         1, "Minimum VPU cycles between accesses on each bank port"
     )
-    memory_max_block_bytes = Param.UInt32(8, "Prepared block byte limit")
-    memory_active_blocks = Param.UInt32(1, "One active memory element")
-    memory_block_requests = Param.Bool(False, "Reserved for phase 4")
+    memory_max_block_bytes = Param.UInt32(
+        64, "Maximum bytes per unit-stride block and block buffer"
+    )
+    memory_active_blocks = Param.UInt32(1, "One active unit-stride block")
+    memory_vrf_inputs_per_lane = Param.UInt32(
+        1, "Persistent VLSU word-access inputs per lane register file"
+    )
     memory_max_outstanding_packets = Param.UInt32(1, "Physical packet limit")
     interconnect_enabled = Param.Bool(False, "Reserved for phase 7")
     interconnect_max_packet_bytes = Param.UInt32(0, "Zero resolves to a word")

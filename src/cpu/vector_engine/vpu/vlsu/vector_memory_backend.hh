@@ -21,13 +21,16 @@ namespace gem5::vector_engine
 {
 
 /**
- * Adapta una petición lógica de la VLSU a la memoria timing en modo SE.
+ * Adapta un bloque unit-stride de la VLSU a la memoria timing en modo SE.
  * Conserva una transacción y, como máximo, un paquete físico en vuelo.
  * El propietario conecta getPort(), resuelve ContextID a ThreadContext y
  * proporciona la función que construye los faults de acceso del objetivo.
  * Los faults de traducción proceden directamente de la MMU del contexto.
- * En RISC-V SE esa MMU admite accesos desalineados; el backend los divide
- * cuando cruzan los límites de página o de línea de caché.
+ *
+ * Un bloque de varios elementos cabe en una línea y una página: se traduce
+ * una vez y viaja en un paquete. Un bloque de un elemento puede cruzar esas
+ * fronteras; en RISC-V SE la MMU admite el acceso desalineado y el backend
+ * lo divide en fragmentos, traducidos todos antes del primer envío.
  *
  * El propietario debe ordenar el offload respecto a la memoria escalar y
  * mantener vivos contexto, MMU y backend hasta isIdle(). Drain no cancela
@@ -57,6 +60,10 @@ class VectorMemoryBackend
     // Accepted copia petición y datos; obliga a emitir una respuesta terminal.
     // Si hay una transacción activa, Retry deja la petición en manos de VLSU.
     TransferResult acceptRequest(const VectorMemoryRequest &request);
+
+    // Línea de caché y página del contexto, para formar bloques en la VLSU.
+    // No reserva recursos ni depende de una transacción activa.
+    MemoryBoundaries boundaries(ContextID context_id) const;
     RequestPort &
     getPort()
     {
@@ -110,7 +117,7 @@ class VectorMemoryBackend
     {
         VectorMemoryBackend &backend;
         const std::size_t index;
-        // Posición de este fragmento dentro del buffer lógico del elemento.
+        // Posición de este fragmento dentro del buffer lógico del bloque.
         const uint32_t offset;
         // La dirección física sólo es válida tras una traducción correcta.
         RequestPtr request;
@@ -131,7 +138,7 @@ class VectorMemoryBackend
         // La clave lógica no cambia al dividir el acceso en fragmentos.
         VectorMemoryRequest request;
         ThreadContext *context = nullptr;
-        // Reúne la carga completa o conserva los bytes originales del store.
+        // Reúne la carga del bloque o conserva los bytes originales del store.
         ByteBuffer data;
         std::vector<std::unique_ptr<FragmentState>> fragments;
         // Primero se traducen todos; después se envían de uno en uno.
@@ -159,6 +166,7 @@ class VectorMemoryBackend
     statistics::Scalar loads;
     statistics::Scalar stores;
     statistics::Scalar fragmentsCreated;
+    statistics::Scalar fragmentedRequests;
     statistics::Scalar translations;
     statistics::Scalar translationFaults;
     statistics::Scalar accessFaults;
@@ -178,6 +186,7 @@ class VectorMemoryBackend
     std::unique_ptr<TransactionState> active;
     EventFunctionWrapper progressEvent;
 
+    MemoryBoundaries contextBoundaries(ThreadContext &context) const;
     void validateRequest(const VectorMemoryRequest &request) const;
     void makeFragments();
     BaseMMU::Mode translationMode() const;

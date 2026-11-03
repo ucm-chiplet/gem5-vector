@@ -109,13 +109,17 @@ struct BankParameters
     }
 };
 
-/** Tamaño máximo de petición; hoy se envía un solo elemento cada vez. */
+/**
+ * Bloques de memoria unit-stride y entradas de la VLSU en cada LRF.
+ * maxBlockBytes limita el buffer del único bloque activo; debe contener
+ * elementos enteros de cada SEW habilitado. vrfInputsPerLane fija cuántos
+ * accesos por palabra puede ofrecer a la vez la VLSU a cada LRF.
+ */
 struct VlsuParameters
 {
-    uint32_t maxBlockBytes = 8;
+    uint32_t maxBlockBytes = 64;
     uint32_t activeBlocks = 1;
-    // Agrupar elementos en una petición queda pendiente de la fase 4.
-    bool blockRequests = false;
+    uint32_t vrfInputsPerLane = 1;
 };
 
 /** Tamaño de dirección de la CPU y peticiones pendientes hacia memoria. */
