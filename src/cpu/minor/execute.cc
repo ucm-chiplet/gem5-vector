@@ -113,8 +113,7 @@ Execute::captureVectorConfig(ThreadContext *thread) const
     config.vstart = thread->readMiscRegNoEffect(RiscvISA::MISCREG_VSTART);
 
     config.sewBits = RiscvISA::vtype_SEW(
-        vtype); // vtyope_SEW returns the SEW in bits, which is what we want
-                // for the VectorConfig.
+        vtype); // vtype_SEW devuelve SEW en bits para VectorConfig.
 
     config.lmul = decodeVlmul(RiscvISA::vtype_vlmul(vtype));
 
@@ -140,7 +139,9 @@ Execute::buildVectorCommand(MinorVectorState &state,
              "VPU offload instruction has no decoded payload");
 
     const uint64_t vtype = thread->pcState().as<RiscvISA::PCState>().vtype();
-    // Devuelve el multiplicador de registros por grupo (LMUL) según el vtype.
+    // vtype_regs_per_group devuelve la cantidad de registros arquitectónicos
+    // contenedores asignados al grupo (1 para fraccionales mf8..mf2, o 1/2/4/8
+    // para grupos enteros m1..m8).
     const uint8_t group =
         static_cast<uint8_t>(RiscvISA::vtype_regs_per_group(vtype));
 
@@ -1189,9 +1190,8 @@ Execute::accepted(vector_engine::CommandKey command)
 
             state.command.reset();
 
-            // cpu.wakeupOnEvent(Pipeline::ExecuteStageId); Commented as rn we
-            // don't actually need to wakeup the cpu when the state changes to
-            // accepted.
+            // No se despierta Execute ante accepted porque la instrucción aún
+            // no ha terminado. Execute se despertará al recibir completed().
             return;
         }
     }
@@ -1281,11 +1281,11 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                 if (ex_info.drainState != NotDraining) {
                     break;
                 }
-                /** We only need to check if all the store operations are
-                 * completed */
+                // Para instrucciones de memoria vectorial, esperamos a que el
+                // store buffer escalar esté completamente drenado.
                 bool is_vec_mem = std::holds_alternative<DecodedMemoryOp>(
                     *vec_state->decoded.payload);
-                if ((!is_vec_mem || lsq.storeBuffer.isDrained())) {
+                if (!is_vec_mem || lsq.storeBuffer.isDrained()) {
                     auto &vector_interface = cpu.getCpuVectorInterface();
                     vec_state->commandKey =
                         vector_interface.allocateCommandKey(

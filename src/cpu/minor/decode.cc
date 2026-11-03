@@ -43,6 +43,9 @@
 #if USE_RISCV_ISA
 #include "arch/riscv/faults.hh"
 #include "arch/riscv/insts/static_inst.hh"
+#include "arch/riscv/insts/vector.hh"
+#include "arch/riscv/utility.hh"
+
 #endif
 #include "base/logging.hh"
 #include "base/trace.hh"
@@ -54,6 +57,136 @@ namespace gem5
 
 namespace minor
 {
+
+#if USE_RISCV_ISA
+namespace
+{
+
+/**
+ * Intenta decodificar una instrucción de memoria vectorial unit-stride
+ * delegando en la infraestructura ISA de gem5.
+ *
+ * Retorna true si la instrucción fue reconocida y empaquetada como
+ * VpuOffload en decoded, o false en caso contrario.
+ */
+bool
+tryDecodeMemoryOp(const StaticInstPtr &static_inst,
+                  const RiscvISA::RiscvStaticInst *rv_inst,
+                  DecodedVectorOp &decoded)
+{
+    const auto *vle =
+        dynamic_cast<const RiscvISA::VleMacroInst *>(static_inst.get());
+    const auto *vse =
+        dynamic_cast<const RiscvISA::VseMacroInst *>(static_inst.get());
+
+    if (!vle && !vse) {
+        return false;
+    }
+
+    DecodedMemoryOp memory;
+    memory.direction = vle ? vector_engine::MemoryDirection::Load
+                           : vector_engine::MemoryDirection::Store;
+    memory.elementWidthBits = RiscvISA::width_EEW(rv_inst->machInst.width);
+
+    if (vle) {
+        memory.dataReg = static_inst->destRegIdx(0).index();
+        memory.base.sourceOperandIndex = 0;
+    } else {
+        const bool base_first =
+            static_inst->srcRegIdx(0).classValue() == IntRegClass;
+        if (base_first) {
+            memory.base.sourceOperandIndex = 0;
+            memory.dataReg = static_inst->srcRegIdx(1).index();
+        } else {
+            memory.base.sourceOperandIndex = 1;
+            memory.dataReg = static_inst->srcRegIdx(0).index();
+        }
+    }
+    panic_if(memory.dataReg >= 32,
+             "VPU memory operand is not an architectural vector register");
+
+    decoded.executionClass = VectorExecutionClass::VpuOffload;
+    decoded.payload = memory;
+    return true;
+}
+
+/**
+ * Intenta decodificar una instrucción aritmética vectorial soportada
+ * delegando en la infraestructura ISA de gem5.
+ *
+ * Retorna true si la instrucción fue reconocida y empaquetada como
+ * VpuOffload en decoded, o false en caso contrario.
+ */
+bool
+tryDecodeArithmeticOp(const StaticInstPtr &static_inst,
+                      DecodedVectorOp &decoded)
+{
+    // Verificar que es una macroinstrucción aritmética vectorial de RISC-V.
+    const auto *arith_inst =
+        dynamic_cast<const RiscvISA::VectorArithMacroInst *>(
+            static_inst.get());
+    if (!arith_inst) {
+        return false;
+    }
+
+    // SimdAdd agrupa operaciones de suma/resta vectorial.
+    if (arith_inst->opClass() != OpClass::SimdAdd) {
+        return false;
+    }
+
+    // Identificar la operación concreta a partir del mnemónico que la ISA
+    // ya decodificó en tiempo de fetch.
+    const std::string name = static_inst->getName();
+    const bool is_vadd_vv = (name == "vadd_vv");
+    const bool is_vadd_vx = (name == "vadd_vx");
+
+    if (!is_vadd_vv && !is_vadd_vx) {
+        return false;
+    }
+
+    DecodedArithmeticOp arithmetic;
+    arithmetic.operation = vector_engine::ArithmeticOperation::Add;
+    arithmetic.destination = static_inst->destRegIdx(0).index();
+
+    // Delegación de operandos: la ISA ya clasificó cada fuente en
+    // VecRegClass o IntRegClass al construir la instrucción en decoder.isa.
+    const bool src0_is_vec =
+        (static_inst->srcRegIdx(0).classValue() == VecRegClass);
+    const bool src1_is_vec =
+        (static_inst->numSrcRegs() > 1 &&
+         static_inst->srcRegIdx(1).classValue() == VecRegClass);
+
+    if (src0_is_vec && src1_is_vec) {
+        // Formato vector-vector (.vv)
+        arithmetic.vectorSource = static_inst->srcRegIdx(0).index();
+        arithmetic.secondOperand = static_inst->srcRegIdx(1).index();
+    } else if (src0_is_vec) {
+        // Formato vector-escalar (.vx): src0 es vector, src1 es escalar
+        arithmetic.vectorSource = static_inst->srcRegIdx(0).index();
+        arithmetic.secondOperand = ScalarOperandRef{1};
+    } else if (src1_is_vec) {
+        // Formato vector-escalar (.vx): src1 es vector, src0 es escalar
+        arithmetic.vectorSource = static_inst->srcRegIdx(1).index();
+        arithmetic.secondOperand = ScalarOperandRef{0};
+    } else {
+        panic("VPU arithmetic instruction without any vector source register");
+    }
+
+    panic_if(arithmetic.vectorSource >= 32,
+             "VPU arithmetic source is not an architectural register");
+
+    if (auto *reg = std::get_if<RegIndex>(&arithmetic.secondOperand)) {
+        panic_if(*reg >= 32, "VPU arithmetic second source is not an "
+                             "architectural register");
+    }
+
+    decoded.executionClass = VectorExecutionClass::VpuOffload;
+    decoded.payload = arithmetic;
+    return true;
+}
+
+} // anonymous namespace
+#endif
 
 DecodedVectorOp
 Decode::decodeVectorOp(const StaticInstPtr &static_inst)
@@ -73,59 +206,24 @@ Decode::decodeVectorOp(const StaticInstPtr &static_inst)
     }
 
 #if USE_RISCV_ISA
-    const std::string name = static_inst->getName();
-    const bool is_vadd_vv = name == "vadd_vv";
-    const bool is_vadd_vx = name == "vadd_vx";
-    const bool is_vle32 = name == "vle32_v";
-    const bool is_vse32 = name == "vse32_v";
-    if (!is_vadd_vv && !is_vadd_vx && !is_vle32 && !is_vse32) {
-        decoded.executionClass = VectorExecutionClass::UnsupportedVector;
-        return decoded;
-    }
-
     const auto *rv_inst =
         dynamic_cast<const RiscvISA::RiscvStaticInst *>(static_inst.get());
     panic_if(!rv_inst, "VPU offload requires a RISC-V instruction");
-    const uint32_t mach_inst = rv_inst->machInst;
-    decoded.masked = !((mach_inst >> 25) & 1);
-    decoded.executionClass = VectorExecutionClass::VpuOffload;
 
-    if (is_vle32 || is_vse32) {
-        DecodedMemoryOp memory;
-        memory.elementWidthBits = 32;
-        memory.direction = is_vle32 ? vector_engine::MemoryDirection::Load
-                                    : vector_engine::MemoryDirection::Store;
-        if (is_vle32) {
-            memory.dataReg = static_inst->destRegIdx(0).index();
-            memory.base.sourceOperandIndex = 0;
-        } else {
-            const bool base_first =
-                static_inst->srcRegIdx(0).classValue() == IntRegClass;
-            memory.base.sourceOperandIndex = base_first ? 0 : 1;
-            memory.dataReg =
-                static_inst->srcRegIdx(base_first ? 1 : 0).index();
-        }
-        panic_if(memory.dataReg >= 32,
-                 "VPU memory operand is not an architectural vector register");
-        decoded.payload = memory;
-    } else {
-        DecodedArithmeticOp arithmetic;
-        arithmetic.operation = vector_engine::ArithmeticOperation::Add;
-        arithmetic.destination = static_inst->destRegIdx(0).index();
-        const bool vector_first =
-            static_inst->srcRegIdx(0).classValue() == VecRegClass;
-        arithmetic.vectorSource =
-            static_inst->srcRegIdx(vector_first ? 0 : 1).index();
-        panic_if(arithmetic.vectorSource >= 32,
-                 "VPU arithmetic source is not an architectural register");
-        if (is_vadd_vv) {
-            arithmetic.secondOperand = static_inst->srcRegIdx(1).index();
-        } else {
-            arithmetic.secondOperand =
-                ScalarOperandRef{static_cast<uint32_t>(vector_first ? 1 : 0)};
-        }
-        decoded.payload = arithmetic;
+    // ExtMachInst expone directamente el bitfield de máscara.
+    decoded.masked = !rv_inst->machInst.vm;
+
+    // Reconocer operaciones de memoria unit-stride delegando en la ISA.
+    if (tryDecodeMemoryOp(static_inst, rv_inst, decoded)) {
+        return decoded;
     }
+
+    // Reconocer operaciones aritméticas soportadas delegando en la ISA.
+    if (tryDecodeArithmeticOp(static_inst, decoded)) {
+        return decoded;
+    }
+
+    decoded.executionClass = VectorExecutionClass::UnsupportedVector;
     return decoded;
 #else
     panic("VPU offload requires RISC-V support");
