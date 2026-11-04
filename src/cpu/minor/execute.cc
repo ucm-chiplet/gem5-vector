@@ -233,6 +233,152 @@ Execute::buildVectorCommand(MinorVectorState &state,
     return command;
 }
 
+void
+Execute::advanceVectorDispatch(ThreadID thread_id)
+{
+    ExecuteThreadInfo &ex_info = executeInfo[thread_id];
+    if (ex_info.drainState != NotDraining) {
+        return;
+    }
+
+    auto &states = ex_info.vpuOffloadStates;
+    if (states.empty()) {
+        return;
+    }
+
+    /** Capacidad finita de seguimiento concurrente de la CPU en Fase 2.5
+     *  (permite solapar hasta dos instrucciones aritméticas vectoriales)
+     *  Fijo por el momento, luego lo suyo sería que fuese un parametro
+     *  de la CPU. */
+    constexpr size_t MaxActiveVectorOffloads = 2;
+
+    size_t active_in_vpu = 0;
+    for (const auto &st : states) {
+        if (st.phase == MinorVectorPhase::Dispatched ||
+            st.phase == MinorVectorPhase::Accepted) {
+            active_in_vpu++;
+        }
+    }
+
+    bool dispatched_this_cycle = false;
+
+    for (size_t i = 0; i < states.size() && i < MaxActiveVectorOffloads &&
+                       active_in_vpu < MaxActiveVectorOffloads;
+         ++i) {
+        auto &vec_state = states[i];
+
+        /** Si ya está despachada, aceptada o completada, o fue rechazada,
+         *  no hay que despacharla otra vez. */
+        if (vec_state.phase == MinorVectorPhase::Dispatched ||
+            vec_state.phase == MinorVectorPhase::Accepted ||
+            vec_state.phase == MinorVectorPhase::Completed ||
+            vec_state.rejected) {
+            continue;
+        }
+
+        /** Comprobar barreras de concurrencia: */
+        if (i > 0) {
+            /** Instrucción joven (i > 0): */
+            const auto &prev_state = states[i - 1];
+
+            /** Consecutividad estricta en el flujo del programa:
+             *  Si el número de secuencia no es estrictamente consecutivo,
+             *  existe una instrucción intermedia en inFlightInsts (escalar,
+             *  salto, memoria, etc.) que debe ejecutarse y retirarse antes
+             *  de que esta instrucción vectorial pueda ser despachada a
+             *  la VPU. */
+            if (vec_state.inst->id.execSeqNum !=
+                prev_state.inst->id.execSeqNum + 1) {
+                break;
+            }
+
+            /** Ambas deben ser aritméticas (ventana aritmética
+             *  consecutiva). Operaciones de memoria vectorial o de
+             *  configuración no se solapan de forma concurrente. */
+            if (!prev_state.decoded.payload ||
+                !std::holds_alternative<DecodedArithmeticOp>(
+                    *prev_state.decoded.payload)) {
+                break;
+            }
+            if (!vec_state.decoded.payload ||
+                !std::holds_alternative<DecodedArithmeticOp>(
+                    *vec_state.decoded.payload)) {
+                break;
+            }
+
+            /** Si la anterior fue rechazada, no se despachan posteriores. */
+            if (prev_state.rejected) {
+                break;
+            }
+
+            /** Instrucciones con vstart != 0 se ejecutan aisladas. */
+            ThreadContext *tc = cpu.getContext(thread_id);
+            if (tc->readMiscRegNoEffect(RiscvISA::MISCREG_VSTART) != 0) {
+                break;
+            }
+        } else {
+            /** Instrucción en cabeza (i == 0):
+             *  Si es memoria, esperar a que el store buffer escalar esté
+             *  completamente drenado. */
+            if (vec_state.decoded.payload &&
+                std::holds_alternative<DecodedMemoryOp>(
+                    *vec_state.decoded.payload)) {
+                if (!lsq.storeBuffer.isDrained()) {
+                    break;
+                }
+            }
+        }
+
+        /** Consideramos que se puede pasar de ReadyToGrant a WaitGrant y
+         *  de WaitGrant a Dispatched en el mismo ciclo. */
+        auto &vector_interface = cpu.getCpuVectorInterface();
+        if (vec_state.phase == MinorVectorPhase::ReadyToGrant) {
+            vec_state.commandKey = vector_interface.allocateCommandKey(
+                cpu.getContext(thread_id)->contextId());
+            vec_state.command =
+                buildVectorCommand(vec_state, cpu.getContext(thread_id));
+            vec_state.phase = MinorVectorPhase::WaitGrant;
+        }
+
+        if (vec_state.phase == MinorVectorPhase::WaitGrant) {
+            panic_if(!vec_state.commandKey || !vec_state.command,
+                     "VPU offload is missing its command identity");
+            if (!vec_state.grantToken) {
+                const auto result =
+                    vector_interface.requestGrant(*vec_state.command);
+                if (result.status == vector_engine::GrantStatus::Granted) {
+                    panic_if(!result.token,
+                             "Granted VPU command has no grant token");
+                    vec_state.grantToken = result.token;
+                } else if (result.status ==
+                           vector_engine::GrantStatus::Rejected) {
+                    vec_state.rejected = true;
+                    vec_state.phase = MinorVectorPhase::Completed;
+                    /** Detener despacho de instrucciones posteriores. */
+                    break;
+                } else {
+                    /** Stall: esperar admisión en ciclos posteriores. */
+                    break;
+                }
+            }
+
+            const auto token = *vec_state.grantToken;
+            const auto command = *vec_state.command;
+            vec_state.grantToken.reset();
+            vec_state.phase = MinorVectorPhase::Dispatched;
+            active_in_vpu++;
+            dispatched_this_cycle = true;
+            vector_interface.dispatch(token, command);
+        }
+
+        /** Máximo de 1 instrucción vectorial despachada a la VPU
+         *  por ciclo. */
+        if (dispatched_this_cycle) {
+            break;
+        }
+    }
+}
+
 #else
 vector_engine::VectorConfig
 Execute::captureVectorConfig(ThreadContext *thread) const
@@ -243,6 +389,12 @@ Execute::captureVectorConfig(ThreadContext *thread) const
 vector_engine::VectorCommand
 Execute::buildVectorCommand(MinorVectorState &state,
                             ThreadContext *thread) const
+{
+    panic("VPU offload requires RISC-V support");
+}
+
+void
+Execute::advanceVectorDispatch(ThreadID thread_id)
 {
     panic("VPU offload requires RISC-V support");
 }
@@ -1181,18 +1333,19 @@ void
 Execute::accepted(vector_engine::CommandKey command)
 {
     for (auto &thread_info : executeInfo) {
-        if (!thread_info.vpuOffloadStates.empty() &&
-            thread_info.vpuOffloadStates.front().commandKey == command) {
-            auto &state = thread_info.vpuOffloadStates.front();
-            panic_if(state.phase != MinorVectorPhase::Dispatched,
-                     "MinorCPU received an unexpected VPU acceptance");
-            state.phase = MinorVectorPhase::Accepted;
+        for (auto &state : thread_info.vpuOffloadStates) {
+            if (state.commandKey == command) {
+                panic_if(state.phase != MinorVectorPhase::Dispatched,
+                         "MinorCPU received an unexpected VPU acceptance");
+                state.phase = MinorVectorPhase::Accepted;
 
-            state.command.reset();
+                state.command.reset();
 
-            // No se despierta Execute ante accepted porque la instrucción aún
-            // no ha terminado. Execute se despertará al recibir completed().
-            return;
+                /** No se despierta Execute ante accepted porque la
+                 *  instrucción aún no ha terminado. Execute despertará
+                 *  al recibir completed(). */
+                return;
+            }
         }
     }
 
@@ -1203,17 +1356,16 @@ void
 Execute::completed(const vector_engine::VectorCompletion &completion)
 {
     for (auto &thread_info : executeInfo) {
-        if (!thread_info.vpuOffloadStates.empty() &&
-            thread_info.vpuOffloadStates.front().commandKey ==
-                completion.command) {
-            auto &state = thread_info.vpuOffloadStates.front();
-            panic_if(state.phase != MinorVectorPhase::Accepted,
-                     "MinorCPU received an unexpected VPU completion");
-            state.completion = completion;
-            state.phase = MinorVectorPhase::Completed;
+        for (auto &state : thread_info.vpuOffloadStates) {
+            if (state.commandKey == completion.command) {
+                panic_if(state.phase != MinorVectorPhase::Accepted,
+                         "MinorCPU received an unexpected VPU completion");
+                state.completion = completion;
+                state.phase = MinorVectorPhase::Completed;
 
-            cpu.wakeupOnEvent(Pipeline::ExecuteStageId);
-            return;
+                cpu.wakeupOnEvent(Pipeline::ExecuteStageId);
+                return;
+            }
         }
     }
 
@@ -1267,119 +1419,76 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
 
         ExecuteThreadInfo &ex_info = executeInfo[thread_id];
 
-        // Por precaución, comprobamos que la instrucción que estamos
-        // intentando despachar es la misma que la que está en el head de
-        // vpuOffloadStates
+        /** Comprobamos que la instrucción que se retira coincide con la
+         *  que se encuentra en cabeza de vpuOffloadStates. */
         assert(!ex_info.vpuOffloadStates.empty() &&
                ex_info.vpuOffloadStates.front().inst->id.execSeqNum ==
                    inst->id.execSeqNum);
 
         MinorVectorState *vec_state = &ex_info.vpuOffloadStates.front();
 
-        switch (vec_state->phase) {
-            case MinorVectorPhase::ReadyToGrant: {
-                if (ex_info.drainState != NotDraining) {
-                    break;
-                }
-                // Para instrucciones de memoria vectorial, esperamos a que el
-                // store buffer escalar esté completamente drenado.
-                bool is_vec_mem = std::holds_alternative<DecodedMemoryOp>(
-                    *vec_state->decoded.payload);
-                if (!is_vec_mem || lsq.storeBuffer.isDrained()) {
-                    auto &vector_interface = cpu.getCpuVectorInterface();
-                    vec_state->commandKey =
-                        vector_interface.allocateCommandKey(
-                            cpu.getContext(thread_id)->contextId());
-                    vec_state->command = buildVectorCommand(
-                        *vec_state, cpu.getContext(thread_id));
-                    vec_state->phase = MinorVectorPhase::WaitGrant;
-                }
-                break;
+        /** Intentar avanzar el despacho de la ventana vectorial concurrente
+         *  hacia la VPU. */
+        if (!vec_state->rejected) {
+            advanceVectorDispatch(thread_id);
+        }
+
+        /** Si la instrucción fue rechazada por la VPU, procesamos la
+         *  excepción arquitectónica aquí en su punto de retiro en orden
+         *  de programa. */
+        if (vec_state->rejected) {
+            const auto *riscv_inst =
+                dynamic_cast<const RiscvISA::RiscvStaticInst *>(
+                    inst->staticInst.get());
+            fatal_if(!riscv_inst, "VPU offload requires a RISC-V instruction");
+            fault = std::make_shared<RiscvISA::IllegalInstFault>(
+                "VPU rejected vector command", riscv_inst->machInst);
+            fault->invoke(thread, inst->staticInst);
+            tryToBranch(inst, fault, branch);
+            completed_inst = true;
+            committed = false;
+            return completed_inst;
+        }
+
+        /** Si aún no ha completado (está en Dispatched o Accepted), esperamos
+         *  de forma asíncrona a recibir el callback completed(). */
+        if (vec_state->phase != MinorVectorPhase::Completed) {
+            return completed_inst;
+        } else {
+            /** Fase Completed: aplicar efectos arquitectónicos CPU
+             *  y retirar. */
+            if (vec_state->completion->fpFlags) {
+                const auto flags =
+                    thread->readMiscReg(RiscvISA::MISCREG_FFLAGS);
+                thread->setMiscReg(RiscvISA::MISCREG_FFLAGS,
+                                   flags | vec_state->completion->fpFlags);
             }
-            case MinorVectorPhase::WaitGrant: {
-                panic_if(!vec_state->commandKey || !vec_state->command,
-                         "VPU offload is missing its command identity");
-                auto &vector_interface = cpu.getCpuVectorInterface();
-                if (!vec_state->grantToken) {
-                    if (ex_info.drainState != NotDraining) {
-                        break;
-                    }
-                    const auto result =
-                        vector_interface.requestGrant(*vec_state->command);
-                    if (result.status == vector_engine::GrantStatus::Granted) {
-                        panic_if(!result.token,
-                                 "Granted VPU command has no grant token");
-                        vec_state->grantToken = result.token;
-                    } else if (result.status ==
-                               vector_engine::GrantStatus::Rejected) {
-                        const auto *riscv_inst =
-                            dynamic_cast<const RiscvISA::RiscvStaticInst *>(
-                                inst->staticInst.get());
-                        fatal_if(!riscv_inst,
-                                 "VPU offload requires a RISC-V instruction");
-                        fault = std::make_shared<RiscvISA::IllegalInstFault>(
-                            "VPU rejected vector command",
-                            riscv_inst->machInst);
-                        fault->invoke(thread, inst->staticInst);
-                        tryToBranch(inst, fault, branch);
-                        completed_inst = true;
-                        break;
-                    } else {
-                        break;
-                    }
-                }
-                // Own the arguments across synchronous callbacks. Acceptance
-                // may release the descriptor stored in the offload state.
-                const auto token = *vec_state->grantToken;
-                const auto command = *vec_state->command;
-                vec_state->grantToken.reset();
-                vec_state->phase = MinorVectorPhase::Dispatched;
-                vector_interface.dispatch(token, command);
-                break;
+            thread->setMiscReg(RiscvISA::MISCREG_VSTART,
+                               vec_state->completion->finalVstart);
+
+            ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
+
+            if (vec_state->completion->status ==
+                vector_engine::CompletionStatus::MemoryFault) {
+                // Extraemos el objeto Fault real que creó el
+                // VectorMemoryBackend
+                fault = vec_state->completion->fault->fault;
+
+                DPRINTF(MinorExecute,
+                        "VPU Offload returned a memory fault: %s\n",
+                        fault->name());
+
+                // Saltamos a la rutina del SO
+                fault->invoke(thread, inst->staticInst);
+            } else if (vec_state->completion->status !=
+                       vector_engine::CompletionStatus::Success) {
+                panic("Unexpected completion status from VPU");
             }
-            case MinorVectorPhase::Dispatched:
-            case MinorVectorPhase::Accepted:
-                /** Asynchronous wait. We don't do anything here, we will be
-                 * notified through the accepted() and completed() callbacks.
-                 */
-                break;
-            case MinorVectorPhase::Completed:
-                // Acumular las excepciones FP al retirar, cuando el resultado
-                // ya puede hacerse visible en el estado de la CPU.
-                if (vec_state->completion->fpFlags) {
-                    const auto flags = thread->readMiscReg(
-                        RiscvISA::MISCREG_FFLAGS);
-                    thread->setMiscReg(RiscvISA::MISCREG_FFLAGS,
-                                      flags | vec_state->completion->fpFlags);
-                }
-                thread->setMiscReg(RiscvISA::MISCREG_VSTART,
-                                   vec_state->completion->finalVstart);
 
-                ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
-
-                if (vec_state->completion->status ==
-                    vector_engine::CompletionStatus::MemoryFault) {
-                    // Extraemos el objeto Fault real que creó el
-                    // VectorMemoryBackend
-                    fault = vec_state->completion->fault->fault;
-
-                    DPRINTF(MinorExecute,
-                            "VPU Offload returned a memory fault: %s\n",
-                            fault->name());
-
-                    // Saltamos a la rutina del SO
-                    fault->invoke(thread, inst->staticInst);
-                } else if (vec_state->completion->status !=
-                           vector_engine::CompletionStatus::Success) {
-                    panic("Unexpected completion status from VPU"); // -TODO
-                                                                    // temporal
-                }
-
-                // If fault == NoFault, tryToBranch hará el advancePC()
-                tryToBranch(inst, fault, branch);
-                completed_inst = true;
-                committed = fault == NoFault;
-                break;
+            tryToBranch(inst, fault, branch);
+            completed_inst = true;
+            committed = (fault == NoFault);
+            return completed_inst;
         }
 
 #endif
@@ -1727,19 +1836,25 @@ Execute::commit(ThreadID thread_id, bool only_commit_microops, bool discard,
                 discard_inst = inst->id.streamSeqNum !=
                     ex_info.streamSeqNum || discard;
 
-                // Para evitar que instrucciones vectoriales que ya han sido
-                // enviadas a la VPU sean descartadas.
+                /** Para evitar que instrucciones vectoriales que ya han sido
+                 *  enviadas a la VPU sean descartadas. */
                 if (discard_inst &&
                     inst->decodedVectorOp.executionClass ==
                         VectorExecutionClass::VpuOffload &&
                     cpu.isVectorOffloadEnabled()) {
-                    auto &vec_state = ex_info.vpuOffloadStates.front();
-                    // Sólo una reserva o un despacho impiden el descarte.
-                    if (vec_state.mustComplete()) {
-                        DPRINTF(MinorExecute,
-                                "Protecting VPU inst from discard: %s\n",
-                                *inst);
-                        discard_inst = false;
+                    for (const auto &vec_state : ex_info.vpuOffloadStates) {
+                        if (vec_state.inst->id == inst->id) {
+                            /** Sólo una reserva o un dispatch impiden
+                             *  el descarte de la instrucción. */
+                            if (vec_state.mustComplete()) {
+                                DPRINTF(MinorExecute,
+                                        "Protecting VPU inst from discard: "
+                                        "%s\n",
+                                        *inst);
+                                discard_inst = false;
+                            }
+                            break;
+                        }
                     }
                 }
                 /* Is this instruction discardable as its streamSeqNum
@@ -1936,7 +2051,12 @@ bool
 Execute::mustCompleteVpuOffload(ThreadID thread_id) const
 {
     const auto &states = executeInfo[thread_id].vpuOffloadStates;
-    return !states.empty() && states.front().mustComplete();
+    for (const auto &state : states) {
+        if (state.mustComplete()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool
@@ -2111,33 +2231,19 @@ Execute::evaluate()
                        cpu.isVectorOffloadEnabled()) {
 
                 ThreadID thread_id = head_inst.inst->id.threadId;
-                assert(!executeInfo[thread_id].vpuOffloadStates.empty());
-                MinorVectorState *vec_state =
-                    &executeInfo[thread_id].vpuOffloadStates.front();
-
-                switch (vec_state->phase) {
-                    case MinorVectorPhase::ReadyToGrant:
-                        head_inst_might_commit = true;
-                        break;
-
-                    case MinorVectorPhase::WaitGrant:
-                    case MinorVectorPhase::Completed:
-                        /*
-                         * Aquí sí necesitamos el reloj.
-                         * WaitGrant: para volver a intentar requestGrant el
-                         * ciclo que viene. Completed: para que commitInst()
-                         * procese el resultado y la retire.
-                         */
-                        head_inst_might_commit = true;
-                        break;
-
-                    case MinorVectorPhase::Dispatched:
-                    case MinorVectorPhase::Accepted:
-                        /*
-                         * Asincronía pura. La instrucción está viajando o
-                         * procesándose en la VPU. No forzamos tick.
-                         */
-                        break;
+                const auto &states = executeInfo[thread_id].vpuOffloadStates;
+                assert(!states.empty());
+                if (states.front().phase == MinorVectorPhase::Completed ||
+                    states.front().rejected) {
+                    head_inst_might_commit = true;
+                } else {
+                    for (const auto &st : states) {
+                        if (st.phase == MinorVectorPhase::ReadyToGrant ||
+                            st.phase == MinorVectorPhase::WaitGrant) {
+                            head_inst_might_commit = true;
+                            break;
+                        }
+                    }
                 }
 
             } else {

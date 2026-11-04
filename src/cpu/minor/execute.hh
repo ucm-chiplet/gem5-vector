@@ -318,6 +318,10 @@ class Execute : public Named
     vector_engine::VectorCommand
     buildVectorCommand(MinorVectorState &state, ThreadContext *thread) const;
 
+    /** Avanza el despacho vectorial de instrucciones en vuelo de forma
+     *  desacoplada del retiro en orden. */
+    void advanceVectorDispatch(ThreadID thread_id);
+
     /** Try and commit instructions from the ends of the functional unit
      *  pipelines.
      *  If only_commit_microops is true then only commit upto the

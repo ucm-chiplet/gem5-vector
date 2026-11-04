@@ -70,6 +70,11 @@ struct MinorVectorState
     // Minor la conserva hasta procesar el retiro o la excepción.
     std::optional<vector_engine::VectorCompletion> completion;
 
+    /** Indica si la admisión fue rechazada por la VPU.
+     *  Se procesa como excepción arquitectónica en commit en orden de
+     *  programa. */
+    bool rejected = false;
+
     // Una clave sin reserva no obliga a terminar el intento durante drain.
     bool
     mustComplete() const
