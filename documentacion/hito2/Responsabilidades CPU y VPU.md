@@ -18,8 +18,12 @@ comprobaciones indicadas son propuestas para acordar con el equipo.
 El adelanto equilibrado aprobado añade Pathfinder al cierre del 2, AXPY al
 del 3 y MatMul al del 4. Las acciones de fases ya entregadas no se dan por
 reabiertas ni completadas por este cambio de planificación. En el hito 2,
-la fase 2.8 incorpora mínimo y transferencias completas del perfil de
-Pathfinder; el [plan de benchmarks][benchmarks] registra el inventario.
+la fase 2.8 incorpora `vmin.vv` con signo de 32 bits para Pathfinder.
+La revisión documental aprobada el 4 de noviembre de 2026 limita el caso
+a los 7 tipos RVV del kernel y mantiene escalar la copia inicial mediante
+`-O2 -fno-vectorize -fno-slp-vectorize`; las transferencias completas
+dejan de ser requisitos del adelanto. El [plan de benchmarks][benchmarks]
+registra el inventario.
 
 CPU incluye la integración con Minor y las rutas ISA necesarias para
 traducir instrucciones a comandos. VPU incluye frontend, lanes, VRF, VLSU,
@@ -35,7 +39,7 @@ requieren revisión de ambas partes; cada edición tendrá un responsable.
 | 2.5 Concurrencia | Contextos y reservas | Envío y retirada | Solapamiento |
 | 2.6 FUs | FP32 y varias ALUs | Operaciones y flags | Cálculo y efectos |
 | 2.7 Red | Crossbar y slides | Traducción de slides | Transporte y writeback |
-| 2.8 Cierre y Pathfinder | Mínimo de 32 bits, transferencias completas, recursos y métricas | Traducción, grupos y retirada | Ejecución de Pathfinder, evidencia y límites |
+| 2.8 Cierre y Pathfinder | Mínimo con signo de 32 bits, recursos y métricas | Traducción, grupos y retirada | Pathfinder con 7 tipos RVV del kernel y copia inicial escalar, evidencia y límites |
 
 ## Acciones en CPU y Minor
 
@@ -261,10 +265,13 @@ crossbar por sí sola no acredita soporte de estas instrucciones.
 
 ### Fase 2.8. Consolidación de la integración CPU
 
-Para Pathfinder, traducir `vmin.vv`, `vl2re32.v` y `vs2r.v`, capturando
-configuración, base y grupos sin asumir que una transferencia completa usa
-el `vl` ordinario. Conservar barreras de memoria, faults y retirada de
-comandos completos. La matriz CPU--VPU debe incluir inicialización y cálculo.
+Para Pathfinder, traducir `vmin.vv` con signo de 32 bits, capturando
+configuración y grupos, y reutilizar memoria unit-stride y slides del hito.
+Conservar barreras de memoria, faults y retirada de comandos completos.
+La matriz CPU--VPU debe incluir los 7 tipos RVV del kernel y la copia
+inicial escalar; no requiere `vl2re32.v` ni `vs2r.v`. Registrar toolchain,
+opciones y desensamblado final para comprobar ese perfil según el plan de
+benchmarks.
 
 **Puntos de trabajo:** matriz de soporte, documentación de integración,
 estadísticas de Minor y revisión del ciclo de vida completo.

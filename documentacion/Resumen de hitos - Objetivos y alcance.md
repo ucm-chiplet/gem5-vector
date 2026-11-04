@@ -31,6 +31,12 @@ no soporte comprobado. El [plan de benchmarks][benchmarks] conserva el
 inventario comunicado, los límites y la evidencia de cierre esperada para
 O1, O2 y O6. Cada implementación requiere su propuesta específica.
 
+La revisión aprobada el 4 de noviembre de 2026 exige sólo los tipos RVV
+del kernel: **7 en Pathfinder, 4 en AXPY y 9 en MatMul**. Se emplea
+`-O2 -fno-vectorize -fno-slp-vectorize` para mantener escalares la copia
+inicial, la inicialización y la verificación. La ficha registrará toolchain,
+opciones y desensamblado final para comprobar ese perfil.
+
 ### Cómo leer los ejemplos
 
 Son fragmentos RV64 en sintaxis GNU, con registros de entrada preparados
@@ -149,8 +155,9 @@ fraccionales acordados, aplicando `tu/ta`. Ese soporte se conserva en las
 ampliaciones posteriores del hito.
 
 **Benchmark de cierre:** Pathfinder. Añade `vmin.vv` de 32 bits,
-`vl2re32.v` y `vs2r.v` sobre memoria y slides ya previstas; la fase 2.8
-integra el subconjunto y la copia inicial con las barreras del hito.
+con signo, sobre memoria y slides ya previstas; la fase 2.8 integra los
+7 tipos RVV del kernel y la copia inicial escalar con las barreras del
+hito. Las transferencias completas dejan de ser requisitos de este caso.
 
 ### Ejemplo al cierre: aritmética FP32 independiente
 
@@ -205,11 +212,12 @@ seguimiento hasta cerrar comandos; ampliar colas por sí solo no basta.
 El experimento parametrizable de clústeres pertenece
 al 4 y sus tamaños iniciales no fijan la arquitectura final.
 
-**Benchmark de cierre:** AXPY. Se anticipan del 4 `vfmacc.vf` y
-`vfmv.v.f` FP64, con escalar FP capturado, lectura del acumulador,
-redondeo/flags y recursos finitos; memoria de 64 bits y `vs2r.v` se heredan.
-La fase 3.8 integra el caso para estudiar memoria/cálculo y chaining.
-Este adelanto no incorpora todo FP64 ni precisión mixta.
+**Benchmark de cierre:** AXPY. Se anticipa del 4 `vfmacc.vf` FP64, con
+escalar FP capturado, lectura del acumulador, redondeo/flags y recursos
+finitos; se hereda memoria de 64 bits y `vsetvli` permanece en CPU.
+La fase 3.8 integra los 4 tipos RVV del kernel, con inicialización escalar,
+para estudiar memoria/cálculo y chaining. No requiere `vfmv.v.f` ni
+`vs2r.v`; este adelanto no incorpora todo FP64 ni precisión mixta.
 
 ### Ejemplo al cierre: alimentar la VPU desde trabajo escalar
 
@@ -266,9 +274,13 @@ de instrucciones nativas se declaran por separado; no se exige todo FP.
 
 **Benchmark de cierre:** MatMul. Reutiliza el subconjunto FP64 de AXPY y
 añade `vfmacc.vv`, `vfredosum.vs`, `vlse64.v`, `vmv.v.i` y `vmv1r.v`,
-con configuración en CPU, incluido `vsetivli`. Strided y movimientos se
-adelantan del 5 para cerrar este caso; el resto del repertorio permanece
-en su hito. La fase 4.8 reúne su evidencia funcional y temporal.
+con configuración en CPU, incluido `vsetivli`. La familia strided
+`vlse*`/`vsse*` se completa en el 4, junto a 4.2 y 4.5; los movimientos
+se adelantan del 5 para cerrar este caso y el resto del repertorio,
+incluido indexed, permanece en su hito. MatMul exige los 9 tipos RVV del
+kernel, con preparación y verificación escalares; la familia strided
+completa es una ampliación independiente de ese mínimo. La fase 4.8 reúne
+su evidencia funcional y temporal.
 
 ### Ejemplo al cierre: FP16 con acumulador FP32 y salida FP16
 
@@ -315,7 +327,8 @@ bloques de atención CSA/HCA de DeepSeek V4 Flash. Obtener resultados
 numéricos y temporales sobre los mecanismos y formatos de los hitos 2--4.
 
 **Alcance:** enteras habituales, máscaras, selección, movimientos,
-reducciones adicionales, slides/gathers y memoria strided/indexed.
+reducciones adicionales, slides/gathers y memoria indexed; reutiliza la
+familia strided completada en el 4.
 Completa los micro-kernels acordados: memoria, gathers, máscaras,
 reducciones, permutaciones, widening, LMUL, `vsetvl` y tail. Integra la
 selección de kernels BLIS y los bloques CSA/HCA, con los auxiliares y

@@ -205,7 +205,7 @@ bloque agrupado y en elemento dividido; `memory_vrf_inputs_per_lane` 1 y 2
 con varios bancos; drain con lecturas o escrituras VRF pendientes.
 
 Quedan fuera: bloques o paquetes concurrentes, memoria concurrente con
-aritmética, predicación, strided/indexed, `vl2re32.v`/`vs2r.v` (2.8),
+aritmética, predicación, strided/indexed, `vl2re32.v`/`vs2r.v`,
 acciones CPU de 2.4 y cambios en `interface/`.
 
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html

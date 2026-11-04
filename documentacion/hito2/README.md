@@ -112,10 +112,12 @@ ni el ancho físico de una ALU. En memoria se mantiene EEW=SEW y no se habilitan
 otros modos de direccionamiento en memoria ordinaria. Las formas `.vv`
 usan dos vectores; `.vx` usa un vector y el escalar capturado por CPU.
 
-Pathfinder añade `vl2re32.v` y `vs2r.v`: transfieren dos registros completos,
-con geometría y longitud efectiva propias según RVV. No se restringen al
-`vl` ni al LMUL de una carga/store ordinaria. Se integran en 2.8 con sus
-restricciones de codificación, alineación, `vstart` y faults, manteniendo
+Pathfinder exige sólo los 7 tipos RVV de su kernel: `vsetvli`, `vle32.v`,
+`vse32.v`, `vslide1up.vx`, `vslide1down.vx`, `vmin.vv` y `vadd.vv`.
+La revisión documental aprobada el 4 de noviembre de 2026 fija la copia
+inicial escalar con `-O2 -fno-vectorize -fno-slp-vectorize` y retira
+`vl2re32.v`/`vs2r.v` como requisitos del adelanto. La fase 2.8 añade sólo
+el mínimo con signo de 32 bits al repertorio ya previsto; se mantienen
 una instrucción de memoria, un bloque y un paquete físico activos.
 
 En concreto, multiplicación incluye `vmul.vv` y `vmul.vx`; división incluye
@@ -256,9 +258,11 @@ los pendientes sin reducir el alcance actual de este hito:
   progreso escalar con comandos vectoriales pendientes, incluida preparación
   de operandos para nuevos despachos y control de bucle resuelto;
   contratos y recursos de ejecución colectiva para las familias de 4--5.
-  Incluye AXPY al cierre: se anticipan `vfmacc.vf` y `vfmv.v.f` FP64 con
-  captura del escalar, lectura del acumulador y flags; se heredan memoria
-  de 64 bits y `vs2r.v`. No incorpora todo FP64 ni precisión mixta.
+  Incluye AXPY al cierre: se anticipa `vfmacc.vf` FP64 con captura del
+  escalar, lectura del acumulador y flags; se hereda memoria de 64 bits.
+  Sus 4 tipos RVV incluyen `vsetvli`, ejecutado en CPU. La inicialización
+  es escalar con las opciones del plan de benchmarks, sin requerir
+  `vfmv.v.f` ni `vs2r.v`. No incorpora todo FP64 ni precisión mixta.
   Incluye las variantes con máscara de ambas slide1. Chaining y memoria
   concurrente son objetivos de cierre, no optimizaciones opcionales.
   También prepara la [clusterización][clusters]: agrupar lanes y recursos
@@ -276,11 +280,14 @@ los pendientes sin reducir el alcance actual de este hito:
   Se admiten las operaciones de los casos seleccionados, sin exigir todo FP.
   MatMul se incorpora al cierre del 4: `vfmacc.vv`/`vfredosum.vs` FP64,
   `vlse64.v`, `vmv.v.i` y `vmv1r.v`, con configuración también `vsetivli`
-  en CPU. El adelanto acota strided y movimientos a las formas necesarias.
+  en CPU. La familia strided se completa en el 4; el adelanto acota los
+  movimientos a las formas necesarias. MatMul exige sólo los 9 tipos RVV
+  del kernel, con preparación y verificación escalares; la familia strided
+  completa conserva su alcance independiente de ese mínimo.
 - **Hito 5, repertorio e integración HPC/ML:** reutiliza los subconjuntos
   de Pathfinder, AXPY y MatMul y amplía enteras habituales,
   comparación, selección y máscaras; reducciones adicionales, slides de
-  distancia variable, gathers y memoria strided/indexed. Completa formas FP
+  distancia variable, gathers y memoria indexed. Completa formas FP
   y bibliotecas necesarias para los kernels acordados, reutilizando el 4.
   Completa la campaña de micro-kernels, BLIS y bloques CSA/HCA.
 - **Ampliaciones posteriores sin compromiso en estos hitos:**
@@ -305,9 +312,12 @@ ampliaciones que se trasladan automáticamente al hito siguiente.
 
 El adelanto equilibrado añade Pathfinder al cierre del 2, AXPY al del 3 y
 MatMul al del 4. El hito 2 debe cerrar el recorrido CPU--VPU de Pathfinder,
-incluida la copia inicial, con resultado contrastado. Se medirán tráfico y
-esperas por recurso según la validación que defina el equipo; ejecutar el
-caso no demuestra por sí solo solapamiento ni fidelidad de ciclos con Ara.
+incluida la copia inicial escalar, con resultado contrastado. Antes de
+declararlo ejecutable se registrarán toolchain, opciones y desensamblado
+final para comprobar los 7 tipos RVV del kernel y la preparación escalar.
+Se medirán tráfico y esperas por recurso según la validación que defina el
+equipo; ejecutar el caso no demuestra por sí solo solapamiento ni fidelidad
+de ciclos con Ara.
 
 La campaña se organiza en tres bloques:
 

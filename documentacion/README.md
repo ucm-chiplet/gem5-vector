@@ -32,9 +32,13 @@ Flash. Sus variantes, tamaños y ROI se concretan en fichas antes de ejecutar.
 
 El adelanto equilibrado aprobado añade **Pathfinder al cierre del hito 2**,
 **AXPY al del 3** y **MatMul al del 4**. El plan de benchmarks detalla el
-subconjunto añadido: mínimo/transferencias completas en el 2, FP64/FMA
-acotadas en el 3 y strided/movimientos auxiliares en el 4. Es alcance
-planificado; no acredita implementación ni ejecución de esas cargas.
+subconjunto añadido: mínimo entero de 32 bits en el 2, `vfmacc.vf` FP64
+en el 3 y strided/movimientos auxiliares del kernel en el 4. Los perfiles
+exigen sólo 7, 4 y 9 tipos RVV, respectivamente, con preparación y
+verificación escalares mediante `-O2 -fno-vectorize -fno-slp-vectorize`.
+La familia strided completa sigue planificada en el 4 como ampliación
+independiente del mínimo de MatMul. Es alcance planificado; no acredita
+implementación ni ejecución de esas cargas.
 
 Para entender el código actual, empieza por el hito 1. Para preparar las
 siguientes extensiones, consulta el hito 2 y conserva los contratos del hito 1.

@@ -23,7 +23,7 @@ específicas y criterios de comparación, sin ampliar por ello el hito 2.
 | --- | --- | --- |
 | 2. Concurrencia aritmética, FP32 y recursos temporizados | Anchos, recursos finitos, concurrencia independiente, FPU, memoria por bloques y red modular. | Dependencias por instrucción completa; memoria serializada; sin predicación. |
 | 3. Solapamiento escalar-vectorial, chaining y memoria concurrente | Predicación, resultados tipados, chaining, memoria concurrente, progreso escalar con comandos vectoriales pendientes, colectivos y preparación para clústeres. | Precisión mixta, nuevos formatos y repertorio ampliado en 4--5. |
-| 4. Precisión mixta y evaluación de clústeres | FP16, BF16, FP32/FP64, conversiones, acumulación, segmentados, compactación y evaluación temporal y de clústeres. | Completar cobertura de kernels e instrucciones habituales en el 5. |
+| 4. Precisión mixta y evaluación de clústeres | FP16, BF16, FP32/FP64, conversiones, acumulación, segmentados, compactación, familia strided y evaluación temporal y de clústeres. | Completar cobertura de kernels e instrucciones habituales en el 5. |
 | 5. Repertorio RVV y ejecución de kernels BLIS y atención | Enteras, máscaras, reducciones, permutaciones, memoria irregular e integración de bibliotecas. | No implica completar RVV ni ejecutar cualquier aplicación. |
 
 El repertorio de instrucciones de los hitos 2--5 parte de un análisis
@@ -38,6 +38,13 @@ El adelanto equilibrado aprobado el 3 de noviembre de 2026 incorpora
 alcance planificado para esos subconjuntos; no certifica soporte actual
 ni autoriza implementar código. El [plan de benchmarks][benchmarks] recoge
 inventarios, procedencia, responsabilidades y evidencia esperada.
+
+La revisión documental aprobada el 4 de noviembre de 2026 limita estos
+benchmarks a los tipos RVV de sus kernels: 7 en Pathfinder, 4 en AXPY y
+9 en MatMul. Se usa `-O2 -fno-vectorize -fno-slp-vectorize` para mantener
+escalares la copia inicial, la inicialización y la verificación. El plan de
+benchmarks distingue las instrucciones exteriores eliminadas y exige
+comprobar el desensamblado final antes de declarar ejecutable cada caso.
 
 Recorrido del documento:
 
@@ -220,11 +227,11 @@ y `.vx`, memoria unit-stride con EEW=SEW, y FP32 `vfadd`, `vfmul` y `vfdiv`
 `.vv`. La red ejecuta `vslide1up.vx` y `vslide1down.vx` sin predicación en
 los cuatro anchos. La matriz del README concreta las formas y restricciones.
 
-El cierre añade Pathfinder: `vmin.vv` de 32 bits, `vl2re32.v` y `vs2r.v`,
-además de las instrucciones ya previstas. Se integra en 2.8 sobre los
-recursos anteriores, con una propuesta específica para esas operaciones.
-Las transferencias completas tienen geometría y longitud efectiva propias;
-la restricción EEW=SEW anterior corresponde a memoria ordinaria del perfil.
+El cierre añade Pathfinder: `vmin.vv` con signo de 32 bits, además de las
+instrucciones ya previstas, hasta los 7 tipos RVV de su kernel. Se integra
+en 2.8 sobre los recursos anteriores, con una propuesta específica para
+esa operación. La copia inicial es escalar con las opciones del plan de
+benchmarks; las transferencias completas no son un requisito del adelanto.
 
 ### Fase 2.1. Contratos y capacidades
 
@@ -351,10 +358,11 @@ Los criterios completos se mantienen en la
 [sección 15.3 del diseño][cierre-h2].
 
 Incorporar aquí el subconjunto adicional de Pathfinder y reunir su evidencia
-CPU--VPU, incluida la copia inicial, según el plan de benchmarks. La ALU
-ejecuta mínimo entero; VRF/VLSU transfieren los grupos completos respetando
-identidades, reservas, faults y drain. Se conservan barreras y límites de
-memoria del hito; la ejecución funcional no acredita chaining.
+CPU--VPU, incluida la copia inicial escalar, según el plan de benchmarks.
+La ALU ejecuta mínimo entero con signo de 32 bits; VRF/VLSU reutilizan el
+recorrido unit-stride respetando identidades, reservas, faults y drain.
+Se conservan barreras y límites de memoria del hito; la ejecución funcional
+no acredita chaining.
 
 ### Ejemplos al cierre: enteros de 16 bits y FP32
 
@@ -424,7 +432,8 @@ locales en clústeres sin rediseñar el recorrido de cada instrucción.
 
 Se trabaja primero con las instrucciones del hito 2 y sus ampliaciones de
 predicación admitidas. Como adelanto acotado, el cierre incorpora AXPY:
-`vfmacc.vf` y `vfmv.v.f` FP64, memoria de 64 bits y `vs2r.v` heredados.
+`vfmacc.vf` FP64 y memoria de 64 bits heredada, con `vsetvli` en CPU.
+Son los 4 tipos RVV de su kernel; la inicialización es escalar.
 El resto de las ampliaciones numéricas y opcodes HPC/ML permanece en 4--5.
 Preparar una familia significa dejar resueltos sus contratos de datos,
 planificación, transporte, terminación y recursos; no basta nombrar una
@@ -730,16 +739,17 @@ El cierre incluye funcionamiento con capacidades pequeñas y contrapresión,
 sin asumir que aumentar buffers corrige un bloqueo de protocolo.
 
 Integrar el adelanto de AXPY: escalar FP capturado, lectura del destino,
-`vfmacc.vf` fusionada y `vfmv.v.f` FP64, con reservas finitas y flags
+`vfmacc.vf` fusionada FP64, con reservas finitas y flags
 aplicados por Minor al retirar. Reutilizar 3.1 y los mecanismos de 3.3--3.5
-para dependencias, chaining y memoria. El cierre incluye inicialización y
-resultado contrastado, y separa ejecución funcional de evidencia temporal.
-FP64 queda limitado a estas formas; el 4 amplía formatos y operaciones.
+para dependencias, chaining y memoria. El cierre incluye inicialización
+escalar y resultado contrastado, y separa ejecución funcional de evidencia
+temporal. FP64 aritmético queda limitado a esta forma; el 4 amplía formatos
+y operaciones. `vfmv.v.f` y `vs2r.v` no son requisitos de este adelanto.
 
 ### Criterios de cierre del hito 3
 
-- AXPY ejecuta el perfil acordado, incluida inicialización, con resultado
-  contrastado y evidencia del recorrido CPU--VPU y sus efectos FP.
+- AXPY ejecuta los 4 tipos RVV del kernel, con inicialización escalar,
+  resultado contrastado y evidencia del recorrido CPU--VPU y sus efectos FP.
 - Las instrucciones del hito 2 conservan su semántica y tienen predicación
   en las variantes que la admiten; ambas slide1 incluyen esa ampliación.
 - Un consumidor usa rangos listos antes de completar todo su productor.
@@ -847,9 +857,10 @@ FP64 de AXPY del hito 3 para cálculo científico. Incorporar accesos
 segmentados y compactación de datos sobre los mecanismos del hito 3.
 
 El cierre incorpora MatMul con `vfmacc.vv`, `vfredosum.vs`, `vlse64.v`,
-`vmv.v.i` y `vmv1r.v`, además de memoria/configuración heredadas. Strided y
-movimientos se adelantan como dependencias concretas de este caso, no como
-incorporación completa del repertorio del 5.
+`vmv.v.i` y `vmv1r.v`, además de memoria/configuración heredadas. La
+familia strided se completa en este hito, junto a 4.2 y 4.5; los
+movimientos se adelantan como dependencias concretas de MatMul, no como
+incorporación completa del repertorio del 5. Indexed permanece en el 5.
 
 La selección cubre todas las operaciones que usen los casos acordados,
 incluidos movimiento, configuración, formas escalares y auxiliares. No se
@@ -877,9 +888,11 @@ instrucción vectorial nativa de ese formato ni habilita opcodes nuevos.
 
 ### Fase 4.1. Cerrar casos ML/HPC, formatos y dependencias
 
-Incluir MatMul en los casos ejecutables del hito y fijar su perfil completo,
-incluidos `vsetivli`, inicialización, strided, movimientos y reducción
-ordenada. El inventario comunicado está en el plan de benchmarks.
+Incluir MatMul en los casos ejecutables del hito y fijar los 9 tipos RVV
+de su kernel, incluidos `vsetivli`, strided, movimientos y reducción
+ordenada. Mantener escalares la preparación y la verificación con las
+opciones del plan de benchmarks; sus auxiliares RVV exteriores no se
+añaden al perfil. El inventario comunicado está en ese plan.
 
 Concretar los micro-kernels de widening, geometría y formatos y una primera
 selección de kernels densos de BLIS compatibles con el hito. Para CSA/HCA
@@ -923,7 +936,8 @@ La matriz de esta fase amplía el perfil LMUL heredado del 2 para los casos
 de precisión mixta. Incluye EMUL por fuente/destino y su límite de ocho
 registros, partes no utilizadas del registro fraccionario y `tu/ta/mu/ma`
 según la operación. Una ampliación de geometría no activa por sí sola
-todas las combinaciones SEW×LMUL.
+todas las combinaciones SEW×LMUL. La geometría por operando cubre también
+los accesos strided de 4.5 cuyo EEW difiere de SEW.
 
 ### Fase 4.3. FPU con varios formatos y conversiones
 
@@ -971,8 +985,18 @@ con chaining y gestionar correctamente sus dependencias y flags.
 Incorporar también las dependencias auxiliares de MatMul: `vlse64.v`,
 `vmv.v.i` y `vmv1r.v`. CPU captura base, stride e inmediato; VLSU y VRF
 ejecutan el acceso o movimiento con los contratos de dependencias, orden,
-faults y drain existentes. Este adelanto no exige stores strided, indexed
-ni todas las formas de movimiento del hito 5.
+faults y drain existentes.
+
+Ampliación aprobada el 3 de noviembre de 2026: completar en este hito la
+familia strided, cargas `vlse8/16/32/64.v` y stores `vsse8/16/32/64.v`,
+para los anchos y perfiles EEW/EMUL que fije 4.2. Sobre la generación de
+direcciones de `vlse64.v`, incorporar stores strided, strides negativos y
+nulos, y faults por elemento según la sección *Vector Strided
+Instructions* del manual RVV 1.0. Respetar la predicación, el orden y la
+memoria concurrente del hito 3. Los bloques de 2.4 sólo se reutilizan si
+los elementos son contiguos; el resto de casos define su propia agrupación
+o accede por elemento. Indexed y las formas de movimiento restantes siguen
+en el hito 5.
 
 Incorporar al menos cargas/stores unit-stride de dos campos para los anchos
 seleccionados, útiles para pares o datos complejos intercalados. Cerrar
@@ -1051,8 +1075,11 @@ Las dependencias pendientes de bibliotecas se registran con su fase del 5.
 
 ### Criterios de cierre del hito 4
 
-- MatMul ejecuta el perfil acordado con resultado contrastado, incluida su
-  reducción ordenada FP64, carga strided y movimientos auxiliares.
+- MatMul ejecuta los 9 tipos RVV del kernel con preparación y verificación
+  escalares y resultado contrastado, incluida su reducción ordenada FP64,
+  carga strided y movimientos auxiliares.
+- La familia strided `vlse*`/`vsse*` tiene recorrido completo en los anchos
+  y perfiles aprobados, con predicación, faults y drain.
 - FP16, BF16, FP32 y FP64 tienen perfiles explícitos y recorridos completos
   para las operaciones acordadas, incluidas sus dependencias escalares.
 - Funcionan conversiones y acumulaciones de precisión mixta con sus reglas
@@ -1133,7 +1160,7 @@ exactos. Añadir una familia no autoriza automáticamente todas sus variantes.
 | Comparación y conversión FP | `vmfeq`, `vmfne`, `vmflt`, `vmfle`; `vfcvt.x.f.v`, `vfcvt.xu.f.v`, `vfcvt.f.x.v`, `vfcvt.f.xu.v`. | Perfiles del 4, máscaras, redondeo y flags. |
 | Reducciones FP | `vfredosum.vs`, `vfredusum.vs`, `vfredmin.vs`, `vfredmax.vs`. | Perfil numérico del 4 y ejecución colectiva del 3. |
 | Permutaciones | `vslideup`, `vslidedown`, `vrgather`. | Ejecución entre lanes y red modular. |
-| Memoria irregular | `vlse*`, `vsse*`, `vluxei*`, `vsuxei*`, para los anchos de datos/índices aprobados. | VLSU concurrente, direccionamiento y faults. |
+| Memoria irregular | `vluxei*`, `vsuxei*`, para los anchos de datos/índices aprobados; reutiliza `vlse*`/`vsse*` del 4. | VLSU concurrente, direccionamiento y faults. |
 
 La notación `[u]` incluye las variantes con y sin signo, y `*` indica el
 ancho codificado de memoria. La tabla no afirma que todo nombre tenga
@@ -1206,15 +1233,15 @@ implementar todo el repertorio FP ni una biblioteca matemática completa.
 
 ### Fase 5.5. Permutaciones y memoria irregular
 
-Reutilizar `vlse64.v` de MatMul del hito 4 y ampliar el perfil de memoria
-irregular; esta fase no aplaza la carga requerida por ese benchmark.
+Reutilizar la familia strided completada en el hito 4, incluido `vlse64.v`
+de MatMul, y ampliar el perfil de memoria irregular con indexed.
 
 Añadir slides de distancia variable y gathers sobre el transporte común,
 con sus reglas de índices, rangos y solapamiento. El crossbar puede seguir
 siendo la red de referencia plana; las operaciones usan la interfaz común
 y se mantienen válidas para la configuración con clústeres del 4.
 
-Extender la generación de direcciones con stride e índices, manteniendo
+Extender la generación de direcciones con índices, manteniendo
 por separado ancho del dato y ancho del índice. No se promete cualquier
 combinación EEW/EMUL por compartir nombre de familia. El cierre exige que
 el nuevo direccionamiento respete predicación, orden, faults y control de
@@ -1318,7 +1345,7 @@ habilitan efectos jóvenes sin resolver las garantías del comando anterior.
 | --- | --- | --- |
 | Cierre del 2 | Repertorio del hito y Pathfinder, recursos y perfiles, identidad, propiedad, límites y observabilidad. | Contratos a ampliar para rangos, predicación, escalares, colectivos y memoria concurrente. |
 | Cierre del 3 | AXPY con el subconjunto FP64/FMA, chaining, memoria concurrente, progreso escalar, predicación, colectivos, publicación segura y fronteras para clústeres. | Ampliación de perfiles numéricos del 4, repertorio del 5 y experimento de clústeres. |
-| Cierre del 4 | MatMul con strided y movimientos auxiliares, perfiles FP, precisión mixta, calidad numérica y evaluación temporal/de clústeres. | Formas adicionales, integración BLIS y CSA/HCA del 5; alcance real de los experimentos FP8/FP4. |
+| Cierre del 4 | MatMul con strided y movimientos auxiliares, familia strided completa, perfiles FP, precisión mixta, calidad numérica y evaluación temporal/de clústeres. | Formas adicionales, integración BLIS y CSA/HCA del 5; alcance real de los experimentos FP8/FP4. |
 | Cierre del 5 | Repertorio y kernels acordados con evidencia por forma, formato y ancho. | Instrucciones no cubiertas, restricciones y experimentos posteriores. |
 
 ## Fuera del compromiso de estos hitos

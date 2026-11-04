@@ -31,7 +31,7 @@ estudia; una distribución de tiempos no sustituye comprobar sus resultados.
 | Familia | Qué concretar en la ficha | Disponibilidad prevista |
 | --- | --- | --- |
 | Loads/stores unit-stride | Ancho, alineamiento, longitud, límites de bloque/línea/página y volumen de datos. | 2; concurrencia y predicación en 3. |
-| Loads/stores strided | Strides legales elegidos, patrón de direcciones y presión sobre memoria. | `vlse64.v` para MatMul en 4; ampliación del perfil en 5. |
+| Loads/stores strided | Strides legales elegidos, patrón de direcciones y presión sobre memoria. | `vlse64.v` para MatMul y familia `vlse*`/`vsse*` completa en 4. |
 | Loads/stores indexed | Ancho de índice y de dato por separado, distribución, repetición de direcciones y forma ordenada/no ordenada requerida. | 5. |
 | Gathers y permutaciones | Patrón local y entre lanes/clústeres; separar gather de registros de carga indexed desde memoria. | Ambas slide1 en 2; gathers y otras permutaciones en 5. |
 | Máscaras | Lectura y producción de máscaras, densidad/patrón, escrituras parciales y operaciones auxiliares. | Predicación en 3; comparación FP seleccionada en 4; resto del perfil en 5. |
@@ -205,7 +205,7 @@ hardware real necesita una correspondencia de configuración explícita.
 
 | Hito | Papel de los benchmarks |
 | --- | --- |
-| 2 | Micro-kernels del soporte de este hito y Pathfinder: unit-stride, anchos, ALU/FP32, slide1, mínimo entero y transferencias completas del perfil. No exige repetir el baseline cerrado. |
+| 2 | Micro-kernels del soporte de este hito y Pathfinder: unit-stride, anchos, ALU/FP32, slide1 y mínimo entero de 32 bits. Pathfinder exige sólo los 7 tipos RVV de su kernel. No exige repetir el baseline cerrado. |
 | 3 | Predicación, chaining y memoria concurrente; AXPY con el subconjunto FP64/FMA anticipado; infraestructura colectiva y fronteras preparadas para clústeres. |
 | 4 | Precisión mixta/widening y reducciones FP; MatMul con strided y movimientos auxiliares; primeros kernels BLIS; referencias por etapas CSA/HCA; comparación plana/dos clústeres. |
 | 5 | Completar micro-kernels del perfil, integración BLIS e integración de CSA/HCA con las dependencias de cada ROI resueltas. |
@@ -227,49 +227,82 @@ no declara estos binarios ejecutables ni autoriza cambios de código o pruebas.
 Se mantienen los objetivos y la numeración de las fases. Estas cargas se
 añaden a la campaña; no sustituyen los micro-kernels, BLIS ni CSA/HCA.
 
+La revisión documental aprobada el 4 de noviembre de 2026 limita el
+adelanto a los tipos RVV presentes en cada kernel: **7 en Pathfinder,
+4 en AXPY y 9 en MatMul**. La copia inicial, la inicialización y la
+verificación se mantienen escalares mediante las opciones de compilación
+indicadas abajo. Así se reduce el repertorio necesario para estas cargas
+sin ampliar las operaciones implementadas por la VPU.
+
 Atiende O1, O2 y O6: obtener demanda de aplicaciones reales sobre ALU/FPU,
 VRF, memoria y red, y referencias numéricas y temporales trazables. Prepara
 O3; O4/O5 requieren escenarios y calibración tecnológica posteriores.
 
-El inventario procede del recuento estático aportado por el equipo sobre
-`.text`: cada mnemónico se cuenta una vez, distinguiendo formas y conservando
-alias. No se han reinspeccionado los dumps ni obtenido frecuencias dinámicas
-en esta revisión. Las rutas originales identifican su procedencia; no son
+El inventario procede del análisis estático aportado por el equipo, que
+distingue instrucciones del kernel y de su preparación/verificación. Cada
+mnemónico se cuenta una vez, distinguiendo formas y conservando alias;
+los recuentos son tipos de instrucciones, no frecuencias dinámicas.
+No se han reinspeccionado los dumps ni recompilado los benchmarks en esta
+revisión. Las rutas originales identifican su procedencia; no son
 dependencias portables del repositorio.
 
-| Cierre | Benchmark y procedencia comunicada | Inventario RVV completo comunicado | Ampliación y encaje |
+| Cierre | Benchmark y procedencia comunicada | Perfil RVV exigido: instrucciones del kernel | Ampliación y encaje |
 | --- | --- | --- | --- |
-| 2 | Pathfinder, `_pathfinder/bin/pathfinder_vector.dump` | `vsetvli`, `vle32.v`, `vse32.v`, `vslide1up.vx`, `vslide1down.vx`, `vmin.vv`, `vadd.vv`, `vl2re32.v`, `vs2r.v` (9). | Añadir mínimo entero de 32 bits y transferencias completas de dos registros sobre ALU, VRF y VLSU; reutilizar memoria y slides del hito. Buen encaje con sus recursos. |
-| 3 | AXPY, `_axpy/bin/axpy_vector.dump` | `vsetvli`, `vle64.v`, `vse64.v`, `vfmacc.vf`, `vfmv.v.f`, `vs2r.v` (6). | Anticipar del 4 exclusivamente FP64 y las formas FMA/movimiento necesarias, reutilizando memoria de 64 bits y `vs2r.v`. Adelanto deliberado para estudiar memoria/cálculo y chaining. |
-| 4 | MatMul, `_matmul/bin/matmul_vector.dump` | `vsetvli`, `vsetivli`, `vle64.v`, `vlse64.v`, `vse64.v`, `vfmacc.vv`, `vfredosum.vs`, `vmv.v.i`, `vmv1r.v` (9). | Reutilizar FP64 del 3 y completar FMA/reducción del 4; anticipar `vlse64.v` y movimientos auxiliares del 5. Cerrar un caso científico sin adelantar toda la memoria irregular. |
+| 2 | Pathfinder, `_pathfinder/bin/pathfinder_vector.dump` | `vsetvli`, `vle32.v`, `vse32.v`, `vslide1up.vx`, `vslide1down.vx`, `vmin.vv`, `vadd.vv` (7). | Añadir mínimo entero con signo de 32 bits en ALU; reutilizar memoria, VRF y slides del hito. La copia inicial es escalar. |
+| 3 | AXPY, `_axpy/bin/axpy_vector.dump` | `vsetvli`, `vle64.v`, `vse64.v`, `vfmacc.vf` (4). | Anticipar del 4 exclusivamente `vfmacc.vf` FP64 y reutilizar memoria de 64 bits para estudiar memoria/cálculo y chaining. La inicialización es escalar. |
+| 4 | MatMul, `_matmul/bin/matmul_vector.dump` | `vsetvli`, `vsetivli`, `vle64.v`, `vse64.v`, `vlse64.v`, `vfmacc.vv`, `vfredosum.vs`, `vmv.v.i`, `vmv1r.v` (9). | Reutilizar FP64 del 3 y completar FMA/reducción del 4; incorporar `vlse64.v` y movimientos auxiliares del kernel. La verificación es escalar. |
 
 Los dumps se comunicaron bajo
-`/home/dani/riscv-vectorized-benchmark-suite/`. En Pathfinder las dos
-transferencias completas corresponden a la copia inicial. En AXPY,
-`vfmv.v.f` y `vs2r.v` aparecen en `init_vector`; los otros cuatro, en
-`axpy_vector`. En MatMul los nueve aparecen en `matrixmul_intrinsics`.
-La inicialización también debe poder ejecutarse: excluirla de la ROI de
-medida no elimina sus dependencias funcionales. MatMul no se identifica
-automáticamente con un kernel de BLIS por realizar multiplicación matricial.
+`/home/dani/riscv-vectorized-benchmark-suite/`. El equipo sitúa el kernel
+de AXPY en `axpy_vector` y el de MatMul en `matrixmul_intrinsics`.
+MatMul no se identifica automáticamente con un kernel de BLIS por realizar
+multiplicación matricial.
+
+**Instrucciones exteriores y opciones de compilación.**
+
+La compilación acordada para los tres benchmarks usa
+`-O2 -fno-vectorize -fno-slp-vectorize`, junto con las opciones de destino
+que registre cada ficha. Según el análisis comunicado, estas opciones
+eliminan la vectorización automática exterior y conservan las instrucciones
+explícitas del kernel:
+
+| Benchmark | Instrucciones RVV comunicadas fuera del kernel | Resultado con las opciones acordadas |
+| --- | --- | --- |
+| Pathfinder | `vl2re32.v`, `vs2r.v`. | Copia inicial escalar; desaparecen ambos tipos. Quedan los 7 del kernel. |
+| AXPY | `vsetvli`, `vfmv.v.f`, `vs2r.v`, en `init_vector`. | Inicialización escalar; `vsetvli` permanece donde lo requiere el kernel. Quedan 4 tipos. |
+| MatMul | `vsetvli`, `vsetivli`, `vle64.v`, `vmv1r.v`, `vmv.v.x`, `vmv.x.s`, `vmfne.vv`, `vmsne.vi`, `vmand.mm`, `vmandn.mm`, `vmor.mm`, `vmxor.mm`. | Verificación escalar; las instrucciones compartidas permanecen donde las requiere el kernel. Quedan 9 tipos. |
+
+La preparación y verificación siguen formando parte del programa ejecutable,
+aunque queden fuera de la ROI de medida. Se eliminan sus dependencias RVV
+mediante compilación escalar; excluirlas de la ROI por sí solo no bastaría.
+Por ello, `vl2re32.v`/`vs2r.v`, `vfmv.v.f` y los auxiliares exclusivos de
+verificación de MatMul dejan de ser requisitos de este adelanto. Esto no
+excluye su selección posterior para otras cargas.
+
+Antes de declarar ejecutable cada benchmark, registrar versión del
+compilador, opciones completas y desensamblado del binario final, y comprobar
+que la preparación/verificación es escalar y que el perfil RVV se ajusta a
+la tabla del kernel. No se atribuye esa comprobación a esta revisión.
 
 **Integración por hito y responsabilidades.**
 
 - **Hito 2:** las fases 2.6--2.7 aportan ALU y slides. La 2.8 integra
-  `vmin.vv` de 32 bits, `vl2re32.v` y `vs2r.v`, con comandos semánticos,
-  geometría, dependencias por grupos, recursos finitos, faults y drain.
-  Las transferencias completas usan su longitud efectiva propia; no se
-  limitan al `vl` de una carga/store ordinaria. Se conserva memoria barrera,
-  una instrucción de memoria, un bloque y un paquete físico activos.
+  `vmin.vv` con signo de 32 bits, con comandos semánticos, dependencias por
+  grupos y recursos finitos. Reutiliza memoria unit-stride y conserva sus
+  garantías de faults y drain, memoria barrera, una instrucción de memoria,
+  un bloque y un paquete físico activos. La copia inicial es escalar.
 - **Hito 3:** 3.1 define fuentes FP y lectura del destino acumulador;
   3.3--3.5 integran sus dependencias y progreso con memoria. La 3.8 cierra
-  AXPY con `vfmacc.vf` y `vfmv.v.f` FP64. Minor captura el escalar FP y el
+  AXPY con `vfmacc.vf` FP64. Minor captura el escalar FP y el
   contexto; FPU/VRF reservan operandos y resultado; los flags vuelven en la
   finalización y Minor los aplica al retirar. No se adelanta todo FP64,
   precisión mixta ni otras formas FMA del 4.
 - **Hito 4:** 4.1 fija el perfil de MatMul; 4.3--4.4 integran
   `vfmacc.vv` y `vfredosum.vs` FP64 con el transporte colectivo de 3.6.
   La 4.5 incorpora `vlse64.v`, `vmv.v.i` y `vmv1r.v` como dependencias
-  auxiliares; la 4.8 reúne ejecución y evidencia. Minor conserva base,
+  del kernel. Independientemente del perfil mínimo de MatMul, se conserva
+  la ampliación aprobada de la familia strided `vlse*`/`vsse*` en el 4.
+  La 4.8 reúne ejecución y evidencia. Minor conserva base,
   stride e inmediato capturados; VLSU calcula direcciones y VRF conserva
   fuentes/destinos. `vsetvli`/`vsetivli` permanecen en CPU. El 5 reutiliza
   estas formas y amplía las restantes, sin aplazar MatMul a su cierre.
@@ -279,10 +312,9 @@ automáticamente con un kernel de BLIS por realizar multiplicación matricial.
 Referencia normativa: RVV 1.0, [manual oficial, edición 20240411][rvv].
 Secciones consultadas para este reparto: *Configuration-Setting
 Instructions*, *Vector Integer Min/Max Instructions*, *Vector Slide1up*,
-*Vector Slide1down Instruction*, *Vector Load/Store Whole Register
-Instructions*, *Vector Single-Width Floating-Point Fused Multiply-Add
-Instructions*, *Vector Floating-Point Move Instruction*, *Vector Strided
-Instructions*, *Vector Ordered Single-Width Floating-Point Sum Reduction*,
+*Vector Slide1down Instruction*, *Vector Single-Width Floating-Point Fused
+Multiply-Add Instructions*, *Vector Strided Instructions*,
+*Vector Ordered Single-Width Floating-Point Sum Reduction*,
 *Vector Integer Move Instructions* y *Whole Vector Register Move*.
 FMA conserva la fusión; la reducción conserva el orden de elementos.
 

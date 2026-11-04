@@ -5,9 +5,13 @@ Estado: diseño propuesto y plan de trabajo. Revisión documental aprobada el
 
 Ampliación documental aprobada el 3 de noviembre de 2026: Pathfinder al
 cierre del hito 2, AXPY al del 3 y MatMul al del 4. Para este hito se añade
-en 2.8 `vmin.vv` de 32 bits, `vl2re32.v` y `vs2r.v`, sobre los recursos
-anteriores. El [plan de benchmarks][benchmarks] fija inventario y límites;
-las entregas de fases ya registradas conservan su estado y evidencia.
+en 2.8 `vmin.vv` con signo de 32 bits sobre los recursos anteriores.
+La revisión documental aprobada el 4 de noviembre de 2026 limita Pathfinder
+a los 7 tipos RVV de su kernel y mantiene escalar la copia inicial con
+`-O2 -fno-vectorize -fno-slp-vectorize`. Las transferencias completas
+dejan de ser requisitos del adelanto. El [plan de benchmarks][benchmarks]
+fija inventario y límites; las entregas de fases ya registradas conservan
+su estado y evidencia.
 
 El equipo da por comprobado y cerrado el baseline del hito 1. El trabajo
 pendiente se organiza en ocho fases, sin repetir su comprobación. La FPU se
@@ -1552,15 +1556,19 @@ del hito y la siguiente ampliación sean revisables. Se parte de las matrices,
 fichas y métricas mantenidas en cada fase. El adelanto aprobado añade aquí
 el subconjunto de Pathfinder que falta respecto a 1--7.
 
-**Ampliación para Pathfinder.** Incorporar `vmin.vv` de 32 bits en ALU y
-`vl2re32.v`/`vs2r.v` en VLSU/VRF con su geometría y longitud efectiva
-propias. Minor traduce operaciones, captura configuración/base y conserva
-la retirada; el backend recibe semántica y conserva identidades y reservas.
-Las transferencias completas mantienen memoria barrera, un comando de memoria,
-un bloque y un paquete físico activos. La propuesta de código concretará
-operandos, grupos, codificaciones, `vstart`, faults y drain según RVV.
-El cierre incluye la copia inicial y el cálculo de Pathfinder con resultado
-contrastado; no incorpora otros anchos de mínimo ni familias completas.
+**Ampliación para Pathfinder.** Incorporar `vmin.vv` con signo de 32 bits
+en ALU y reutilizar memoria unit-stride y slides. El perfil exige sólo
+`vsetvli`, `vle32.v`, `vse32.v`, `vslide1up.vx`, `vslide1down.vx`,
+`vmin.vv` y `vadd.vv`. Minor traduce operaciones, captura configuración y
+operandos y conserva la retirada; el backend recibe semántica y conserva
+identidades y reservas. Memoria mantiene sus barreras, un comando de
+memoria, un bloque y un paquete físico activos. La propuesta de código
+concretará operandos, grupos, codificaciones, `vstart`, faults y drain
+según RVV. El cierre incluye la copia inicial escalar y el cálculo de
+Pathfinder con resultado contrastado. Se registrarán toolchain, opciones
+y desensamblado final para comprobar ese perfil; `vl2re32.v`/`vs2r.v`
+dejan de ser requisitos. No incorpora otros anchos de mínimo ni familias
+completas.
 
 **Trabajo que realizar.**
 
@@ -1788,8 +1796,9 @@ pendiente. Los criterios siguientes se refieren a las ampliaciones del hito 2.
     y se identifica su ampliación para las familias futuras. La entrega al
     hito 3 distingue contratos preparados de capacidades activas; no exige
     máscaras, chaining ni varias instrucciones de memoria en este cierre.
-16. Pathfinder ejecuta el perfil acordado, incluidas `vmin.vv` de 32 bits,
-    `vl2re32.v` y `vs2r.v`, con resultado contrastado y recursos finitos.
+16. Pathfinder ejecuta los 7 tipos RVV del kernel, incluido `vmin.vv` con
+    signo de 32 bits, con copia inicial escalar, resultado contrastado y
+    recursos finitos. Se registran toolchain, opciones y desensamblado final.
     Su evidencia distingue ejecución funcional, tráfico y comportamiento
     temporal, según la ficha y la validación que defina el equipo.
 
