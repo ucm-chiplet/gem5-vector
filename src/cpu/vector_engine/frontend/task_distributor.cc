@@ -41,7 +41,7 @@ namespace gem5::vector_engine
 
 TaskDistributor::TaskDistributor(ClockedObject &owner,
                                  const AddressMapper &mapper,
-                                 LaneSender send_lane,
+                                 uint32_t max_tasks, LaneSender send_lane,
                                  CompletionSender send_completion)
     : stats(&owner, "distributor", "arithmetic tasks"),
       fragmentsCreated(&stats, "fragmentsCreated",
@@ -59,10 +59,13 @@ TaskDistributor::TaskDistributor(ClockedObject &owner,
       mapper(mapper),
       sendLane(std::move(send_lane)),
       sendCompletion(std::move(send_completion)),
+      maxTasks(max_tasks),
       progressEvent([this] { evaluate(); }, owner.name() + ".task_distributor")
 {
     fatal_if(!sendLane || !sendCompletion,
              "TaskDistributor requires lane and completion senders");
+    fatal_if(maxTasks == 0, "TaskDistributor requires task capacity");
+    tasks.reserve(maxTasks);
 }
 
 TaskDistributor::~TaskDistributor()
@@ -213,62 +216,68 @@ TaskDistributor::makeDistribution(const ArithmeticTask &task) const
 TransferResult
 TaskDistributor::acceptTask(const ArithmeticTask &task)
 {
-    if (active) {
+    if (tasks.size() >= maxTasks) {
         ++stats.retries;
         return TransferResult::Retry;
     }
 
     validateTask(task);
-    active = makeDistribution(task);
-    fragmentsCreated += active->fragments.size();
+    for (const auto &state : tasks) {
+        panic_if(state.task.task.key == task.task.key,
+                 "Duplicate arithmetic task in TaskDistributor");
+    }
+    tasks.push_back(makeDistribution(task));
+    fragmentsCreated += tasks.back().fragments.size();
     stats.accept(task.task.elements.elementCount, task.destinationRange.size);
     wakeup();
     return TransferResult::Accepted;
 }
 
 bool
-TaskDistributor::hasPending() const
+TaskDistributor::hasPending(const DistributionState &state)
 {
-    return active &&
-           std::any_of(active->pendingByLane.begin(),
-                       active->pendingByLane.end(),
+    return std::any_of(state.pendingByLane.begin(), state.pendingByLane.end(),
                        [](const auto &queue) { return !queue.empty(); });
+}
+
+bool
+TaskDistributor::needsProgress() const
+{
+    // Hay trabajo propio si alguna tarea puede cerrarse o aún tiene
+    // fragmentos por enviar. Los fragmentos aceptados progresan en la lane.
+    return std::any_of(tasks.begin(), tasks.end(), [](const auto &state) {
+        return state.unfinishedFragments == 0 || hasPending(state);
+    });
 }
 
 void
 TaskDistributor::wakeup()
 {
-    if (!active || progressEvent.scheduled()) {
-        return;
-    }
-    if (active->unfinishedFragments != 0 && !hasPending()) {
+    if (progressEvent.scheduled() || !needsProgress()) {
         return;
     }
     owner.schedule(progressEvent, owner.clockEdge(Cycles(1)));
 }
 
 void
-TaskDistributor::evaluate()
+TaskDistributor::sendToLane(std::size_t lane)
 {
-    if (!active) {
-        return;
-    }
-    if (active->unfinishedFragments == 0) {
-        finish();
-        return;
-    }
-
-    // Como máximo un intento por lane en esta evaluación funcional.
-    for (auto &pending : active->pendingByLane) {
+    // Elegir la tarea más antigua con fragmentos para esta lane. Las más
+    // jóvenes esperan aunque ésta reciba Retry: la lane recibe las tareas
+    // en orden de inicio y nunca le llega un fragmento fuera de orden.
+    for (auto &state : tasks) {
+        auto &pending = state.pendingByLane[lane];
         if (pending.empty()) {
             continue;
         }
 
-        auto &fragment = active->fragments[pending.front()];
+        auto &fragment = state.fragments[pending.front()];
         panic_if(fragment.phase != FragmentPhase::Pending,
                  "Non-pending fragment in the lane send queue");
 
         // Reservar recepción antes del callback: puede completar en él.
+        // recvCompletion no añade ni elimina tareas, así que la referencia
+        // sigue siendo válida durante la llamada.
         fragment.phase = FragmentPhase::Sending;
         switch (sendLane(fragment.task)) {
             case TransferResult::Accepted:
@@ -289,6 +298,28 @@ TaskDistributor::evaluate()
             default:
                 panic("Invalid lane transfer result");
         }
+        return;
+    }
+}
+
+void
+TaskDistributor::evaluate()
+{
+    // Cerrar las tareas terminadas, en cualquier orden. finish() elimina la
+    // entrada, de modo que el índice ya apunta a la siguiente.
+    std::size_t i = 0;
+    while (i < tasks.size()) {
+        if (tasks[i].unfinishedFragments == 0) {
+            finish(i);
+        } else {
+            ++i;
+        }
+    }
+
+    // Como máximo un intento por lane en cada evaluación.
+    const auto num_lanes = mapper.geometry().numLanes;
+    for (std::size_t lane = 0; lane < num_lanes; ++lane) {
+        sendToLane(lane);
     }
 
     // recvCompletion sólo registra estado; el cierre ocurre en otro evento.
@@ -298,13 +329,19 @@ TaskDistributor::evaluate()
 void
 TaskDistributor::recvCompletion(const LaneCompletion &completion)
 {
-    panic_if(!active || !completion.key.valid(),
-             "Lane completion without an active task or valid identity");
-    panic_if(completion.key.task != active->task.task.key ||
-                 completion.key.fragmentId >= active->fragments.size(),
+    panic_if(!completion.key.valid(),
+             "Lane completion without a valid identity");
+    DistributionState *state = nullptr;
+    for (auto &candidate : tasks) {
+        if (candidate.task.task.key == completion.key.task) {
+            state = &candidate;
+            break;
+        }
+    }
+    panic_if(!state || completion.key.fragmentId >= state->fragments.size(),
              "Lane completion does not match an active fragment");
 
-    auto &fragment = active->fragments[completion.key.fragmentId];
+    auto &fragment = state->fragments[completion.key.fragmentId];
     panic_if(completion.key != fragment.task.key ||
                  (fragment.phase != FragmentPhase::Sending &&
                   fragment.phase != FragmentPhase::Accepted),
@@ -314,28 +351,29 @@ TaskDistributor::recvCompletion(const LaneCompletion &completion)
     panic_if(!validFpFlags(completion.fpFlags) ||
                  (!fragment.task.fpContext && completion.fpFlags != 0),
              "Lane completion has invalid or unexpected FP flags");
-    panic_if(active->unfinishedFragments == 0,
+    panic_if(state->unfinishedFragments == 0,
              "Lane fragment completion accounting underflow");
 
     ++fragmentsCompleted;
     fragment.phase = FragmentPhase::Completed;
-    active->fpFlags |= completion.fpFlags;
-    --active->unfinishedFragments;
+    state->fpFlags |= completion.fpFlags;
+    --state->unfinishedFragments;
     wakeup();
 }
 
 void
-TaskDistributor::finish()
+TaskDistributor::finish(std::size_t index)
 {
-    panic_if(!active || active->unfinishedFragments != 0 || hasPending(),
+    panic_if(index >= tasks.size() || tasks[index].unfinishedFragments != 0 ||
+                 hasPending(tasks[index]),
              "Cannot complete an unfinished arithmetic task");
-    const UnitCompletion completion{active->task.task.key,
+    const UnitCompletion completion{tasks[index].task.task.key,
                                     UnitCompletionStatus::Success,
-                                    std::nullopt, active->fpFlags};
+                                    std::nullopt, tasks[index].fpFlags};
 
     // Liberar antes del callback permite admitir la siguiente tarea.
     stats.complete();
-    active.reset();
+    tasks.erase(tasks.begin() + index);
     sendCompletion(completion);
 }
 

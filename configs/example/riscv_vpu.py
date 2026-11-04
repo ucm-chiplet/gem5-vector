@@ -50,12 +50,34 @@ from m5.objects import (
     VoltageDomain,
 )
 from m5.objects.configuration import (
+    LaneConfiguration,
     VpuConfiguration,
     VrfConfiguration,
 )
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--no-offload", action="store_true")
+# Concurrencia de la VPU (fase 5 del hito 2). Los valores por defecto
+# coinciden con VpuConfiguration; max_active_commands no puede superar
+# command_queue_entries.
+parser.add_argument(
+    "--vpu-command-queue-entries",
+    type=int,
+    default=VpuConfiguration.command_queue_entries,
+    help="VPU command capacity: reservations, pending and active commands",
+)
+parser.add_argument(
+    "--vpu-max-active-commands",
+    type=int,
+    default=VpuConfiguration.max_active_commands,
+    help="Independent VPU commands that may execute at the same time",
+)
+parser.add_argument(
+    "--vpu-lane-task-entries",
+    type=int,
+    default=LaneConfiguration.task_entries,
+    help="Fragment contexts per lane, shared by active commands",
+)
 parser.add_argument("binary", type=Path, help="RV64 SE executable")
 parser.add_argument("arguments", nargs=argparse.REMAINDER)
 args = parser.parse_args()
@@ -82,7 +104,12 @@ system.memory.port = system.membus.mem_side_ports
 
 if not args.no_offload:
     system.cpu.vectorEngine = VectorEngine.from_configuration(
-        VpuConfiguration(vrf=VrfConfiguration(vlen_bytes=32))
+        VpuConfiguration(
+            vrf=VrfConfiguration(vlen_bytes=32),
+            lane=LaneConfiguration(task_entries=args.vpu_lane_task_entries),
+            command_queue_entries=args.vpu_command_queue_entries,
+            max_active_commands=args.vpu_max_active_commands,
+        )
     )
     system.cpu.vectorEngine.mem_side = system.membus.cpu_side_ports
 

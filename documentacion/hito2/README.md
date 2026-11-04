@@ -14,13 +14,16 @@ documenta su implementación y límites. La [entrega VPU de fase 2](
 finitos y temporizados, arbitraje del VRF y varios fragmentos de una misma
 instrucción en curso. La [entrega VPU de fase 4](
 <Fase 4 - Memoria unit-stride por bloques.md>) sirve la memoria unit-stride
-por bloques con un bloque activo y accesos al VRF por palabra. Estas
+por bloques con un bloque activo y accesos al VRF por palabra. La [entrega
+VPU de fase 5](<Fase 5 - Concurrencia en la VPU.md>) admite varios comandos
+aritméticos independientes activos, con scoreboard conservador; Minor aún
+despacha uno cada vez, de modo que su parte CPU queda pendiente. Estas
 entregas mantienen las responsabilidades CPU y no acreditan por sí solas
 ejecución funcional de toda la matriz ni cierre de integración CPU--VPU.
 El resto del diseño conserva su estado de propuesta.
 El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
 para repetirlo. El diseño y el diagrama describen la organización objetivo;
-las entregas de fases 1--4 distinguen contratos, backend implementado,
+las entregas de fases 1--5 distinguen contratos, backend implementado,
 integración CPU y comprobaciones de los recursos y operaciones pendientes.
 
 Su papel dentro de VAMPIRE es aportar recursos finitos y observabilidad
@@ -36,6 +39,9 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   reservas, arbitraje, temporización, estadísticas y límites de evidencia.
 - [Entrega VPU de fase 4](<Fase 4 - Memoria unit-stride por bloques.md>):
   formación de bloques, faults, reparto al VRF, parámetros y métricas.
+- [Entrega VPU de fase 5](<Fase 5 - Concurrencia en la VPU.md>): comandos
+  activos, scoreboard, reglas de inicio, valores por defecto y pendientes
+  de Minor.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):
   orden, tareas, interfaces, resultados y criterios de cierre por fase.
 - [Plan de evolución: hitos 2 a 5](<../Plan de evolución - Hitos 2 a 5.md>):

@@ -29,14 +29,17 @@
 #ifndef __CPU_VECTOR_ENGINE_FRONTEND_ARA_SEQUENCER_HH__
 #define __CPU_VECTOR_ENGINE_FRONTEND_ARA_SEQUENCER_HH__
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <variant>
+#include <vector>
 
 #include "cpu/vector_engine/common/backend_task.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
 #include "cpu/vector_engine/common/unit_completion.hh"
 #include "cpu/vector_engine/frontend/command_queue.hh"
+#include "cpu/vector_engine/frontend/vector_scoreboard.hh"
 #include "sim/clocked_object.hh"
 #include "sim/eventq.hh"
 
@@ -44,8 +47,8 @@ namespace gem5::vector_engine::detail
 {
 
 /**
- * AraSequencer conserva aquí el comando que está ejecutando y su tarea.
- * En la versión inicial sólo puede haber una entrada activa.
+ * AraSequencer conserva aquí cada comando iniciado y su tarea hasta
+ * entregar su finalización. Puede haber hasta max_active_commands.
  */
 struct ActiveCommandState
 {
@@ -69,8 +72,30 @@ namespace gem5::vector_engine
 {
 
 /**
- * Ejecuta una cabeza FIFO cada vez y conserva su crédito hasta finalizar.
+ * Inicia en orden los comandos de CommandQueue y mantiene varios activos.
  * Recibe comandos ya validados estructuralmente y admitidos por la cola.
+ *
+ * Sólo la cabeza de pendientes puede iniciar, sin bypass. Antes de hacerlo
+ * se comprueban, en este orden de diagnóstico no excluyente:
+ *
+ * - capacidad: hay menos de max_active_commands activos;
+ * - barrera de memoria: una carga o store sólo empieza sin otros activos,
+ *   y nada empieza mientras haya una carga o store activa;
+ * - aislamiento: un comando con vstart != 0 se ejecuta solo;
+ * - dependencias: VectorScoreboard no detecta RAW, WAR ni WAW con los
+ *   comandos activos (todos anteriores, porque el inicio es en orden).
+ *
+ * Al iniciar, el comando reserva sus registros y pasa a iniciado en la
+ * cola, que conserva su crédito. Las tareas se envían en orden de inicio;
+ * una tarea en Retry retiene el envío de las posteriores. Las unidades
+ * pueden terminar desordenadas: cada finalización se asocia por TaskKey y
+ * produce un único completed por comando. Al cerrar un comando se libera
+ * su reserva del scoreboard, se notifica a la CPU y después se devuelve
+ * su crédito a la cola. No hay chaining: la reserva sólo se libera cuando
+ * la unidad confirma todas sus escrituras.
+ *
+ * Se inicia como máximo un comando por ciclo, y el cierre de un comando
+ * permite iniciar otro a partir del ciclo siguiente.
  *
  * El propietario conecta los envíos a TaskDistributor y AraVLSU y llama a
  * wakeup después de dispatch. Las unidades copian la tarea al aceptarla y
@@ -89,8 +114,8 @@ class AraSequencer
 
     AraSequencer(ClockedObject &owner, CommandQueue &queue,
                  CpuCompletionEndpoint &completion_endpoint,
-                 uint32_t vlen_bytes, ArithmeticSender send_arithmetic,
-                 MemorySender send_memory);
+                 uint32_t vlen_bytes, uint32_t max_active_commands,
+                 ArithmeticSender send_arithmetic, MemorySender send_memory);
 
     ~AraSequencer();
 
@@ -107,34 +132,81 @@ class AraSequencer
     bool
     isIdle() const
     {
-        return !active && !progressEvent.scheduled();
+        return active.empty() && !progressEvent.scheduled();
     }
 
   private:
     using BackendTask = std::variant<ArithmeticTask, MemoryTask>;
+
+    /** Causas, no excluyentes, por las que la cabeza no puede iniciar. */
+    struct StartBlockers
+    {
+        bool capacity = false;
+        bool memoryBarrier = false;
+        bool isolation = false;
+        HazardSet hazards;
+
+        bool
+        any() const
+        {
+            return capacity || memoryBarrier || isolation || hazards.any();
+        }
+    };
+
+    /**
+     * Espera de la cabeza actual. Se reparte entre las causas vigentes en
+     * cada evaluación; el intervalo se cierra al iniciar o cambiar causas.
+     */
+    struct HeadWait
+    {
+        CommandKey command;
+        Tick since = 0;
+        StartBlockers blockers;
+    };
 
     ModuleStats stats;
     statistics::Scalar arithmeticCommands;
     statistics::Scalar loadCommands;
     statistics::Scalar storeCommands;
     statistics::Scalar emptyCommands;
+    statistics::Scalar overlappedStarts;
+    statistics::Scalar multiActiveTicks;
+    statistics::Scalar capacityWaitTicks;
+    statistics::Scalar memoryBarrierWaitTicks;
+    statistics::Scalar isolationWaitTicks;
+    statistics::Scalar rawWaitTicks;
+    statistics::Scalar warWaitTicks;
+    statistics::Scalar wawWaitTicks;
     ClockedObject &owner;
     CommandQueue &queue;
     CpuCompletionEndpoint &completionEndpoint;
 
     // Mismo VLEN inmutable que recibe CommandQueue.
     const uint32_t vlenBytes;
+    const uint32_t maxActiveCommands;
 
     ArithmeticSender sendArithmetic;
     MemorySender sendMemory;
 
-    std::optional<detail::ActiveCommandState> active;
+    // Comandos iniciados, en orden de inicio (de más antiguo a más joven).
+    std::vector<detail::ActiveCommandState> active;
+    VectorScoreboard scoreboard;
+    std::optional<HeadWait> headWait;
+    Tick lastOccupancyChange = 0;
     EventFunctionWrapper progressEvent;
 
     void evaluate();
     BackendTask makeTask(const VectorCommand &command) const;
-    const UnitTask &currentTask() const;
-    void finish();
+    static const UnitTask &taskOf(const detail::ActiveCommandState &state);
+    static bool isMemory(const VectorCommand &command);
+    StartBlockers blockersFor(const VectorCommand &command) const;
+    void accountHeadWait(const std::optional<VectorCommand> &head,
+                         const StartBlockers &blockers);
+    void noteOccupancyChange();
+    void start(const VectorCommand &command);
+    bool sendPendingTasks();
+    bool finishCompleted();
+    void finish(std::size_t index);
 };
 
 } // namespace gem5::vector_engine

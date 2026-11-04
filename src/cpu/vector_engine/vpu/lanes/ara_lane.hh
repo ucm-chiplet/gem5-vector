@@ -19,8 +19,14 @@ namespace gem5::vector_engine
 {
 
 /**
- * Lane con contextos acotados para fragmentos de una misma tarea aritmética.
- * Puede solapar lectura, cálculo y writeback sin admitir otra instrucción.
+ * Lane con contextos acotados para fragmentos de tareas aritméticas.
+ * Puede solapar lectura, cálculo y writeback de fragmentos de varias
+ * instrucciones independientes; el scoreboard del sequencer garantiza que
+ * no comparten registros con riesgo RAW, WAR ni WAW.
+ *
+ * Los contextos se ordenan por admisión. El distribuidor entrega en cada
+ * lane las tareas en orden de inicio y los fragmentos de cada tarea en
+ * orden, así que la admisión coincide con la antigüedad del fragmento.
  * Reserva conjuntamente ambos buffers de operandos antes de publicar las
  * lecturas y reserva salida antes de enviar a una FU. El escalar capturado
  * ocupa su buffer replicado, pero no solicita un puerto de lectura al VRF.
@@ -31,6 +37,9 @@ namespace gem5::vector_engine
  * Las fuentes de cada fragmento se leen antes de escribir su destino; los
  * rangos de otros fragmentos de la tarea son disjuntos, incluso con alias
  * legal de igual ancho. No se introduce chaining ni predicación.
+ *
+ * El accessId de cada acceso al VRF es fragmentId * 3 + papel, único
+ * dentro de su TaskKey y de esta lane sin necesidad de contadores.
  *
  * Propietario, mapper, LRF y receptor sobreviven al módulo hasta isIdle().
  * Las respuestas se consumen sin rechazo porque su recepción está reservada.
@@ -83,6 +92,8 @@ class AraLane
     struct LaneFragmentState
     {
         LaneTask task;
+        // Orden de admisión en esta lane; fija la prioridad de inicio.
+        uint64_t admission = 0;
         Phase phase = Phase::Prepare;
         ExecutionBundle bundle;
         bool lhsReady = false;
@@ -114,16 +125,16 @@ class AraLane
     std::vector<std::optional<LaneFragmentState>> contexts;
     uint32_t operandBundles = 0;
     uint32_t resultBundles = 0;
-    std::optional<TaskKey> accessTask;
-    VrfAccessId nextAccessId = 0;
-    LaneFragmentId lastFragmentId = InvalidLaneFragmentId;
+    uint64_t nextAdmission = 0;
     Alu alu;
     Fpu fpu;
     EventFunctionWrapper progressEvent;
 
     void validateTask(const LaneTask &task) const;
-    VrfAccess makeAccess(const TaskKey &task, const VectorRegRef &reg,
-                         const ByteRange &range);
+    static VrfAccess makeAccess(const LaneFragmentKey &fragment,
+                                AccessRole role, LaneId lane,
+                                const VectorRegRef &reg,
+                                const ByteRange &range);
     std::vector<std::size_t> orderedContexts() const;
     void prepareOperands(LaneFragmentState &state);
     void tryExecute(LaneFragmentState &state);

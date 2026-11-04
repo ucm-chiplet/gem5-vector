@@ -50,14 +50,14 @@ class VectorEngine(ClockedObject):
     )
     elen_bits = Param.UInt32(64, "Must match the connected CPU ELEN")
     max_active_commands = Param.UInt32(
-        1, "Phase 3 requires one active command"
+        4, "Commands started and not yet completed; <= command_queue_entries"
     )
     mapping_policy = Param.String("word_striped", "VRF placement policy")
     command_queue_entries = Param.UInt32(
-        1, "Command capacity including reservations and the active head"
+        4, "Command capacity: reservations, pending and active commands"
     )
     lane_task_entries = Param.UInt32(
-        1, "Fragment contexts per lane until writeback"
+        4, "Fragment contexts per lane until writeback, shared by tasks"
     )
     operand_buffer_entries_per_source = Param.UInt32(
         1, "Reserved buffers per source and lane, including replicated scalar"

@@ -30,6 +30,7 @@
 #define __CPU_VECTOR_ENGINE_FRONTEND_TASK_DISTRIBUTOR_HH__
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <optional>
@@ -46,10 +47,19 @@ namespace gem5::vector_engine
 {
 
 /**
- * Reparte una tarea aritmética activa en fragmentos contiguos por lane.
+ * Reparte tareas aritméticas activas en fragmentos contiguos por lane.
  * El propietario conecta los callbacks al sequencer y a las lanes; una
  * aceptación transfiere una copia y obliga a emitir una sola finalización.
  * Las lanes sólo responden después de confirmar sus escrituras en el VRF.
+ *
+ * Admite hasta max_tasks tareas a la vez, cada una con su estado y sus
+ * fragmentos. Las conserva en orden de llegada, que es el orden de inicio
+ * del sequencer. En cada lane sólo se intenta enviar el siguiente fragmento
+ * de la tarea más antigua que aún tenga fragmentos para ella: una tarea
+ * joven no adelanta a otra anterior en la misma lane, aunque ésta reciba
+ * Retry. Las finalizaciones se asocian por TaskKey y pueden cerrar tareas
+ * en cualquier orden. Las tareas activas no dependen entre sí, porque el
+ * scoreboard del sequencer sólo deja coexistir comandos independientes.
  *
  * Se permiten respuestas síncronas durante el envío. Los callbacks no
  * destruyen el módulo. Propietario, mapper y receptores deben sobrevivirlo;
@@ -62,7 +72,8 @@ class TaskDistributor
     using CompletionSender = std::function<void(const UnitCompletion &)>;
 
     TaskDistributor(ClockedObject &owner, const AddressMapper &mapper,
-                    LaneSender send_lane, CompletionSender send_completion);
+                    uint32_t max_tasks, LaneSender send_lane,
+                    CompletionSender send_completion);
     ~TaskDistributor();
 
     TaskDistributor(const TaskDistributor &) = delete;
@@ -78,7 +89,7 @@ class TaskDistributor
     bool
     isIdle() const
     {
-        return !active && !progressEvent.scheduled();
+        return tasks.empty() && !progressEvent.scheduled();
     }
 
   private:
@@ -117,14 +128,19 @@ class TaskDistributor
     const AddressMapper &mapper;
     LaneSender sendLane;
     CompletionSender sendCompletion;
-    std::optional<DistributionState> active;
+    const uint32_t maxTasks;
+
+    // Tareas aceptadas, de la más antigua a la más joven.
+    std::vector<DistributionState> tasks;
     EventFunctionWrapper progressEvent;
 
     void validateTask(const ArithmeticTask &task) const;
     DistributionState makeDistribution(const ArithmeticTask &task) const;
-    bool hasPending() const;
+    static bool hasPending(const DistributionState &state);
+    bool needsProgress() const;
+    void sendToLane(std::size_t lane);
     void evaluate();
-    void finish();
+    void finish(std::size_t index);
 };
 
 } // namespace gem5::vector_engine

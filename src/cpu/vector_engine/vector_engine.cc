@@ -110,10 +110,12 @@ VectorEngine::makeConfiguration(const Params &params)
     const auto bytes = config.vrf.vlenBytes;
     fatal_if(bytes < 4 || bytes > 8192 || (bytes & (bytes - 1)),
              "VectorEngine requires a power-of-two VLEN of 4..8192 bytes");
-    fatal_if(!config.commandQueueEntries || config.maxActiveCommands != 1 ||
+    // Cada comando activo conserva su crédito en la cola: no puede haber
+    // más activos que entradas. La fase 5 admite varios activos.
+    fatal_if(!config.commandQueueEntries || !config.maxActiveCommands ||
                  config.maxActiveCommands > config.commandQueueEntries,
-             "Timed resource profile requires one active command and positive "
-             "queue");
+             "VectorEngine requires 1 <= max_active_commands <= "
+             "command_queue_entries");
     fatal_if(params.elen_bits != 32 && params.elen_bits != 64,
              "VectorEngine requires ELEN of 32 or 64 bits");
     fatal_if(uint64_t{bytes} * 8 < config.elenBits,
@@ -232,6 +234,7 @@ VectorEngine::VectorEngine(const Params &params)
 
     sequencer = std::make_unique<AraSequencer>(
         *this, *commandQueue, completion_endpoint, vpuParameters.vrf.vlenBytes,
+        vpuParameters.maxActiveCommands,
         // Entrega la tarea aritmética al distribuidor de lanes.
         [this](const ArithmeticTask &task) {
             return distributor->acceptTask(task);
@@ -239,8 +242,10 @@ VectorEngine::VectorEngine(const Params &params)
         // Entrega la tarea de carga o store a la VLSU.
         [this](const MemoryTask &task) { return vlsu->acceptTask(task); });
 
+    // Cada comando aritmético activo tiene como máximo una tarea en el
+    // distribuidor, de modo que su capacidad deriva de max_active_commands.
     distributor = std::make_unique<TaskDistributor>(
-        *this, mapper,
+        *this, mapper, vpuParameters.maxActiveCommands,
         // Envía cada fragmento a la lane indicada por la tarea.
         [this](const LaneTask &task) {
             panic_if(task.laneId >= lanes.size(),

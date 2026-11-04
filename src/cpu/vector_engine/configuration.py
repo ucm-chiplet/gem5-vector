@@ -67,7 +67,7 @@ class ExecutionConfiguration:
 
 @dataclass(frozen=True)
 class LaneConfiguration:
-    """Recursos por lane para fragmentos de una sola instrucción activa.
+    """Recursos por lane para fragmentos de las instrucciones activas.
 
     task_entries limita contextos hasta confirmar writeback. Los buffers de
     cada fuente se reservan por parejas; el escalar ocupa un RHS replicado
@@ -75,7 +75,7 @@ class LaneConfiguration:
     a ejecución hasta WriteAck. alus_per_lane permanece en uno en fase 3.
     """
 
-    task_entries: int = 1
+    task_entries: int = 4
     operand_entries_per_source: int = 1
     result_entries: int = 1
     max_bundle_bytes: int = 0
@@ -155,9 +155,12 @@ class VpuConfiguration:
     de fase 2.2. supported_sews y supported_lmuls habilitan su intersección
     con ese perfil, no todas las parejas del producto cartesiano. La fase 3
     temporiza sus recursos locales y la fase 4 agrupa la memoria unit-stride
-    en bloques, todavía con una instrucción activa y sin varias ALUs ni red.
-    LMUL usa exponentes de dos (-3 para mf8, 3 para m8). Los predeterminados
-    conservan 16/32 bits y m1; las rutas CPU se documentan por separado.
+    en bloques, sin varias ALUs ni red. La fase 5 admite hasta
+    max_active_commands comandos activos independientes; la memoria sigue
+    siendo una barrera. LMUL usa exponentes de dos (-3 para mf8, 3 para m8).
+    Los predeterminados conservan 16/32 bits y m1 y activan la concurrencia
+    (cuatro comandos y cuatro contextos por lane); las rutas CPU se
+    documentan por separado.
     """
 
     vrf: VrfConfiguration
@@ -173,8 +176,8 @@ class VpuConfiguration:
     supported_sews: Tuple[int, ...] = (16, 32)
     supported_lmuls: Tuple[int, ...] = (0,)
     elen_bits: int = 64
-    command_queue_entries: int = 1
-    max_active_commands: int = 1
+    command_queue_entries: int = 4
+    max_active_commands: int = 4
     target_byte_order: str = "little"
 
     def parameters(self):

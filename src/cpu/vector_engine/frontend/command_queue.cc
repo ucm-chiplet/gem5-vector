@@ -69,7 +69,7 @@ CommandQueue::contains(CommandKey command) const
         }
     }
 
-    return false;
+    return state.started.count(command) != 0;
 }
 
 GrantResult
@@ -169,18 +169,34 @@ CommandQueue::front() const
 }
 
 void
-CommandQueue::releaseHead(CommandKey command)
+CommandQueue::markStarted(CommandKey command)
 {
-    panic_if(empty(), "Cannot release an empty CommandQueue");
+    panic_if(empty(), "Cannot start a command from an empty CommandQueue");
 
     panic_if(state.commands.front().command != command,
-             "Completion does not match CommandQueue head");
+             "Only the CommandQueue head can start");
+
+    // Pasar de pendiente a iniciado no cambia la ocupación: el comando
+    // sigue contando hasta release(). Así la capacidad cubre también el
+    // trabajo que ya ejecuta en las unidades.
+    const auto inserted = state.started.insert(command);
+    panic_if(!inserted.second, "Command started twice");
+    state.commands.pop_front();
+}
+
+void
+CommandQueue::release(CommandKey command)
+{
+    const auto found = state.started.find(command);
+
+    panic_if(found == state.started.end(),
+             "Completion does not match a started command");
 
     // Sólo el cierre del comando libera su crédito. Retirarlo al iniciar
     // ejecución permitiría admitir más trabajo del que cuenta la capacidad.
     // La notificación completed corresponde al sequencer y a la interfaz.
     stats.complete();
-    state.commands.pop_front();
+    state.started.erase(found);
 }
 
 void

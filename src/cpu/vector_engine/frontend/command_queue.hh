@@ -34,6 +34,7 @@
 #include <deque>
 #include <map>
 #include <optional>
+#include <set>
 #include <vector>
 
 #include "cpu/vector_engine/common/module_stats.hh"
@@ -54,7 +55,8 @@ struct CommandReservation
 
 /**
  * Estado que el control de admisión y CommandQueue necesitan conservar.
- * AraSequencer consulta el comando en cabeza y lo libera al finalizar.
+ * AraSequencer consulta la cabeza de pendientes, la marca como iniciada y
+ * libera cada comando iniciado al finalizarlo, en cualquier orden.
  * CommandQueue es el único propietario de las reservas y de la FIFO.
  */
 struct CommandQueueState
@@ -62,8 +64,12 @@ struct CommandQueueState
     // Admisión busca por reservationId; reservar todavía no acepta el comando.
     std::map<uint64_t, CommandReservation> reservations;
 
-    // CommandQueue conserva el orden; la cabeza activa sigue ocupando plaza.
+    // Aceptados que aún no han empezado, en orden de dispatch.
     std::deque<VectorCommand> commands;
+
+    // Comandos iniciados por el sequencer. Conservan su crédito hasta que
+    // se entrega su finalización; pueden terminar desordenados.
+    std::set<CommandKey> started;
 
     // Admisión obtiene las claves vivas de los descriptores anteriores.
     // El siguiente ID no puede desbordar ni usar InvalidReservationId.
@@ -83,15 +89,21 @@ namespace gem5::vector_engine
  *
  * requestGrant reserva capacidad; dispatch consume esa reserva y confirma
  * accepted después de guardar una copia del comando. La ocupación suma
- * reservas y entradas FIFO, incluida la cabeza que ejecuta el sequencer.
+ * reservas, comandos pendientes y comandos iniciados sin finalizar:
+ *
+ *   reservas + pendientes + iniciados <= queue_depth
+ *
+ * Los tres estados son excluyentes, de modo que cada comando se cuenta una
+ * sola vez. Iniciar un comando no devuelve su crédito.
  *
  * La validación estructural pertenece a CpuVectorInterface. Esta clase
  * comprueba el soporte del baseline, duplicados y capacidad; no decodifica
  * instrucciones ni sustituye el validador de la frontera CPU--VPU.
  *
- * La FIFO conserva el orden de dispatch. El emisor debe despachar en orden
- * y AraSequencer debe mantener una única instrucción activa. Esta clase
- * no ejecuta comandos, emite completed ni programa eventos de progreso.
+ * La FIFO conserva el orden de dispatch y AraSequencer sólo inicia su
+ * cabeza. Los comandos iniciados se liberan por clave, en el orden en que
+ * terminen. Esta clase no ejecuta comandos, emite completed ni programa
+ * eventos de progreso.
  */
 class CommandQueue : public VpuCommandEndpoint
 {
@@ -116,17 +128,23 @@ class CommandQueue : public VpuCommandEndpoint
     void dispatch(const GrantToken &token,
                   const VectorCommand &command) override;
 
-    // Devuelve una copia; consultar no libera capacidad ni inicia ejecución.
+    // Devuelve una copia de la cabeza de pendientes; consultar no libera
+    // capacidad ni inicia ejecución.
     std::optional<VectorCommand> front() const;
 
-    // Sólo lo llama el sequencer al cerrar el comando de cabeza, después
+    // El sequencer saca la cabeza de pendientes al iniciarla. Conserva su
+    // crédito hasta release(); command debe coincidir con la cabeza.
+    void markStarted(CommandKey command);
+
+    // Sólo lo llama el sequencer al cerrar un comando iniciado, después
     // de terminar sus tareas, accesos y writebacks pendientes.
-    void releaseHead(CommandKey command);
+    void release(CommandKey command);
 
     std::size_t
     occupancy() const
     {
-        return state.commands.size() + state.reservations.size();
+        return state.commands.size() + state.started.size() +
+               state.reservations.size();
     }
 
     bool
@@ -135,7 +153,7 @@ class CommandQueue : public VpuCommandEndpoint
         return occupancy() == queueDepth;
     }
 
-    // FIFO vacía no implica ausencia de reservas pendientes de dispatch.
+    // Sin pendientes no implica ausencia de reservas ni de iniciados.
     bool
     empty() const
     {
@@ -146,7 +164,7 @@ class CommandQueue : public VpuCommandEndpoint
     bool
     isIdle() const
     {
-        return empty() && state.reservations.empty();
+        return empty() && state.started.empty() && state.reservations.empty();
     }
 
     // Cierra la admisión nueva sin cancelar reservas ni comandos aceptados.
@@ -156,7 +174,7 @@ class CommandQueue : public VpuCommandEndpoint
         state.draining = true;
     }
 
-    // Reabre la admisión cuando ya no quedan reservas ni entradas FIFO.
+    // Reabre la admisión cuando no quedan reservas, pendientes ni iniciados.
     void endDrain();
 
   private:

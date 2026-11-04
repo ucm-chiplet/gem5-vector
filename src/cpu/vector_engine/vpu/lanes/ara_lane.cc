@@ -190,14 +190,20 @@ AraLane::validateTask(const LaneTask &task) const
 }
 
 VrfAccess
-AraLane::makeAccess(const TaskKey &task, const VectorRegRef &reg,
+AraLane::makeAccess(const LaneFragmentKey &fragment, AccessRole role,
+                    LaneId lane, const VectorRegRef &reg,
                     const ByteRange &range)
 {
-    panic_if(nextAccessId == InvalidVrfAccessId,
-             "Lane VRF access identifiers exhausted");
-    return VrfAccess{VrfAccessKey{task,
-                                  VrfRequester{VrfRequesterKind::Lane, laneId},
-                                  nextAccessId++},
+    // Tres papeles por fragmento: el identificador se deriva de la clave
+    // del fragmento, sin contadores que reiniciar al cambiar de tarea.
+    constexpr VrfAccessId roles = 3;
+    panic_if(fragment.fragmentId >= (InvalidVrfAccessId - roles) / roles,
+             "Lane VRF access identifier is not representable");
+    const auto access_id = static_cast<VrfAccessId>(
+        fragment.fragmentId * roles + static_cast<VrfAccessId>(role));
+    return VrfAccess{VrfAccessKey{fragment.task,
+                                  VrfRequester{VrfRequesterKind::Lane, lane},
+                                  access_id},
                      reg, range, ByteEnable(range.size, 1)};
 }
 
@@ -211,20 +217,17 @@ AraLane::acceptTask(const LaneTask &task)
         return TransferResult::Retry;
     }
     validateTask(task);
-    if (accessTask && *accessTask == task.key.task) {
-        panic_if(task.key.fragmentId <= lastFragmentId,
+    // Los fragmentos de una tarea llegan en orden creciente. Sólo se puede
+    // comprobar frente a los contextos vivos: los cerrados ya no ocupan
+    // estado y sus accessId no pueden coincidir con los del nuevo.
+    for (const auto &state : contexts) {
+        panic_if(state && state->task.key.task == task.key.task &&
+                     state->task.key.fragmentId >= task.key.fragmentId,
                  "Duplicate or out-of-order lane fragment");
-    } else {
-        panic_if(std::any_of(contexts.begin(), contexts.end(),
-                             [](const auto &state) { return bool(state); }) ||
-                     !alu.isIdle() || !fpu.isIdle(),
-                 "Lane cannot admit a second task in phase 3");
-        accessTask = task.key.task;
-        nextAccessId = 0;
     }
-    lastFragmentId = task.key.fragmentId;
     free->emplace();
     (*free)->task = task;
+    (*free)->admission = nextAdmission++;
     stats.accept(task.elements.elementCount, task.destinationRange.size);
     wakeup();
     return TransferResult::Accepted;
@@ -239,10 +242,10 @@ AraLane::orderedContexts() const
             order.push_back(i);
         }
     }
-    // Reused physical slots do not change fragment admission/issue order.
+    // Reused physical slots do not change admission/issue order. Admission
+    // follows task start order and, within a task, fragment order.
     std::sort(order.begin(), order.end(), [&](auto a, auto b) {
-        return contexts[a]->task.key.fragmentId <
-               contexts[b]->task.key.fragmentId;
+        return contexts[a]->admission < contexts[b]->admission;
     });
     return order;
 }
@@ -274,14 +277,15 @@ AraLane::prepareOperands(LaneFragmentState &state)
                                    task.lmul};
     const auto eligible = vpuClockEdge(owner, Cycles(1));
     state.pending[0] = PendingVrfAccess{
-        VrfReadRequest{makeAccess(task.key.task, task.arithmetic.vectorSource,
+        VrfReadRequest{makeAccess(task.key, AccessRole::Lhs, laneId,
+                                  task.arithmetic.vectorSource,
                                   task.vectorSourceRange)},
         eligible, curTick()};
     if (const auto *source =
             std::get_if<VectorRegRef>(&task.arithmetic.secondOperand)) {
         state.pending[1] = PendingVrfAccess{
-            VrfReadRequest{makeAccess(task.key.task, *source,
-                                      *task.secondVectorSourceRange)},
+            VrfReadRequest{makeAccess(task.key, AccessRole::Rhs, laneId,
+                                      *source, *task.secondVectorSourceRange)},
             eligible, curTick()};
     } else {
         const auto scalar = std::get<RegVal>(task.arithmetic.secondOperand);
@@ -366,8 +370,9 @@ AraLane::evaluate()
             prepareOperands(*contexts[i]);
         }
     }
-    // Start at most one bundle per edge, in fragment order. A younger ready
-    // fragment cannot bypass an older fragment still collecting operands.
+    // Start at most one bundle per edge, in admission order. A younger ready
+    // fragment, of this or a later task, cannot bypass an older fragment
+    // still collecting operands.
     for (const auto i : order) {
         auto &state = *contexts[i];
         if (state.phase == Phase::Prepare || state.phase == Phase::Read) {
@@ -445,7 +450,8 @@ AraLane::recvExecutionResult(const ExecutionResult &result)
     // The metadata keeps flags; one output credit covers both until WriteAck.
     state.result = result;
     state.pending[2] = PendingVrfAccess{
-        VrfWriteRequest{makeAccess(task.key.task, task.arithmetic.destination,
+        VrfWriteRequest{makeAccess(task.key, AccessRole::Destination, laneId,
+                                   task.arithmetic.destination,
                                    task.destinationRange),
                         std::move(state.result->values)},
         vpuClockEdge(owner, Cycles(1)), curTick()};
