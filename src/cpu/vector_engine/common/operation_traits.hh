@@ -39,8 +39,8 @@ namespace gem5::vector_engine
 
 struct VectorCommand;
 
-// Anchos del backend actual, compartidos por suma y memoria; no son la
-// matriz objetivo SEW x LMUL ni una lista de rutas de decode comprobadas.
+// Anchos enteros del backend, compartidos por la ALU y la memoria; no son
+// la matriz objetivo SEW x LMUL ni una lista de rutas de decode comprobadas.
 inline constexpr std::array<uint16_t, 4> IntegerElementWidths{8, 16, 32, 64};
 
 /** Indica qué tipo de unidad se encarga de una operación enviada por CPU. */
@@ -51,25 +51,39 @@ enum class ExecutionClass : uint8_t
     Memory
 };
 
+/** Tabla de anchos de una ficha; un cero deja una posición sin usar. */
+using OperationWidths = std::array<uint16_t, IntegerElementWidths.size()>;
+
 /**
  * Ficha de lo que sabe hacer cada operación: unidad, tamaños y fuentes.
- * cpuOffload permite admitir el comando desde CPU; no garantiza que Minor
- * sepa construir todas sus variantes. Un cero en widths deja una posición
- * sin usar. La ficha no indica si la unidad está libre en este momento.
+ *
+ * widths enumera los anchos que el backend sabe calcular. offloadWidths es
+ * el subconjunto que admisión acepta en un comando de CPU: así la suma
+ * binary16 sigue siendo interna mientras binary32 se admite. Admitir un
+ * ancho no garantiza que Minor sepa construir todas sus variantes.
+ *
+ * requiresSignedness indica si el comando debe elegir Signed o Unsigned
+ * (división y resto) o dejar NotApplicable (el resto de operaciones).
+ * La ficha no indica si la unidad está libre en este momento.
  */
 struct OperationTraits
 {
     ExecutionClass execution;
     ElementFormat format;
-    std::array<uint16_t, IntegerElementWidths.size()> widths;
+    OperationWidths widths;
     bool vectorVector;
     bool vectorScalar;
     bool requiresFpContext;
+    bool requiresSignedness;
     bool mayMemoryFault;
-    bool cpuOffload;
+    OperationWidths offloadWidths;
 
     /** Indica si esta operación admite elementos de ese número de bits. */
     bool supportsWidth(uint16_t bits) const;
+    /** Indica si un comando de CPU con ese ancho puede admitirse. */
+    bool offloadsWidth(uint16_t bits) const;
+    /** Comprueba que el signo del comando corresponde a la operación. */
+    bool acceptsSignedness(ElementSignedness signedness) const;
 };
 
 /** Busca la ficha de cálculo; devuelve nullptr si no conoce la operación.

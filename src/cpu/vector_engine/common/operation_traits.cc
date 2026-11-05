@@ -35,37 +35,110 @@
 namespace gem5::vector_engine
 {
 
+namespace
+{
+
 bool
-OperationTraits::supportsWidth(uint16_t bits) const
+containsWidth(const OperationWidths &widths, uint16_t bits)
 {
     return bits &&
            std::find(widths.begin(), widths.end(), bits) != widths.end();
 }
 
+/**
+ * Ficha común de las operaciones enteras de igual ancho: ALU, 8/16/32/64
+ * bits, formas .vv y .vx, sin contexto FP y admisibles desde CPU en todos
+ * sus anchos. Sólo cambia si el comando debe declarar el signo.
+ */
+constexpr OperationTraits
+integerTraits(bool requires_signedness)
+{
+    return OperationTraits{ExecutionClass::IntegerAlu,
+                           ElementFormat::Integer,
+                           IntegerElementWidths,
+                           true,  // Dos fuentes vectoriales (.vv).
+                           true,  // Vector y escalar capturado (.vx).
+                           false, // No necesita redondeo FP.
+                           requires_signedness,
+                           false, // No accede a memoria.
+                           IntegerElementWidths};
+}
+
+/**
+ * Ficha de coma flotante de igual ancho: FPU, sólo forma .vv, contexto de
+ * redondeo obligatorio y sin signo de comando (el signo es del formato).
+ */
+constexpr OperationTraits
+floatTraits(OperationWidths widths, OperationWidths offload_widths)
+{
+    return OperationTraits{ExecutionClass::FloatingPoint,
+                           ElementFormat::IeeeFloat,
+                           widths,
+                           true,  // Dos fuentes vectoriales (.vv).
+                           false, // Las formas .vf quedan fuera del hito 2.
+                           true,  // Necesita el redondeo capturado.
+                           false, // Sin signo de comando.
+                           false, // No accede a memoria.
+                           offload_widths};
+}
+
+} // anonymous namespace
+
+bool
+OperationTraits::supportsWidth(uint16_t bits) const
+{
+    return containsWidth(widths, bits);
+}
+
+bool
+OperationTraits::offloadsWidth(uint16_t bits) const
+{
+    return containsWidth(offloadWidths, bits) && supportsWidth(bits);
+}
+
+bool
+OperationTraits::acceptsSignedness(ElementSignedness signedness) const
+{
+    if (requiresSignedness) {
+        return signedness == ElementSignedness::Signed ||
+               signedness == ElementSignedness::Unsigned;
+    }
+    return signedness == ElementSignedness::NotApplicable;
+}
+
 const OperationTraits *
 operationTraits(ArithmeticOperation operation)
 {
-    static constexpr OperationTraits add{ExecutionClass::IntegerAlu,
-                                         ElementFormat::Integer,
-                                         IntegerElementWidths,
-                                         true,  // Dos fuentes vectoriales.
-                                         true,  // Vector y escalar.
-                                         false, // No necesita redondeo FP.
-                                         false, // No accede a memoria.
-                                         true}; // Admisible desde CPU.
-    static constexpr OperationTraits float_add{ExecutionClass::FloatingPoint,
-                                               ElementFormat::IeeeFloat,
-                                               {16},   // Sólo binary16.
-                                               true,   // Dos vectores.
-                                               false,  // Sin forma escalar.
-                                               true,   // Necesita redondeo.
-                                               false,  // Sin acceso a memoria.
-                                               false}; // Sin offload CPU.
+    // Referencias semánticas: RVV 1.0, edición 20240411, secciones Vector
+    // Single-Width Integer Add and Subtract, Vector Single-Width Integer
+    // Multiply Instructions, Vector Integer Divide Instructions, Vector
+    // Single-Width Floating-Point Add/Subtract Instructions y Vector
+    // Single-Width Floating-Point Multiply/Divide Instructions.
+    static constexpr OperationTraits add = integerTraits(false);
+    // vmul: bits bajos; idénticos con o sin signo, así que no se declara.
+    static constexpr OperationTraits multiply = integerTraits(false);
+    // vdiv/vdivu y vrem/vremu comparten ficha; el signo los distingue.
+    static constexpr OperationTraits divide = integerTraits(true);
+    static constexpr OperationTraits remainder = integerTraits(true);
+    // binary16 es una capacidad interna; CPU sólo puede pedir binary32.
+    static constexpr OperationTraits float_add = floatTraits({16, 32}, {32});
+    static constexpr OperationTraits float_multiply = floatTraits({32}, {32});
+    static constexpr OperationTraits float_divide = floatTraits({32}, {32});
     switch (operation) {
         case ArithmeticOperation::Add:
             return &add;
+        case ArithmeticOperation::Multiply:
+            return &multiply;
+        case ArithmeticOperation::Divide:
+            return &divide;
+        case ArithmeticOperation::Remainder:
+            return &remainder;
         case ArithmeticOperation::FloatAdd:
             return &float_add;
+        case ArithmeticOperation::FloatMultiply:
+            return &float_multiply;
+        case ArithmeticOperation::FloatDivide:
+            return &float_divide;
         default:
             return nullptr;
     }
@@ -74,14 +147,16 @@ operationTraits(ArithmeticOperation operation)
 const OperationTraits *
 operationTraits(MemoryDirection direction)
 {
-    static constexpr OperationTraits memory{ExecutionClass::Memory,
-                                            ElementFormat::RawBits,
-                                            IntegerElementWidths,
-                                            false, // No es suma .vv.
-                                            false, // No es suma .vx.
-                                            false, // No necesita redondeo FP.
-                                            true,  // Puede fallar un acceso.
-                                            true}; // Admisible desde CPU.
+    static constexpr OperationTraits memory{
+        ExecutionClass::Memory,
+        ElementFormat::RawBits,
+        IntegerElementWidths,
+        false,                 // No es una forma .vv.
+        false,                 // No es una forma .vx.
+        false,                 // No necesita redondeo FP.
+        false,                 // Sin signo de comando.
+        true,                  // Puede fallar un acceso.
+        IntegerElementWidths}; // Admisible desde CPU en todos los anchos.
     if (direction == MemoryDirection::Load ||
         direction == MemoryDirection::Store) {
         return &memory;

@@ -71,15 +71,30 @@ VectorEngine::makeConfiguration(const Params &params)
     };
     // Agrupar los parámetros por su consumidor: lane y unidades de cálculo,
     // bancos del VRF, peticiones vectoriales y conexión con memoria.
-    config.lane = {params.lane_task_entries,
-                   params.operand_buffer_entries_per_source,
-                   params.result_buffer_entries,
-                   resolve_width(params.max_bundle_bytes),
-                   params.alus_per_lane,
-                   {resolve_width(params.alu_width_bytes), params.alu_capacity,
-                    params.alu_latency, params.alu_initiation_interval},
-                   {resolve_width(params.fpu_width_bytes), params.fpu_capacity,
-                    params.fpu_latency, params.fpu_initiation_interval}};
+    config.lane.taskEntries = params.lane_task_entries;
+    config.lane.maxBundleBytes = resolve_width(params.max_bundle_bytes);
+    config.lane.alusPerLane = params.alus_per_lane;
+    // Cada clase de unidad tiene sus buffers de operandos y resultados.
+    auto &alu = config.lane.alu;
+    alu.unit = {resolve_width(params.alu_width_bytes), params.alu_capacity,
+                params.alu_operand_entries_per_source,
+                params.alu_result_entries};
+    alu.add = {params.alu_add_latency, params.alu_add_initiation_interval};
+    alu.multiply = {params.alu_multiply_latency,
+                    params.alu_multiply_initiation_interval};
+    // Una latencia por SEW, en el orden 8/16/32/64 de divideLatency.
+    fatal_if(params.alu_divide_latencies.size() != alu.divideLatency.size(),
+             "alu_divide_latencies requires one value per SEW: 8/16/32/64");
+    for (std::size_t i = 0; i < alu.divideLatency.size(); ++i) {
+        alu.divideLatency[i] = Cycles(params.alu_divide_latencies[i]);
+    }
+    auto &fpu = config.lane.fpu;
+    fpu.unit = {resolve_width(params.fpu_width_bytes), params.fpu_capacity,
+                params.fpu_operand_entries_per_source,
+                params.fpu_result_entries};
+    fpu.addMultiply = {params.fpu_add_multiply_latency,
+                       params.fpu_add_multiply_initiation_interval};
+    fpu.divideLatency = params.fpu_divide_latency;
     config.bank = {
         params.bank_read_ports,       params.bank_write_ports,
         params.bank_read_write_ports, params.bank_access_entries,
@@ -122,8 +137,8 @@ VectorEngine::makeConfiguration(const Params &params)
              "VectorEngine requires VLEN >= ELEN");
     fatal_if(!config.lane.currentProfile(word_bytes) ||
                  !config.bank.currentProfile(),
-             "Invalid phase-3 resource profile or independent widths/multiple "
-             "ALUs");
+             "Invalid lane or bank resource profile: positive capacities, "
+             "buffers and timings, unit widths equal to lane_word_bytes");
     // Check products before constructing any resource. A larger count may
     // be legal but underutilized when another finite stage is the bottleneck.
     const auto check_extent = [](std::initializer_list<uint64_t> factors) {
@@ -139,13 +154,16 @@ VectorEngine::makeConfiguration(const Params &params)
                   sizeof(VrfRequestPort)});
     check_extent({config.vrf.numLanes, config.vlsu.vrfInputsPerLane,
                   sizeof(VrfRequestPort)});
-    check_extent({config.vrf.numLanes, config.lane.operandEntriesPerSource, 2,
-                  word_bytes});
-    check_extent({config.vrf.numLanes, config.lane.resultEntries, word_bytes});
+    for (const auto *unit : {&alu.unit, &fpu.unit}) {
+        check_extent({config.vrf.numLanes, unit->operandEntriesPerSource, 2,
+                      word_bytes});
+        check_extent({config.vrf.numLanes, unit->resultEntries, word_bytes});
+    }
+    check_extent({config.vrf.numLanes, config.lane.alusPerLane,
+                  alu.unit.capacity, 3, word_bytes});
+    // The FPU divider adds one bundle to the add/multiply pipeline capacity.
     check_extent(
-        {config.vrf.numLanes, config.lane.alu.capacity, 3, word_bytes});
-    check_extent(
-        {config.vrf.numLanes, config.lane.fpu.capacity, 3, word_bytes});
+        {config.vrf.numLanes, uint64_t{fpu.unit.capacity} + 1, 3, word_bytes});
     check_extent({config.vrf.numLanes, config.vrf.banksPerLane,
                   config.bank.accessEntries, word_bytes});
     fatal_if(config.memory.addressBits != 32 &&

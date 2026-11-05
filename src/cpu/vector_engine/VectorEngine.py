@@ -59,26 +59,50 @@ class VectorEngine(ClockedObject):
     lane_task_entries = Param.UInt32(
         4, "Fragment contexts per lane until writeback, shared by tasks"
     )
-    operand_buffer_entries_per_source = Param.UInt32(
-        1, "Reserved buffers per source and lane, including replicated scalar"
-    )
-    result_buffer_entries = Param.UInt32(
-        1,
-        "Result credits per lane, from pre-execution reservation to WriteAck",
-    )
     max_bundle_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
-    alus_per_lane = Param.UInt32(1, "Phase 3 requires one ALU per lane")
+    alus_per_lane = Param.UInt32(1, "Independent ALU instances per lane")
+    # Grupo de ALUs: buffers propios de la clase y perfil por operación.
     alu_width_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
-    alu_capacity = Param.UInt32(1, "Pending bundles per ALU")
-    alu_latency = Param.Cycles(1, "ALU result latency in VPU cycles")
-    alu_initiation_interval = Param.Cycles(
-        1, "Minimum VPU cycles between bundle admissions"
+    alu_capacity = Param.UInt32(1, "Pending bundles per ALU instance")
+    alu_operand_entries_per_source = Param.UInt32(
+        1, "ALU-class buffers per source and lane, including scalars"
     )
+    alu_result_entries = Param.UInt32(
+        1, "ALU-class result credits per lane, until WriteAck"
+    )
+    alu_add_latency = Param.Cycles(1, "Integer add latency in VPU cycles")
+    alu_add_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between integer add admissions"
+    )
+    alu_multiply_latency = Param.Cycles(
+        3, "Integer multiply latency in VPU cycles"
+    )
+    alu_multiply_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between integer multiply admissions"
+    )
+    alu_divide_latencies = VectorParam.UInt32(
+        [10, 18, 34, 66],
+        "Unpipelined divide/remainder latency for SEW 8/16/32/64",
+    )
+    # FPU: pipeline de suma/multiplicación y divisor no segmentado.
     fpu_width_bytes = Param.UInt32(0, "Zero resolves to lane_word_bytes")
-    fpu_capacity = Param.UInt32(1, "Pending bundles per FPU")
-    fpu_latency = Param.Cycles(1, "Internal FPU result latency in VPU cycles")
-    fpu_initiation_interval = Param.Cycles(
-        1, "Minimum VPU cycles between bundle admissions"
+    fpu_capacity = Param.UInt32(
+        1, "Pending bundles in the FPU add/multiply pipeline"
+    )
+    fpu_operand_entries_per_source = Param.UInt32(
+        1, "FPU-class buffers per source and lane"
+    )
+    fpu_result_entries = Param.UInt32(
+        1, "FPU-class result credits per lane, until WriteAck"
+    )
+    fpu_add_multiply_latency = Param.Cycles(
+        4, "FP add/multiply latency in VPU cycles"
+    )
+    fpu_add_multiply_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between FP add/multiply admissions"
+    )
+    fpu_divide_latency = Param.Cycles(
+        12, "Unpipelined FP32 divide latency in VPU cycles"
     )
     bank_read_ports = Param.UInt32(0, "Dedicated read ports per bank")
     bank_write_ports = Param.UInt32(0, "Dedicated write ports per bank")

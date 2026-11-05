@@ -3,8 +3,10 @@
 #ifndef __CPU_VECTOR_ENGINE_VPU_LANES_ALU_HH__
 #define __CPU_VECTOR_ENGINE_VPU_LANES_ALU_HH__
 
+#include <cstddef>
 #include <deque>
 #include <functional>
+#include <string>
 
 #include "cpu/vector_engine/common/execution_types.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
@@ -17,8 +19,19 @@ namespace gem5::vector_engine
 {
 
 /**
- * ALU de suma entera de 8/16/32/64 bits, con pipeline de capacidad finita.
- * Latencia e intervalo de iniciación son ciclos independientes del reloj VPU.
+ * Una instancia de ALU entera de 8/16/32/64 bits: suma, multiplicación de
+ * bits bajos, división y resto con y sin signo, formas .vv y .vx.
+ *
+ * Cada operación tiene su latencia e intervalo de iniciación (ciclos del
+ * reloj VPU). Suma y multiplicación son segmentadas; división y resto usan
+ * un divisor no segmentado y bloquean nuevas admisiones de esta instancia
+ * hasta entregar su resultado. Las otras instancias y la FPU no dependen de
+ * esa ocupación. La capacidad limita los bundles aceptados sin resultado.
+ *
+ * Como las latencias difieren por operación, los resultados se entregan
+ * en cuanto están listos (por readyAt) y, a igualdad, en orden de admisión.
+ * La lane los localiza por clave, no por orden de llegada.
+ *
  * Copia los bundles aceptados y reserva sus resultados. La lane reserva
  * también recepción antes de enviar: el callback de resultado no se bloquea.
  * No accede al VRF ni completa instrucciones. Propietario y receptor
@@ -29,9 +42,9 @@ class Alu
   public:
     using ResultSender = std::function<void(const ExecutionResult &)>;
 
-    Alu(ClockedObject &owner, LaneId lane_id, ResultSender send_result,
-        statistics::Group &stats_parent,
-        const ExecutionParameters &parameters);
+    Alu(ClockedObject &owner, LaneId lane_id, std::size_t instance,
+        ResultSender send_result, statistics::Group &stats_parent,
+        const AluParameters &parameters);
     ~Alu();
 
     Alu(const Alu &) = delete;
@@ -58,17 +71,27 @@ class Alu
     statistics::Scalar elements16;
     statistics::Scalar elements32;
     statistics::Scalar elements64;
+    statistics::Scalar addElements;
+    statistics::Scalar multiplyElements;
+    statistics::Scalar divideElements;
+    statistics::Scalar remainderElements;
     statistics::Scalar capacityStalls;
     statistics::Scalar intervalStalls;
     ClockedObject &owner;
-    const ExecutionParameters &parameters;
+    const AluParameters &parameters;
     ResultSender sendResult;
+    // Orden de admisión; los resultados pueden salir antes por readyAt.
     std::deque<ExecutionState> pending;
     Tick nextIssue = 0;
     bool responding = false;
     EventFunctionWrapper executeEvent;
 
+    /** Latencia e intervalo de una operación admitida con ese SEW. */
+    OperationTiming timing(ArithmeticOperation operation,
+                           uint16_t sew_bits) const;
+    void countElements(const ExecutionBundle &bundle);
     void execute();
+    void scheduleNextResult();
 };
 
 } // namespace gem5::vector_engine

@@ -56,14 +56,16 @@ bool
 VectorSupport::supportsArithmetic(const ArithmeticCommand &arithmetic,
                                   uint16_t sew_bits)
 {
-    if (arithmetic.widthMode != ElementWidthMode::SameWidth ||
-        arithmetic.signedness != ElementSignedness::NotApplicable) {
+    if (arithmetic.widthMode != ElementWidthMode::SameWidth) {
         return false;
     }
     const bool vector_source =
         std::holds_alternative<VectorRegRef>(arithmetic.secondOperand);
     const auto *traits = operationTraits(arithmetic.operation);
+    // La ficha decide si el comando debe declarar el signo (división y
+    // resto) o dejarlo como NotApplicable (el resto de operaciones).
     return traits && traits->supportsWidth(sew_bits) &&
+           traits->acceptsSignedness(arithmetic.signedness) &&
            ((vector_source && traits->vectorVector) ||
             (std::holds_alternative<RegVal>(arithmetic.secondOperand) &&
              traits->vectorScalar));
@@ -176,9 +178,14 @@ VectorSupport::checkStructure(const VectorCommand &command)
             std::get_if<ArithmeticCommand>(&command.payload)) {
         // Las operaciones con anchos distintos tendrían otras reglas de
         // grupos. Rechazarlas antes de aplicar las del perfil actual.
-        if (arithmetic->widthMode != ElementWidthMode::SameWidth ||
-            arithmetic->signedness != ElementSignedness::NotApplicable) {
+        if (arithmetic->widthMode != ElementWidthMode::SameWidth) {
             return RejectionReason::UnsupportedOperation;
+        }
+        // Un signo que no corresponde a la operación conocida es un
+        // descriptor mal formado, no una combinación pendiente de soporte.
+        if (const auto *traits = operationTraits(arithmetic->operation);
+            traits && !traits->acceptsSignedness(arithmetic->signedness)) {
+            return RejectionReason::InvalidPayload;
         }
         if (!check_reg(arithmetic->destination) ||
             !check_reg(arithmetic->vectorSource)) {
@@ -249,8 +256,9 @@ VectorSupport::checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
     if (const auto *arithmetic =
             std::get_if<ArithmeticCommand>(&command.payload)) {
         const auto *traits = operationTraits(arithmetic->operation);
-        // Tener campos para redondeo y flags no habilita todavía FP desde CPU.
-        if (!traits || !traits->cpuOffload ||
+        // Sólo los anchos de offloadWidths se admiten desde CPU: la suma
+        // binary16 interna no habilita FP16 aunque la FPU sepa calcularla.
+        if (!traits || !traits->offloadsWidth(config.sewBits) ||
             !supportsExecution(*arithmetic, config.sewBits,
                                command.fpContext)) {
             return RejectionReason::UnsupportedOperation;

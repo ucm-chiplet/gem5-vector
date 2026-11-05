@@ -29,6 +29,8 @@
 #ifndef __CPU_VECTOR_ENGINE_COMMON_VPU_PARAMETERS_HH__
 #define __CPU_VECTOR_ENGINE_COMMON_VPU_PARAMETERS_HH__
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -45,45 +47,115 @@ enum class MappingPolicyKind : uint8_t
     WordStriped
 };
 
-/** Tamaño del trabajo que recibe una ALU/FPU, capacidad y tiempos en ciclos.
+/**
+ * Tiempo de una operación en una unidad, en ciclos del reloj de la VPU.
+ * latency cuenta hasta entregar el resultado; initiationInterval, hasta
+ * poder admitir el bundle siguiente en la misma unidad. Son parámetros del
+ * modelo, no latencias verificadas de Ara.
+ */
+struct OperationTiming
+{
+    Cycles latency{1};
+    Cycles initiationInterval{1};
+
+    bool
+    valid() const
+    {
+        return latency >= Cycles(1) && initiationInterval >= Cycles(1);
+    }
+};
+
+/**
+ * Recursos comunes de una clase de unidad (grupo de ALUs o FPU) en una lane.
+ *
+ * widthBytes son los bytes de cada bundle; se mantiene igual a la palabra
+ * del VRF. capacity cuenta bundles aceptados sin resultado entregado, por
+ * instancia de ALU o en el pipeline de suma/multiplicación de la FPU.
+ * operandEntriesPerSource y resultEntries son los buffers que la lane
+ * reserva para esta clase: una clase ocupada no retiene los de la otra,
+ * como las colas de operandos y resultados propias de cada unidad en Ara.
  */
 struct ExecutionParameters
 {
     uint32_t widthBytes = 0;
     uint32_t capacity = 1;
-    Cycles latency{1};
-    Cycles initiationInterval{1};
+    uint32_t operandEntriesPerSource = 1;
+    uint32_t resultEntries = 1;
 
-    /** Perfil temporizado; las anchuras independientes quedan para fase 6. */
+    /** Exige capacidad y buffers positivos y la anchura de una palabra. */
     bool
     currentProfile(uint32_t word_bytes) const
     {
         return word_bytes && widthBytes == word_bytes && capacity &&
-               latency >= Cycles(1) && initiationInterval >= Cycles(1);
+               operandEntriesPerSource && resultEntries;
     }
 };
 
 /**
- * Espacio de una lane para tareas, operandos y resultados, y sus ALU/FPU.
- * VectorEngine fija los tamaños antes de construir la lane; ésta sólo los
- * consulta durante la ejecución.
+ * ALU entera. Suma y multiplicación son segmentadas. División y resto
+ * comparten un divisor no segmentado: ocupan la instancia hasta entregar
+ * el resultado, de modo que su intervalo de iniciación es su latencia.
+ * divideLatency se indexa por SEW: 8, 16, 32 y 64 bits.
+ */
+struct AluParameters
+{
+    ExecutionParameters unit;
+    OperationTiming add;
+    OperationTiming multiply;
+    std::array<Cycles, 4> divideLatency{Cycles(1), Cycles(1), Cycles(1),
+                                        Cycles(1)};
+
+    bool
+    currentProfile(uint32_t word_bytes) const
+    {
+        return unit.currentProfile(word_bytes) && add.valid() &&
+               multiply.valid() &&
+               std::all_of(divideLatency.begin(), divideLatency.end(),
+                           [](Cycles c) { return c >= Cycles(1); });
+    }
+};
+
+/**
+ * FPU con dos subrecursos. Suma y multiplicación (incluida la suma binary16
+ * interna) comparten un pipeline segmentado con unit.capacity entradas. La
+ * división usa un divisor no segmentado con un bundle como máximo, de modo
+ * que una división larga no bloquea el pipeline de suma/multiplicación.
+ */
+struct FpuParameters
+{
+    ExecutionParameters unit;
+    OperationTiming addMultiply;
+    Cycles divideLatency{1};
+
+    bool
+    currentProfile(uint32_t word_bytes) const
+    {
+        return unit.currentProfile(word_bytes) && addMultiply.valid() &&
+               divideLatency >= Cycles(1);
+    }
+};
+
+/**
+ * Espacio de una lane para tareas y sus unidades de cálculo.
+ * taskEntries son contextos compartidos por todas las clases de unidad;
+ * los buffers de operandos y resultados pertenecen a cada clase.
+ * alusPerLane crea instancias de ALU independientes con los mismos
+ * parámetros. VectorEngine fija los tamaños antes de construir la lane;
+ * ésta sólo los consulta durante la ejecución.
  */
 struct LaneParameters
 {
     uint32_t taskEntries = 1;
-    uint32_t operandEntriesPerSource = 1;
-    uint32_t resultEntries = 1;
     uint32_t maxBundleBytes = 0;
     uint32_t alusPerLane = 1;
-    ExecutionParameters alu;
-    ExecutionParameters fpu;
+    AluParameters alu;
+    FpuParameters fpu;
 
     /** Comprueba que la lane se puede construir con los recursos actuales. */
     bool
     currentProfile(uint32_t word_bytes) const
     {
-        return taskEntries && operandEntriesPerSource && resultEntries &&
-               maxBundleBytes == word_bytes && alusPerLane == 1 &&
+        return taskEntries && maxBundleBytes == word_bytes && alusPerLane &&
                alu.currentProfile(word_bytes) &&
                fpu.currentProfile(word_bytes);
     }

@@ -23,11 +23,14 @@ struct ExecutionBundle
 {
     LaneFragmentKey key;
     ArithmeticOperation operation = ArithmeticOperation::Invalid;
+    // Copia del comando: elige vdiv/vrem (Signed) o vdivu/vremu (Unsigned).
+    ElementSignedness signedness = ElementSignedness::NotApplicable;
     uint16_t sewBits = 0;
     ElementRange elements;
     VectorRegRef destination;
     ByteRange destinationRange;
     // Elementos consecutivos, con elementCount * bytes(SEW) en cada fuente.
+    // lhs es vs2 y rhs es vs1 o el escalar replicado: vd = lhs op rhs.
     ByteBuffer lhs;
     ByteBuffer rhs;
     std::optional<FpExecutionContext> fpContext = std::nullopt;

@@ -14,28 +14,37 @@
 namespace gem5::vector_engine
 {
 
+AraLane::UnitClassState::UnitClassState(statistics::Group *parent,
+                                        const std::string &name,
+                                        const ExecutionParameters &parameters)
+    : statistics::Group(parent, name.c_str()),
+      parameters(parameters),
+      lhsBuffers(this, "lhsBuffers", "reserved LHS buffers"),
+      rhsBuffers(this, "rhsBuffers", "reserved RHS buffers"),
+      resultBuffers(this, "resultBuffers", "reserved result buffers"),
+      operandWaitCycles(this, "operandWaitCycles",
+                        statistics::units::Cycle::get(),
+                        "Fragment-cycles waiting for operand buffer pairs"),
+      resultWaitCycles(this, "resultWaitCycles",
+                       statistics::units::Cycle::get(),
+                       "Issue head cycles waiting for result space"),
+      executionRetries(this, "executionRetries",
+                       statistics::units::Count::get(),
+                       "Bundle attempts rejected by every unit of the class")
+{}
+
 AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
                  const LaneParameters &parameters, LaneId lane_id,
                  ByteOrder target_byte_order, VrfWakeup wake_vrf,
                  CompletionSender send_completion)
     : stats(&owner, "lane" + std::to_string(lane_id), "lane fragments"),
-      lhsBuffers(&stats, "lhsBuffers", "reserved LHS buffers"),
-      rhsBuffers(&stats, "rhsBuffers", "reserved RHS buffers"),
-      resultBuffers(&stats, "resultBuffers", "reserved result buffers"),
       writebacks(&stats, "writebacks", "retained writebacks"),
       vrfReads(&stats, "vrfReads", statistics::units::Count::get(),
                "Operand reads granted by local VRF"),
       vrfWrites(&stats, "vrfWrites", statistics::units::Count::get(),
                 "Writebacks granted by local VRF"),
-      operandWaitCycles(&stats, "operandWaitCycles",
-                        statistics::units::Cycle::get(),
-                        "Fragment-cycles waiting for operand buffer pairs"),
-      resultWaitCycles(&stats, "resultWaitCycles",
-                       statistics::units::Cycle::get(),
-                       "FIFO issue head cycles waiting for result space"),
-      executionRetries(&stats, "executionRetries",
-                       statistics::units::Count::get(),
-                       "Bundle attempts rejected by execution unit"),
+      aluClass(&stats, "aluClass", parameters.alu.unit),
+      fpuClass(&stats, "fpuClass", parameters.fpu.unit),
       owner(owner),
       mapper(mapper),
       parameters(parameters),
@@ -43,12 +52,6 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
       targetByteOrder(target_byte_order),
       wakeVrf(std::move(wake_vrf)),
       sendCompletion(std::move(send_completion)),
-      alu(
-          owner, lane_id,
-          [this](const ExecutionResult &result) {
-              recvExecutionResult(result);
-          },
-          stats, parameters.alu),
       fpu(
           owner, lane_id,
           [this](const ExecutionResult &result) {
@@ -72,7 +75,19 @@ AraLane::AraLane(ClockedObject &owner, const AddressMapper &mapper,
                  uint64_t{parameters.taskEntries} * 3 >
                      std::vector<VrfRequestPort>().max_size(),
              "Lane context or port count exceeds host container capacity");
+    fatal_if(parameters.alusPerLane > alus.max_size(),
+             "ALU count exceeds host container capacity");
     contexts.resize(parameters.taskEntries);
+    // Todas las instancias comparten parámetros, pero no ocupación.
+    alus.reserve(parameters.alusPerLane);
+    for (std::size_t i = 0; i < parameters.alusPerLane; ++i) {
+        alus.push_back(std::make_unique<Alu>(
+            owner, lane_id, i,
+            [this](const ExecutionResult &result) {
+                recvExecutionResult(result);
+            },
+            stats, parameters.alu));
+    }
 }
 
 AraLane::~AraLane()
@@ -85,8 +100,11 @@ AraLane::isIdle() const
 {
     return std::none_of(contexts.begin(), contexts.end(),
                         [](const auto &state) { return state.has_value(); }) &&
-           !operandBundles && !resultBundles && alu.isIdle() && fpu.isIdle() &&
-           !progressEvent.scheduled();
+           !aluClass.operandBundles && !aluClass.resultBundles &&
+           !fpuClass.operandBundles && !fpuClass.resultBundles &&
+           std::all_of(alus.begin(), alus.end(),
+                       [](const auto &alu) { return alu->isIdle(); }) &&
+           fpu.isIdle() && !progressEvent.scheduled();
 }
 
 std::vector<VrfRequestPort>
@@ -228,6 +246,8 @@ AraLane::acceptTask(const LaneTask &task)
     free->emplace();
     (*free)->task = task;
     (*free)->admission = nextAdmission++;
+    // validateTask ya comprobó la ficha; su clase fija buffers y unidad.
+    (*free)->unit = operationTraits(task.arithmetic.operation)->execution;
     stats.accept(task.elements.elementCount, task.destinationRange.size);
     wakeup();
     return TransferResult::Accepted;
@@ -250,22 +270,38 @@ AraLane::orderedContexts() const
     return order;
 }
 
+AraLane::UnitClassState &
+AraLane::unitClass(ExecutionClass unit)
+{
+    if (unit == ExecutionClass::FloatingPoint) {
+        return fpuClass;
+    }
+    panic_if(unit != ExecutionClass::IntegerAlu,
+             "Lane fragment has no lane execution class");
+    return aluClass;
+}
+
 void
 AraLane::prepareOperands(LaneFragmentState &state)
 {
-    if (operandBundles == parameters.operandEntriesPerSource) {
-        ++operandWaitCycles;
+    auto &pool = unitClass(state.unit);
+    if (pool.operandBundles == pool.parameters.operandEntriesPerSource) {
+        ++pool.operandWaitCycles;
         return;
     }
     const auto &task = state.task;
-    ++operandBundles;
+    ++pool.operandBundles;
     state.operandsReserved = true;
-    lhsBuffers.accept(task.elements.elementCount, task.destinationRange.size);
-    rhsBuffers.accept(task.elements.elementCount, task.destinationRange.size);
+    pool.lhsBuffers.accept(task.elements.elementCount,
+                           task.destinationRange.size);
+    pool.rhsBuffers.accept(task.elements.elementCount,
+                           task.destinationRange.size);
     // Pair acquisition prevents two contexts each retaining only one source.
     // A scalar is replicated in its reserved RHS buffer without a VRF read.
+    // LHS is vs2 and RHS is vs1 or rs1, so vd = lhs op rhs keeps RVV order.
     state.bundle = ExecutionBundle{task.key,
                                    task.arithmetic.operation,
+                                   task.arithmetic.signedness,
                                    task.sewBits,
                                    task.elements,
                                    task.arithmetic.destination,
@@ -299,43 +335,56 @@ AraLane::prepareOperands(LaneFragmentState &state)
     wakeVrf();
 }
 
+TransferResult
+AraLane::sendToUnit(const LaneFragmentState &state)
+{
+    if (state.unit == ExecutionClass::FloatingPoint) {
+        return fpu.acceptBundle(state.bundle);
+    }
+    // Deterministic placement: the lowest-index instance that accepts.
+    // Busy instances record their own Retry; the class counts a retry
+    // only when no instance accepts.
+    for (auto &alu : alus) {
+        if (alu->acceptBundle(state.bundle) == TransferResult::Accepted) {
+            return TransferResult::Accepted;
+        }
+    }
+    return TransferResult::Retry;
+}
+
 void
 AraLane::tryExecute(LaneFragmentState &state)
 {
+    auto &pool = unitClass(state.unit);
     if (!state.resultReserved) {
-        if (resultBundles == parameters.resultEntries) {
-            ++resultWaitCycles;
+        if (pool.resultBundles == pool.parameters.resultEntries) {
+            ++pool.resultWaitCycles;
             return;
         }
-        ++resultBundles;
+        ++pool.resultBundles;
         state.resultReserved = true;
-        resultBuffers.accept(state.task.elements.elementCount,
-                             state.task.destinationRange.size);
+        pool.resultBuffers.accept(state.task.elements.elementCount,
+                                  state.task.destinationRange.size);
     }
     // The single reservation covers waiting for FU admission, execution,
     // retained data and writeback. FU capacity is a different resource.
     state.phase = Phase::WaitExecution;
-    TransferResult accepted;
-    if (state.task.fpContext) {
-        accepted = fpu.acceptBundle(state.bundle);
-    } else {
-        accepted = alu.acceptBundle(state.bundle);
-    }
+    const auto accepted = sendToUnit(state);
     if (accepted == TransferResult::Retry) {
         panic_if(state.phase != Phase::WaitExecution,
                  "FU responded to a rejected lane bundle");
-        ++executionRetries;
+        ++pool.executionRetries;
         state.phase = Phase::Execute;
         return;
     }
     panic_if(accepted != TransferResult::Accepted,
              "Invalid execution unit transfer result");
-    panic_if(!state.operandsReserved || !operandBundles,
+    panic_if(!state.operandsReserved || !pool.operandBundles,
              "Missing operand reservation at execution admission");
     state.operandsReserved = false;
-    --operandBundles;
-    lhsBuffers.complete();
-    rhsBuffers.complete();
+    --pool.operandBundles;
+    pool.lhsBuffers.complete();
+    pool.rhsBuffers.complete();
     // The FU owns its bounded copy until result delivery. Release lane bytes
     // rather than keeping an unaccounted second operand buffer in each slot.
     ByteBuffer().swap(state.bundle.lhs);
@@ -370,20 +419,34 @@ AraLane::evaluate()
             prepareOperands(*contexts[i]);
         }
     }
-    // Start at most one bundle per edge, in admission order. A younger ready
-    // fragment, of this or a later task, cannot bypass an older fragment
-    // still collecting operands.
+    // Start at most one bundle per class and edge. ALU work is evaluated
+    // first; the order between classes has no effect because they share
+    // no buffers or units.
+    issue(order, ExecutionClass::IntegerAlu);
+    issue(order, ExecutionClass::FloatingPoint);
+    wakeup();
+}
+
+void
+AraLane::issue(const std::vector<std::size_t> &order, ExecutionClass unit)
+{
+    // In admission order within the class. A younger ready fragment of this
+    // class, of this or a later task, cannot bypass an older fragment of
+    // the class still collecting operands. Fragments of the other class are
+    // skipped: a retained FP division does not stall integer work.
     for (const auto i : order) {
         auto &state = *contexts[i];
+        if (state.unit != unit) {
+            continue;
+        }
         if (state.phase == Phase::Prepare || state.phase == Phase::Read) {
-            break;
+            return;
         }
         if (state.phase == Phase::Execute) {
             tryExecute(state);
-            break;
+            return;
         }
     }
-    wakeup();
 }
 
 void
@@ -469,13 +532,14 @@ AraLane::recvVrfWriteAck(const WriteAck &ack)
             continue;
         }
         auto &state = *context;
+        auto &pool = unitClass(state.unit);
         panic_if(state.phase != Phase::Write || !state.pending[2]->granted ||
-                     !state.resultReserved || !resultBundles,
+                     !state.resultReserved || !pool.resultBundles,
                  "Lane WriteAck without a granted writeback reservation");
         state.pending[2].reset();
         state.resultReserved = false;
-        --resultBundles;
-        resultBuffers.complete();
+        --pool.resultBundles;
+        pool.resultBuffers.complete();
         writebacks.complete();
         state.phase = Phase::Finish;
         wakeup();

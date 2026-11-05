@@ -78,14 +78,30 @@ operator!=(const VectorConfig &lhs, const VectorConfig &rhs)
 
 /**
  * Operación que MinorCPU describe y TaskDistributor entrega a las lanes.
- * Add selecciona aritmética entera; FloatAdd selecciona la FPU del backend.
  * Ninguna unidad necesita volver a decodificar instrucciones.
+ *
+ * Todas siguen la forma RVV vd[i] = vs2[i] op (vs1[i] | rs1): el primer
+ * operando (ArithmeticCommand::vectorSource) es vs2 y el segundo es vs1 o
+ * el escalar rs1. El orden importa en Divide, Remainder y FloatDivide.
+ *
+ * - Add, Multiply: enteros; Multiply conserva los SEW bits bajos.
+ * - Divide, Remainder: enteros; el signo viaja en ElementSignedness.
+ * - FloatAdd: binary16 interno y binary32 desde CPU.
+ * - FloatMultiply, FloatDivide: binary32.
+ *
+ * La ficha de OperationTraits decide la unidad y los anchos admitidos;
+ * que un valor exista aquí no implica que la CPU lo genere.
  */
 enum class ArithmeticOperation : uint8_t
 {
     Invalid,
     Add,
     FloatAdd,
+    Multiply,
+    Divide,
+    Remainder,
+    FloatMultiply,
+    FloatDivide,
 };
 
 /**
@@ -101,7 +117,9 @@ enum class ElementWidthMode : uint8_t
 
 /**
  * Interpretación del signo que MinorCPU indica en el comando aritmético.
- * Admisión exige NotApplicable para la suma de la versión inicial.
+ * Divide y Remainder exigen Signed (vdiv, vrem) o Unsigned (vdivu, vremu);
+ * las demás operaciones exigen NotApplicable, porque sus bits de resultado
+ * no dependen del signo. OperationTraits declara qué caso aplica.
  */
 enum class ElementSignedness : uint8_t
 {

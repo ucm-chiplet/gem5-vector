@@ -33,6 +33,7 @@ los recursos y comprueba que los valores se pueden usar juntos en C++.
 from dataclasses import (
     dataclass,
     field,
+    fields,
 )
 from typing import Tuple
 
@@ -50,38 +51,67 @@ class VrfConfiguration:
 
 @dataclass(frozen=True)
 class ExecutionConfiguration:
-    """Tamaño, capacidad y tiempos de una unidad de cálculo.
+    """Recursos comunes de una clase de unidad de cálculo en cada lane.
 
-    width_bytes limita los bytes de cada grupo de elementos. latency cuenta
-    los ciclos hasta responder; initiation_interval, los ciclos entre inicios.
-    La capacidad cuenta bundles aceptados sin resultado entregado. La lane
-    reserva recepción antes de enviar. La fase 3 mantiene width_bytes igual
-    a la palabra del VRF, con latencia e intervalo positivos e independientes.
+    width_bytes limita los bytes de cada bundle y se mantiene igual a la
+    palabra del VRF. capacity cuenta bundles aceptados sin resultado
+    entregado, por instancia. operand_entries_per_source y result_entries
+    son los buffers que la lane reserva para esta clase; una clase ocupada
+    no retiene los de la otra, como las colas por unidad de Ara. Los buffers
+    de cada fuente se reservan por parejas; el escalar ocupa un RHS
+    replicado sin leer VRF. Un resultado se reserva hasta WriteAck.
     """
 
     width_bytes: int = 0  # Cero usa el tamaño de palabra del VRF.
     capacity: int = 1
-    latency: int = 1  # Ciclos del modelo; no es una medida de hardware.
-    initiation_interval: int = 1
+    operand_entries_per_source: int = 1
+    result_entries: int = 1
+
+
+@dataclass(frozen=True)
+class AluConfiguration(ExecutionConfiguration):
+    """ALU entera: perfil temporal por operación, en ciclos de la VPU.
+
+    Suma y multiplicación son segmentadas. División y resto usan un divisor
+    no segmentado: su intervalo de iniciación es su latencia, que se da por
+    SEW en el orden 8/16/32/64. Son parámetros del modelo, no latencias de
+    hardware verificadas.
+    """
+
+    add_latency: int = 1
+    add_initiation_interval: int = 1
+    multiply_latency: int = 3
+    multiply_initiation_interval: int = 1
+    divide_latencies: Tuple[int, ...] = (10, 18, 34, 66)
+
+
+@dataclass(frozen=True)
+class FpuConfiguration(ExecutionConfiguration):
+    """FPU: pipeline de suma/multiplicación y divisor FP32 no segmentado.
+
+    capacity se aplica al pipeline; el divisor admite un bundle cada vez.
+    Son parámetros del modelo, no latencias de hardware verificadas.
+    """
+
+    add_multiply_latency: int = 4
+    add_multiply_initiation_interval: int = 1
+    divide_latency: int = 12
 
 
 @dataclass(frozen=True)
 class LaneConfiguration:
     """Recursos por lane para fragmentos de las instrucciones activas.
 
-    task_entries limita contextos hasta confirmar writeback. Los buffers de
-    cada fuente se reservan por parejas; el escalar ocupa un RHS replicado
-    sin leer VRF. result_entries es el total por lane, desde la reserva previa
-    a ejecución hasta WriteAck. alus_per_lane permanece en uno en fase 3.
+    task_entries limita contextos hasta confirmar writeback, compartidos por
+    ALUs y FPU. alus_per_lane crea instancias de ALU independientes con la
+    misma configuración; no cambia el ancho de cada bundle.
     """
 
     task_entries: int = 4
-    operand_entries_per_source: int = 1
-    result_entries: int = 1
     max_bundle_bytes: int = 0
     alus_per_lane: int = 1
-    alu: ExecutionConfiguration = field(default_factory=ExecutionConfiguration)
-    fpu: ExecutionConfiguration = field(default_factory=ExecutionConfiguration)
+    alu: AluConfiguration = field(default_factory=AluConfiguration)
+    fpu: FpuConfiguration = field(default_factory=FpuConfiguration)
 
 
 @dataclass(frozen=True)
@@ -155,9 +185,10 @@ class VpuConfiguration:
     de fase 2.2. supported_sews y supported_lmuls habilitan su intersección
     con ese perfil, no todas las parejas del producto cartesiano. La fase 3
     temporiza sus recursos locales y la fase 4 agrupa la memoria unit-stride
-    en bloques, sin varias ALUs ni red. La fase 5 admite hasta
-    max_active_commands comandos activos independientes; la memoria sigue
-    siendo una barrera. LMUL usa exponentes de dos (-3 para mf8, 3 para m8).
+    en bloques, sin red. La fase 5 admite hasta max_active_commands
+    comandos activos independientes; la memoria sigue siendo una barrera.
+    La fase 6 añade Mul/Div/resto enteros, FP32 y varias ALUs por lane.
+    LMUL usa exponentes de dos (-3 para mf8, 3 para m8).
     Los predeterminados conservan 16/32 bits y m1 y activan la concurrencia
     (cuatro comandos y cuatro contextos por lane); las rutas CPU se
     documentan por separado.
@@ -202,10 +233,6 @@ class VpuConfiguration:
             "max_active_commands": self.max_active_commands,
             "target_byte_order": self.target_byte_order,
             "lane_task_entries": self.lane.task_entries,
-            "operand_buffer_entries_per_source": (
-                self.lane.operand_entries_per_source
-            ),
-            "result_buffer_entries": self.lane.result_entries,
             "max_bundle_bytes": self.lane.max_bundle_bytes,
             "alus_per_lane": self.lane.alus_per_lane,
             "memory_max_block_bytes": self.vlsu.max_block_bytes,
@@ -231,16 +258,15 @@ class VpuConfiguration:
             ),
             "interconnect_transit_latency": self.interconnect.transit_latency,
         }
-        # ALU y FPU comparten campos: basta añadir el prefijo de cada unidad.
+        # Cada campo de la ALU o la FPU se convierte en el parámetro con el
+        # prefijo de su unidad; las tuplas se copian como listas.
         for name in ("alu", "fpu"):
             unit = getattr(self.lane, name)
-            for member in (
-                "width_bytes",
-                "capacity",
-                "latency",
-                "initiation_interval",
-            ):
-                result[f"{name}_{member}"] = getattr(unit, member)
+            for member in fields(unit):
+                value = getattr(unit, member.name)
+                if isinstance(value, tuple):
+                    value = list(value)
+                result[f"{name}_{member.name}"] = value
         # Los campos del banco siguen la misma regla, con el prefijo bank_.
         for member in (
             "read_ports",

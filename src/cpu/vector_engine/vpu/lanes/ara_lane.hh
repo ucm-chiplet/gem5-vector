@@ -5,11 +5,14 @@
 
 #include <array>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "cpu/vector_engine/common/lane_completion.hh"
 #include "cpu/vector_engine/common/module_stats.hh"
+#include "cpu/vector_engine/common/operation_traits.hh"
 #include "cpu/vector_engine/vpu/lanes/alu.hh"
 #include "cpu/vector_engine/vpu/lanes/fpu.hh"
 #include "cpu/vector_engine/vpu/register_file/address_mapper.hh"
@@ -27,9 +30,21 @@ namespace gem5::vector_engine
  * Los contextos se ordenan por admisión. El distribuidor entrega en cada
  * lane las tareas en orden de inicio y los fragmentos de cada tarea en
  * orden, así que la admisión coincide con la antigüedad del fragmento.
- * Reserva conjuntamente ambos buffers de operandos antes de publicar las
- * lecturas y reserva salida antes de enviar a una FU. El escalar capturado
+ *
+ * Cada fragmento pertenece a una clase de unidad (grupo de ALUs o FPU),
+ * según la ficha de su operación. Cada clase tiene sus buffers de
+ * operandos y resultados, como las colas por unidad de Ara: una división
+ * FP retenida no ocupa los créditos de las ALUs. Reserva conjuntamente
+ * ambos buffers de operandos de su clase antes de publicar las lecturas y
+ * reserva un resultado antes de enviar a una unidad. El escalar capturado
  * ocupa su buffer replicado, pero no solicita un puerto de lectura al VRF.
+ *
+ * En cada ciclo se inicia como máximo un bundle por clase, en orden de
+ * admisión dentro de la clase: un fragmento joven no adelanta a otro de su
+ * clase que aún reúne operandos, pero sí a uno de la otra clase. Esto no
+ * reordena el inicio de instrucciones, que sigue siendo FIFO en el
+ * sequencer. Un bundle ALU va a la instancia de menor índice que lo acepte.
+ * Contextos, puertos del VRF y writeback siguen siendo compartidos.
  *
  * Los accesos se presentan persistentemente al LRF por contexto y papel.
  * Cada retorno se localiza por su clave, nunca por orden de llegada.
@@ -89,11 +104,33 @@ class AraLane
         Tick publishedAt;
         bool granted = false;
     };
+    /**
+     * Buffers y esperas de una clase de unidad en esta lane. Los contadores
+     * separan la espera de operandos (lectura), de resultados (writeback)
+     * y los rechazos de la unidad (cálculo).
+     */
+    struct UnitClassState : public statistics::Group
+    {
+        UnitClassState(statistics::Group *parent, const std::string &name,
+                       const ExecutionParameters &parameters);
+
+        const ExecutionParameters &parameters;
+        ModuleStats lhsBuffers;
+        ModuleStats rhsBuffers;
+        ModuleStats resultBuffers;
+        statistics::Scalar operandWaitCycles;
+        statistics::Scalar resultWaitCycles;
+        statistics::Scalar executionRetries;
+        uint32_t operandBundles = 0;
+        uint32_t resultBundles = 0;
+    };
     struct LaneFragmentState
     {
         LaneTask task;
         // Orden de admisión en esta lane; fija la prioridad de inicio.
         uint64_t admission = 0;
+        // Clase de unidad que ejecuta el fragmento, fijada al admitirlo.
+        ExecutionClass unit = ExecutionClass::IntegerAlu;
         Phase phase = Phase::Prepare;
         ExecutionBundle bundle;
         bool lhsReady = false;
@@ -105,16 +142,12 @@ class AraLane
     };
 
     ModuleStats stats;
-    ModuleStats lhsBuffers;
-    ModuleStats rhsBuffers;
-    ModuleStats resultBuffers;
     // Phase accounting within the result reservation, not another resource.
     ModuleStats writebacks;
     statistics::Scalar vrfReads;
     statistics::Scalar vrfWrites;
-    statistics::Scalar operandWaitCycles;
-    statistics::Scalar resultWaitCycles;
-    statistics::Scalar executionRetries;
+    UnitClassState aluClass;
+    UnitClassState fpuClass;
     ClockedObject &owner;
     const AddressMapper &mapper;
     const LaneParameters &parameters;
@@ -123,10 +156,9 @@ class AraLane
     VrfWakeup wakeVrf;
     CompletionSender sendCompletion;
     std::vector<std::optional<LaneFragmentState>> contexts;
-    uint32_t operandBundles = 0;
-    uint32_t resultBundles = 0;
     uint64_t nextAdmission = 0;
-    Alu alu;
+    // Instancias independientes; unique_ptr porque Alu no se puede mover.
+    std::vector<std::unique_ptr<Alu>> alus;
     Fpu fpu;
     EventFunctionWrapper progressEvent;
 
@@ -136,8 +168,11 @@ class AraLane
                                 const VectorRegRef &reg,
                                 const ByteRange &range);
     std::vector<std::size_t> orderedContexts() const;
+    UnitClassState &unitClass(ExecutionClass unit);
     void prepareOperands(LaneFragmentState &state);
+    void issue(const std::vector<std::size_t> &order, ExecutionClass unit);
     void tryExecute(LaneFragmentState &state);
+    TransferResult sendToUnit(const LaneFragmentState &state);
     std::optional<VrfOffer> peekAccess(std::size_t context,
                                        AccessRole role) const;
     void recvVrfGrant(std::size_t context, AccessRole role,

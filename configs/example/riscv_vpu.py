@@ -50,6 +50,8 @@ from m5.objects import (
     VoltageDomain,
 )
 from m5.objects.configuration import (
+    AluConfiguration,
+    FpuConfiguration,
     LaneConfiguration,
     VpuConfiguration,
     VrfConfiguration,
@@ -77,6 +79,65 @@ parser.add_argument(
     type=int,
     default=LaneConfiguration.task_entries,
     help="Fragment contexts per lane, shared by active commands",
+)
+# Unidades de cálculo (fase 6 del hito 2). Los valores por defecto coinciden
+# con AluConfiguration y FpuConfiguration; los tiempos están en ciclos de
+# la VPU y son parámetros del modelo, no latencias de Ara.
+parser.add_argument(
+    "--vpu-alus-per-lane",
+    type=int,
+    default=LaneConfiguration.alus_per_lane,
+    help="Independent ALU instances per lane",
+)
+parser.add_argument(
+    "--vpu-alu-multiply-latency",
+    type=int,
+    default=AluConfiguration.multiply_latency,
+    help="Pipelined integer multiply latency",
+)
+parser.add_argument(
+    "--vpu-alu-divide-latencies",
+    type=int,
+    nargs=4,
+    default=list(AluConfiguration.divide_latencies),
+    metavar=("SEW8", "SEW16", "SEW32", "SEW64"),
+    help="Unpipelined integer divide/remainder latency per SEW",
+)
+parser.add_argument(
+    "--vpu-fpu-add-multiply-latency",
+    type=int,
+    default=FpuConfiguration.add_multiply_latency,
+    help="Pipelined FP add/multiply latency",
+)
+parser.add_argument(
+    "--vpu-fpu-divide-latency",
+    type=int,
+    default=FpuConfiguration.divide_latency,
+    help="Unpipelined FP32 divide latency",
+)
+parser.add_argument(
+    "--vpu-alu-operand-entries",
+    type=int,
+    default=AluConfiguration.operand_entries_per_source,
+    help="ALU-class operand buffers per source and lane",
+)
+parser.add_argument(
+    "--vpu-alu-result-entries",
+    type=int,
+    default=AluConfiguration.result_entries,
+    help="ALU-class result buffers per lane",
+)
+parser.add_argument(
+    "--vpu-fpu-operand-entries",
+    type=int,
+    default=FpuConfiguration.operand_entries_per_source,
+    help="FPU-class operand buffers per source and lane",
+)
+parser.add_argument(
+    "--vpu-fpu-result-entries",
+    type=int,
+    default=FpuConfiguration.result_entries,
+    help="FPU-class result buffers per lane",
 )
 parser.add_argument("binary", type=Path, help="RV64 SE executable")
 parser.add_argument("arguments", nargs=argparse.REMAINDER)
@@ -106,7 +167,22 @@ if not args.no_offload:
     system.cpu.vectorEngine = VectorEngine.from_configuration(
         VpuConfiguration(
             vrf=VrfConfiguration(vlen_bytes=32),
-            lane=LaneConfiguration(task_entries=args.vpu_lane_task_entries),
+            lane=LaneConfiguration(
+                task_entries=args.vpu_lane_task_entries,
+                alus_per_lane=args.vpu_alus_per_lane,
+                alu=AluConfiguration(
+                    operand_entries_per_source=args.vpu_alu_operand_entries,
+                    result_entries=args.vpu_alu_result_entries,
+                    multiply_latency=args.vpu_alu_multiply_latency,
+                    divide_latencies=tuple(args.vpu_alu_divide_latencies),
+                ),
+                fpu=FpuConfiguration(
+                    operand_entries_per_source=args.vpu_fpu_operand_entries,
+                    result_entries=args.vpu_fpu_result_entries,
+                    add_multiply_latency=args.vpu_fpu_add_multiply_latency,
+                    divide_latency=args.vpu_fpu_divide_latency,
+                ),
+            ),
             command_queue_entries=args.vpu_command_queue_entries,
             max_active_commands=args.vpu_max_active_commands,
         )

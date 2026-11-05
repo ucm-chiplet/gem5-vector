@@ -38,7 +38,8 @@ class VectorSupport
                                          uint16_t sew_bits);
     static bool supportsFloatingPointOperation(ArithmeticOperation operation,
                                                uint16_t sew_bits);
-    // Capacidades del backend: FloatAdd sólo admite dos fuentes vectoriales.
+    // Capacidades del backend: forma .vv/.vx, ancho y signo según la ficha.
+    // Las operaciones FP sólo admiten dos fuentes vectoriales.
     static bool supportsArithmetic(const ArithmeticCommand &arithmetic,
                                    uint16_t sew_bits);
     static bool
@@ -89,8 +90,9 @@ class VectorSupport
     /**
      * Revisa además que los elementos quepan y que la operación esté
      * implementada y habilitada. Se llama incluso cuando la cola está llena.
-     * Pasar esta revisión no reserva espacio. Los comandos FP de CPU siguen
-     * rechazándose hasta implementar su fase correspondiente.
+     * Pasar esta revisión no reserva espacio. Desde CPU se admiten sólo
+     * los anchos declarados en offloadWidths de cada ficha: FP32 para las
+     * operaciones FP y 8/16/32/64 bits para las enteras.
      */
     static std::optional<RejectionReason>
     checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
