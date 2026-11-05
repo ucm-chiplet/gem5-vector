@@ -17,7 +17,10 @@ instrucción en curso. La [entrega VPU de fase 4](
 por bloques con un bloque activo y accesos al VRF por palabra. La [entrega
 VPU de fase 5](<Fase 5 - Concurrencia en la VPU.md>) admite varios comandos
 aritméticos independientes activos, con scoreboard conservador; Minor aún
-despacha uno cada vez, de modo que su parte CPU queda pendiente. Estas
+despacha uno cada vez, de modo que su parte CPU queda pendiente. La
+[entrega VPU de fase 6](<Fase 6 - FPU, operaciones enteras y varias ALUs.md>)
+añade en backend Mul/Div/resto enteros, FP32 y varias ALUs por lane; Minor
+todavía no decodifica esas operaciones. Estas
 entregas mantienen las responsabilidades CPU y no acreditan por sí solas
 ejecución funcional de toda la matriz ni cierre de integración CPU--VPU.
 El resto del diseño conserva su estado de propuesta.
@@ -42,6 +45,11 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
 - [Entrega VPU de fase 5](<Fase 5 - Concurrencia en la VPU.md>): comandos
   activos, scoreboard, reglas de inicio, valores por defecto y pendientes
   de Minor.
+- [Entrega VPU de fase 6](<Fase 6 - FPU, operaciones enteras y varias ALUs.md>):
+  semántica entera y FP32, perfiles temporales, clases de unidad, matriz de
+  soporte y diferencias con Ara.
+- [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): parte CPU
+  que falta en las fases 2.1--2.6.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):
   orden, tareas, interfaces, resultados y criterios de cierre por fase.
 - [Plan de evolución: hitos 2 a 5](<../Plan de evolución - Hitos 2 a 5.md>):
@@ -76,7 +84,7 @@ La FPU sólo ejecuta coma flotante: suma, multiplicación y división FP32.
 La multiplicación, división y resto enteros se asignan provisionalmente a
 la ALU, sin unidades dedicadas adicionales. El objetivo entero es admitir
 8/16/32/64 bits, tanto vector--vector (`.vv`) como vector--escalar entero
-(`.vx`). Los perfiles temporales se concretarán en la propuesta de fase 6.
+(`.vx`). La entrega VPU de fase 6 fija sus perfiles temporales iniciales.
 Una división no tiene por qué ocupar el mismo tiempo que una suma. Cada fase
 requerirá una propuesta y aprobación de código independientes.
 
