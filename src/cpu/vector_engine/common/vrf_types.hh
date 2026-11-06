@@ -50,20 +50,26 @@ enum class VrfRequesterKind : uint8_t
 {
     Lane,
     Vlsu,
+    Slide,
 };
 
 struct VrfRequester
 {
     VrfRequesterKind kind = VrfRequesterKind::Vlsu;
-    // Lane del emisor, nunca el destino de un acceso VLSU. Para Vlsu queda
-    // vacío; la lane destino se indica al entregar el acceso al LRF.
+    // Lane del emisor, nunca el destino de un acceso de una unidad global.
+    // Para Vlsu y Slide queda vacío; la lane destino se indica al entregar
+    // el acceso al LRF.
     std::optional<LaneId> laneId;
 
     bool
     valid() const
     {
-        return (kind == VrfRequesterKind::Lane && laneId.has_value()) ||
-               (kind == VrfRequesterKind::Vlsu && !laneId);
+        if (kind == VrfRequesterKind::Lane) {
+            return laneId.has_value();
+        }
+        return (kind == VrfRequesterKind::Vlsu ||
+                kind == VrfRequesterKind::Slide) &&
+               !laneId;
     }
 };
 

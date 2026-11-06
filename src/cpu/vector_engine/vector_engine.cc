@@ -43,6 +43,7 @@
 #include "cpu/vector_engine/vpu/interconnect/vector_interconnect.hh"
 #include "cpu/vector_engine/vpu/lanes/ara_lane.hh"
 #include "cpu/vector_engine/vpu/register_file/lane_register_file.hh"
+#include "cpu/vector_engine/vpu/slide/slide_unit.hh"
 #include "cpu/vector_engine/vpu/vlsu/ara_vlsu.hh"
 #include "sim/system.hh"
 
@@ -123,6 +124,12 @@ VectorEngine::makeConfiguration(const Params &params)
                  !network.sourceBytesPerCycle ||
                  !network.destinationBytesPerCycle,
              "Invalid interconnect capacity contract");
+    config.slide = {params.slide_vrf_inputs_per_lane,
+                    params.slide_source_buffers_per_lane,
+                    params.slide_assembly_buffers_per_lane};
+    fatal_if(!config.slide.currentProfile(),
+             "Slide unit requires positive VRF inputs and source buffers "
+             "and at least two assembly buffers per lane");
 
     // Comprobar primero dimensiones y límites generales de esta fase.
     const auto bytes = config.vrf.vlenBytes;
@@ -157,6 +164,12 @@ VectorEngine::makeConfiguration(const Params &params)
                   sizeof(VrfRequestPort)});
     check_extent({config.vrf.numLanes, config.vlsu.vrfInputsPerLane,
                   sizeof(VrfRequestPort)});
+    check_extent({config.vrf.numLanes, config.slide.vrfInputsPerLane,
+                  sizeof(VrfRequestPort)});
+    check_extent({config.vrf.numLanes, config.slide.assemblyBuffersPerLane,
+                  word_bytes});
+    check_extent(
+        {config.vrf.numLanes, config.slide.sourceBuffersPerLane, word_bytes});
     for (const auto *unit : {&alu.unit, &fpu.unit}) {
         check_extent({config.vrf.numLanes, unit->operandEntriesPerSource, 2,
                       word_bytes});
@@ -266,7 +279,9 @@ VectorEngine::VectorEngine(const Params &params)
             return distributor->acceptTask(task);
         },
         // Entrega la tarea de carga o store a la VLSU.
-        [this](const MemoryTask &task) { return vlsu->acceptTask(task); });
+        [this](const MemoryTask &task) { return vlsu->acceptTask(task); },
+        // Entrega la slide a SlideUnit.
+        [this](const SlideTask &task) { return slideUnit->acceptTask(task); });
 
     // Cada comando aritmético activo tiene como máximo una tarea en el
     // distribuidor, de modo que su capacidad deriva de max_active_commands.
@@ -304,7 +319,16 @@ VectorEngine::VectorEngine(const Params &params)
                     vlsu->recvVrfReadResponse(response);
                 },
                 // En una carga, el VRF confirma la escritura a la VLSU.
-                [this](const WriteAck &ack) { vlsu->recvVrfWriteAck(ack); }}));
+                [this](const WriteAck &ack) { vlsu->recvVrfWriteAck(ack); }},
+            LaneRegisterFile::ResponsePort{
+                // SlideUnit recibe las palabras fuente leídas.
+                [this](const ReadResponse &response) {
+                    slideUnit->recvVrfReadResponse(response);
+                },
+                // Y la confirmación de cada palabra destino escrita.
+                [this](const WriteAck &ack) {
+                    slideUnit->recvVrfWriteAck(ack);
+                }}));
 
         lanes.push_back(std::make_unique<AraLane>(
             *this, mapper, vpuParameters.lane, lane_id, targetByteOrder,
@@ -355,7 +379,22 @@ VectorEngine::VectorEngine(const Params &params)
         });
 
     // Bind every persistent input before any module can receive work.
-    // Context/role indices precede the VLSU inputs; the order is stable.
+    slideUnit = std::make_unique<SlideUnit>(
+        *this, mapper, vpuParameters.slide, *network, targetByteOrder,
+        // Lecturas de fuente y escrituras de destino arbitran en su LRF.
+        [this](LaneId lane_id) {
+            panic_if(lane_id >= registerFiles.size(),
+                     "VectorEngine received an invalid VRF destination");
+            registerFiles[lane_id]->wakeup();
+        },
+        // Informa al sequencer de la slide terminada.
+        [this](const UnitCompletion &completion) {
+            sequencer->recvCompletion(completion);
+        });
+
+    // Context/role indices precede the VLSU inputs, then the slide inputs;
+    // the order is stable. Each lane receives its network packets through
+    // its slide agent.
     for (LaneId lane_id = 0; lane_id < num_lanes; ++lane_id) {
         for (auto &port : lanes[lane_id]->vrfPorts()) {
             registerFiles[lane_id]->bindRequestPort(std::move(port));
@@ -365,6 +404,12 @@ VectorEngine::VectorEngine(const Params &params)
             registerFiles[lane_id]->bindRequestPort(
                 vlsu->vrfPort(lane_id, input));
         }
+        for (uint32_t input = 0; input < vpuParameters.slide.vrfInputsPerLane;
+             ++input) {
+            registerFiles[lane_id]->bindRequestPort(
+                slideUnit->vrfPort(lane_id, input));
+        }
+        network->bindReceiver(lane_id, slideUnit->receiver(lane_id));
     }
 }
 
@@ -379,7 +424,8 @@ VectorEngine::~VectorEngine()
         deschedule(drainEvent);
     }
     // LRF idle checks consult bound producer ports. Destroy the arbiters
-    // while lanes and VLSU still exist, before reverse member destruction.
+    // while lanes, VLSU and slide unit still exist, before reverse member
+    // destruction.
     registerFiles.clear();
 }
 
@@ -546,8 +592,8 @@ bool
 VectorEngine::isIdle() const
 {
     if (!commandQueue->isIdle() || !sequencer->isIdle() ||
-        !distributor->isIdle() || !vlsu->isIdle() || !network->isIdle() ||
-        !memoryBackend->isIdle()) {
+        !distributor->isIdle() || !vlsu->isIdle() || !slideUnit->isIdle() ||
+        !network->isIdle() || !memoryBackend->isIdle()) {
         return false;
     }
     for (const auto &lane : lanes) {

@@ -177,6 +177,21 @@ class InterconnectConfiguration:
 
 
 @dataclass(frozen=True)
+class SlideConfiguration:
+    """Recursos de SlideUnit en cada lane para vslide1up y vslide1down.
+
+    vrf_inputs_per_lane son las entradas que ofrece a cada LRF.
+    source_buffers_per_lane son palabras fuente leídas hasta copiar o
+    entregar a la red sus bytes. assembly_buffers_per_lane son palabras
+    destino en construcción hasta su WriteAck; hacen falta al menos dos.
+    """
+
+    vrf_inputs_per_lane: int = 1
+    source_buffers_per_lane: int = 1
+    assembly_buffers_per_lane: int = 2
+
+
+@dataclass(frozen=True)
 class VpuConfiguration:
     """Reúne las elecciones para construir una VPU en una sola descripción.
 
@@ -191,7 +206,8 @@ class VpuConfiguration:
     en bloques, sin red. La fase 5 admite hasta max_active_commands
     comandos activos independientes; la memoria sigue siendo una barrera.
     La fase 6 añade Mul/Div/resto enteros, FP32 y varias ALUs por lane.
-    La fase 7 construye la red entre lanes (crossbar) detrás de su interfaz.
+    La fase 7 añade la red entre lanes (crossbar) y las slides de un
+    elemento sin predicación.
     LMUL usa exponentes de dos (-3 para mf8, 3 para m8).
     Los predeterminados conservan 16/32 bits y m1 y activan la concurrencia
     (cuatro comandos y cuatro contextos por lane); las rutas CPU se
@@ -208,6 +224,7 @@ class VpuConfiguration:
     interconnect: InterconnectConfiguration = field(
         default_factory=InterconnectConfiguration
     )
+    slide: SlideConfiguration = field(default_factory=SlideConfiguration)
     supported_sews: Tuple[int, ...] = (16, 32)
     supported_lmuls: Tuple[int, ...] = (0,)
     elen_bits: int = 64
@@ -262,6 +279,9 @@ class VpuConfiguration:
             ),
             "interconnect_transit_latency": self.interconnect.transit_latency,
         }
+        # Los campos de SlideUnit toman el prefijo slide_.
+        for member in fields(self.slide):
+            result[f"slide_{member.name}"] = getattr(self.slide, member.name)
         # Cada campo de la ALU o la FPU se convierte en el parámetro con el
         # prefijo de su unidad; las tuplas se copian como listas.
         for name in ("alu", "fpu"):

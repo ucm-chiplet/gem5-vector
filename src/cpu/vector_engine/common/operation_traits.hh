@@ -48,7 +48,8 @@ enum class ExecutionClass : uint8_t
 {
     IntegerAlu,
     FloatingPoint,
-    Memory
+    Memory,
+    Slide
 };
 
 /** Tabla de anchos de una ficha; un cero deja una posición sin usar. */
@@ -64,7 +65,10 @@ using OperationWidths = std::array<uint16_t, IntegerElementWidths.size()>;
  *
  * requiresSignedness indica si el comando debe elegir Signed o Unsigned
  * (división y resto) o dejar NotApplicable (el resto de operaciones).
- * La ficha no indica si la unidad está libre en este momento.
+ * destinationMayOverlapSource indica si el grupo destino puede coincidir
+ * con el de una fuente vectorial. vslide1up lo prohíbe: RVV reserva esa
+ * codificación. La unidad que lo admite debe conservar las fuentes que
+ * todavía tenga que leer. La ficha no indica si la unidad está libre.
  */
 struct OperationTraits
 {
@@ -77,6 +81,7 @@ struct OperationTraits
     bool requiresSignedness;
     bool mayMemoryFault;
     OperationWidths offloadWidths;
+    bool destinationMayOverlapSource;
 
     /** Indica si esta operación admite elementos de ese número de bits. */
     bool supportsWidth(uint16_t bits) const;
@@ -92,6 +97,8 @@ const OperationTraits *operationTraits(ArithmeticOperation operation);
 /** Busca la ficha de carga/store; devuelve nullptr para otras direcciones.
  */
 const OperationTraits *operationTraits(MemoryDirection direction);
+/** Busca la ficha de una slide; devuelve nullptr si no la conoce. */
+const OperationTraits *operationTraits(SlideOperation operation);
 
 /**
  * Enumera qué lee y qué escribe un comando ya validado. Incluye el ancho

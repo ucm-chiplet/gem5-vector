@@ -214,6 +214,29 @@ struct InterconnectParameters
 };
 
 /**
+ * Recursos de SlideUnit en cada lane. vrfInputsPerLane son las entradas
+ * persistentes que ofrece a cada LRF. sourceBuffersPerLane son palabras
+ * fuente leídas cuyos bytes aún no se han copiado o aceptado en la red.
+ * assemblyBuffersPerLane son palabras destino en construcción hasta su
+ * WriteAck; incluyen la recepción reservada de sus paquetes. Se exigen al
+ * menos dos para que una palabra fuente compartida por dos destinos
+ * consecutivos de la misma lane pueda leerse.
+ */
+struct SlideParameters
+{
+    uint32_t vrfInputsPerLane = 1;
+    uint32_t sourceBuffersPerLane = 1;
+    uint32_t assemblyBuffersPerLane = 2;
+
+    bool
+    currentProfile() const
+    {
+        return vrfInputsPerLane && sourceBuffersPerLane &&
+               assemblyBuffersPerLane >= 2;
+    }
+};
+
+/**
  * Configuración que VectorEngine conserva durante toda la simulación.
  * Cada módulo recibe su parte por referencia y no la modifica.
  */
@@ -230,6 +253,7 @@ struct VpuParameters
     VlsuParameters vlsu;
     MemoryBackendParameters memory;
     InterconnectParameters interconnect;
+    SlideParameters slide;
     MappingPolicyKind mapping = MappingPolicyKind::WordStriped;
 };
 

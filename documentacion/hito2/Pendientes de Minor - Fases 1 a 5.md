@@ -4,7 +4,9 @@ Informe del 4 de noviembre de 2026 sobre `f0566a6ae4` (rama `feature/vpu`).
 Recoge lo que falta en la parte CPU/Minor de las fases 2.1--2.5 para que
 las entregas VPU registradas sean utilizables desde un programa. El 5 de
 noviembre de 2026 se añade la [sección 2.6](#fase-26-operaciones-enteras-y-fp32)
-con los pendientes CPU de la [entrega VPU de fase 6][fase6]. No es una
+con los pendientes CPU de la [entrega VPU de fase 6][fase6], y la
+[sección 2.7](#fase-27-slides) con los de la [entrega VPU de fase 7][fase7].
+No es una
 propuesta de código ni modifica el alcance de ninguna fase: cada cambio
 seguirá requiriendo su propuesta y aprobación.
 
@@ -243,6 +245,28 @@ CPU--FPU--VRF--CPU) ni el 13 (Mul/Div/resto mediante la ALU) de la
 [sección 15.3][cierre]. Observar el progreso independiente de ALU y FPU con
 instrucciones distintas requiere además la parte CPU de 2.5.
 
+## Fase 2.7: slides
+
+La [entrega VPU de fase 7][fase7] admite en backend `vslide1up.vx` y
+`vslide1down.vx` (`vm=1`, 8/16/32/64 bits) mediante un `SlideCommand`
+propio y no modifica Minor. Las acciones de la [guía 2.7][responsabilidades]
+quedan así:
+
+| Pendiente | Estado | Detalle |
+| --- | --- | --- |
+| 1. Decode | Ausente | `decodeVectorOp()` no reconoce `vslide1up_vx` ni `vslide1down_vx` (`decode.cc:76-84`), que reciben `IllegalInstFault`. En gem5 son macro-operaciones (`VectorSlide1UpFormat`/`VectorSlide1DownFormat`, `decoder.isa:5741` y `5791`); Minor debe clasificar la macro-op y no despachar sus micro-ops. |
+| 2. Construcción del comando | Ausente | `DecodedVectorOp::payload` sólo admite `DecodedArithmeticOp` o `DecodedMemoryOp` (`vector_types.hh:102`). Falta una variante de slide y que `buildVectorCommand()` (`execute.cc`) genere `SlideCommand{operation, destination, vectorSource = vs2, scalar}`. Conviene leer `vd` y `vs2` de los campos de `machInst`, como en el punto 2 de 2.6. |
+| 3. Normalización del escalar | Reutilizable | La lectura de `rs1` y `ElementCodec::normalizeScalar(value, xlen, sew)` ya existen para `.vx` (`execute.cc:194-199`). Deben aplicarse una sola vez también al escalar de la slide: extender el signo si XLEN < SEW y conservar los bits bajos si XLEN > SEW. |
+| 4. Solapamiento en up | Rechazo en VPU, sin traducción | Admisión rechaza `vslide1up` con `vd == vs2` (`InvalidRegisterGroup`, codificación reservada por RVV). Minor debe convertir ese rechazo en instrucción ilegal antes de efectos, como el resto de rechazos. Down con `vd == vs2` es legal y lo resuelve la VPU. |
+| 5. Formas con máscara | Rechazo en VPU | `vm=0` se rechaza en admisión (`UnsupportedConfiguration`). Minor ya captura `masked` del bit 25. |
+| 6. Protocolo y retirada | Sin cambios | Se usa el mismo protocolo de reserva, aceptación, finalización y retirada. Minor no crea paquetes de red ni espera entregas individuales; espera la finalización del comando. Una slide no tiene `fpContext` ni produce flags. |
+| 7. `mstatus.VS` | Ausente | Igual que el punto 3 de 2.6: la ruta de offload no comprueba `VS=Off` antes de despachar. |
+
+Sin los puntos 1--3 no puede acreditarse el criterio 6 (slides desde
+programa, con la red en los casos que cruzan lanes) de la
+[sección 15.3][cierre]. El criterio 14 depende sólo de la VPU, pero su
+tráfico no se observa en un programa hasta resolver esos puntos.
+
 ## Evidencia pendiente común a las fases 1--5
 
 - **Ejecución de programas.** Las entregas 2--5 registran sólo compilación
@@ -268,7 +292,8 @@ código:
 - Operandos inmediatos (`.vi`): no forman parte de la matriz del hito 2.
 - Offload FP32, Mul/Div/resto y varias ALUs: fase 2.6, con sus
   pendientes CPU en la sección correspondiente de este informe.
-- `vslide1up.vx` y `vslide1down.vx`: fase 2.7.
+- `vslide1up.vx` y `vslide1down.vx`: fase 2.7, con sus pendientes CPU en
+  la sección correspondiente de este informe.
 - `vmin.vv` y cierre de Pathfinder: fase 2.8.
 - Predicación (`vm=0`), chaining y memoria concurrente: hito 3.
 
@@ -305,4 +330,5 @@ independientes con `sequencer.overlappedStarts > 0`.
 [fase4]: <Fase 4 - Memoria unit-stride por bloques.md>
 [fase5]: <Fase 5 - Concurrencia en la VPU.md>
 [fase6]: <Fase 6 - FPU, operaciones enteras y varias ALUs.md>
+[fase7]: <Fase 7 - Interconexión y slides.md>
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html

@@ -16,7 +16,8 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
                                    const AddressMapper &mapper,
                                    const BankParameters &parameters,
                                    LaneId lane_id, ResponsePort lane_responses,
-                                   ResponsePort vlsu_responses)
+                                   ResponsePort vlsu_responses,
+                                   ResponsePort slide_responses)
     : stats(&owner, "lrf" + std::to_string(lane_id), "VRF accesses"),
       reads(&stats, "reads", statistics::units::Count::get(),
             "Granted operand and VLSU reads"),
@@ -44,6 +45,7 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
       laneId(lane_id),
       laneResponses(std::move(lane_responses)),
       vlsuResponses(std::move(vlsu_responses)),
+      slideResponses(std::move(slide_responses)),
       arbitrationEvent([this] { arbitrate(); },
                        owner.name() + ".lrf" + std::to_string(lane_id) +
                            ".arbitrate",
@@ -53,7 +55,8 @@ LaneRegisterFile::LaneRegisterFile(ClockedObject &owner,
     const auto &geometry = mapper.geometry();
     fatal_if(laneId >= geometry.numLanes, "LRF identity outside VRF geometry");
     fatal_if(!laneResponses.sendRead || !laneResponses.sendWriteAck ||
-                 !vlsuResponses.sendRead || !vlsuResponses.sendWriteAck,
+                 !vlsuResponses.sendRead || !vlsuResponses.sendWriteAck ||
+                 !slideResponses.sendRead || !slideResponses.sendWriteAck,
              "LRF requires read and write acknowledgement endpoints");
     fatal_if(geometry.banksPerLane > std::numeric_limits<int>::max(),
              "LRF bank statistics exceed representable size");
@@ -335,10 +338,16 @@ LaneRegisterFile::responsePort(const VrfRequester &requester) const
     panic_if(!requester.valid() || (requester.kind == VrfRequesterKind::Lane &&
                                     *requester.laneId != laneId),
              "Invalid requester in an LRF response");
-    if (requester.kind == VrfRequesterKind::Lane) {
-        return laneResponses;
+    switch (requester.kind) {
+        case VrfRequesterKind::Lane:
+            return laneResponses;
+        case VrfRequesterKind::Vlsu:
+            return vlsuResponses;
+        case VrfRequesterKind::Slide:
+            return slideResponses;
+        default:
+            panic("Invalid requester kind in an LRF response");
     }
-    return vlsuResponses;
 }
 
 void

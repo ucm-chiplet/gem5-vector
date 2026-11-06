@@ -42,7 +42,8 @@ class LaneRegisterFile
 
     LaneRegisterFile(ClockedObject &owner, const AddressMapper &mapper,
                      const BankParameters &parameters, LaneId lane_id,
-                     ResponsePort lane_responses, ResponsePort vlsu_responses);
+                     ResponsePort lane_responses, ResponsePort vlsu_responses,
+                     ResponsePort slide_responses);
     ~LaneRegisterFile();
     LaneRegisterFile(const LaneRegisterFile &) = delete;
     LaneRegisterFile &operator=(const LaneRegisterFile &) = delete;
@@ -90,6 +91,7 @@ class LaneRegisterFile
     const LaneId laneId;
     ResponsePort laneResponses;
     ResponsePort vlsuResponses;
+    ResponsePort slideResponses;
     std::vector<std::unique_ptr<VectorRegBank>> banks;
     std::vector<std::vector<std::optional<PendingAccess>>> pending;
     std::vector<VrfRequestPort> inputs;

@@ -15,7 +15,7 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
                            CpuCompletionEndpoint &completion_endpoint,
                            uint32_t vlen_bytes, uint32_t max_active_commands,
                            ArithmeticSender send_arithmetic,
-                           MemorySender send_memory)
+                           MemorySender send_memory, SlideSender send_slide)
     : stats(&owner, "sequencer", "commands"),
       arithmeticCommands(&stats, "arithmeticCommands",
                          statistics::units::Count::get(),
@@ -24,6 +24,8 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
                    "Vector load commands started"),
       storeCommands(&stats, "storeCommands", statistics::units::Count::get(),
                     "Vector store commands started"),
+      slideCommands(&stats, "slideCommands", statistics::units::Count::get(),
+                    "Vector slide commands started"),
       emptyCommands(&stats, "emptyCommands", statistics::units::Count::get(),
                     "Commands completed without creating a backend task"),
       overlappedStarts(&stats, "overlappedStarts",
@@ -57,13 +59,14 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
       maxActiveCommands(max_active_commands),
       sendArithmetic(std::move(send_arithmetic)),
       sendMemory(std::move(send_memory)),
+      sendSlide(std::move(send_slide)),
       progressEvent([this] { evaluate(); }, owner.name() + ".ara_sequencer")
 {
     fatal_if(vlenBytes == 0, "AraSequencer requires nonzero VLEN");
     fatal_if(maxActiveCommands == 0,
              "AraSequencer requires at least one active command");
-    fatal_if(!sendArithmetic || !sendMemory,
-             "AraSequencer requires both task senders");
+    fatal_if(!sendArithmetic || !sendMemory || !sendSlide,
+             "AraSequencer requires all task senders");
     active.reserve(maxActiveCommands);
 }
 
@@ -173,6 +176,12 @@ AraSequencer::makeTask(const VectorCommand &command) const
                               config, *arithmetic, range, command.fpContext};
     }
 
+    if (const auto *slide = std::get_if<SlideCommand>(&command.payload)) {
+        // El rango es el de destino; SlideUnit deriva el de fuente.
+        return SlideTask{UnitTask{key, VectorUnitClass::Slide, elements},
+                         config, *slide, range};
+    }
+
     const auto &memory = std::get<MemoryCommand>(command.payload);
 
     return MemoryTask{UnitTask{key, VectorUnitClass::Vlsu, elements},
@@ -271,6 +280,8 @@ AraSequencer::start(const VectorCommand &command)
 {
     if (std::holds_alternative<ArithmeticCommand>(command.payload)) {
         ++arithmeticCommands;
+    } else if (std::holds_alternative<SlideCommand>(command.payload)) {
+        ++slideCommands;
     } else if (std::get<MemoryCommand>(command.payload).direction ==
                MemoryDirection::Load) {
         ++loadCommands;
@@ -328,6 +339,9 @@ AraSequencer::sendPendingTasks()
         if (const auto *arithmetic =
                 std::get_if<ArithmeticTask>(&*active[i].task)) {
             result = sendArithmetic(*arithmetic);
+        } else if (const auto *slide =
+                       std::get_if<SlideTask>(&*active[i].task)) {
+            result = sendSlide(*slide);
         } else {
             result = sendMemory(std::get<MemoryTask>(*active[i].task));
         }

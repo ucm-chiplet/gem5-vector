@@ -71,6 +71,21 @@ struct MemoryTask
     RequestorID requestorId = Request::invldRequestorId;
 };
 
+/**
+ * AraSequencer la crea para que SlideUnit ejecute una slide de un elemento.
+ * task.elements es el rango activo de destino [vstart, vl); destinationRange
+ * son sus bytes. Las fuentes no reutilizan ese rango: SlideUnit las deriva
+ * del desplazamiento; por ejemplo, up con vstart > 0 lee vs2[vstart-1].
+ * task.unit debe ser Slide.
+ */
+struct SlideTask
+{
+    UnitTask task;
+    VectorConfig config;
+    SlideCommand slide;
+    ByteRange destinationRange;
+};
+
 // AraSequencer crea una tarea para [vstart, vl) en la versión inicial.
 // El rango comienza en firstElement * elementBytes(SEW) y ocupa
 // elementCount * elementBytes(SEW) bytes. Si vstart >= vl, no crea tareas.

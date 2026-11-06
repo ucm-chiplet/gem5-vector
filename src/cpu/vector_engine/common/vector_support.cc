@@ -96,6 +96,14 @@ VectorSupport::supportsMemory(const MemoryCommand &memory, uint16_t sew_bits)
            !memory.faultOnlyFirst;
 }
 
+bool
+VectorSupport::supportsSlide(const SlideCommand &slide, uint16_t sew_bits)
+{
+    const auto *traits = operationTraits(slide.operation);
+    return traits && traits->execution == ExecutionClass::Slide &&
+           traits->vectorScalar && traits->supportsWidth(sew_bits);
+}
+
 uint32_t
 VectorSupport::elementBytes(uint16_t element_bits)
 {
@@ -200,6 +208,23 @@ VectorSupport::checkStructure(const VectorCommand &command)
             arithmetic->operation == ArithmeticOperation::Invalid) {
             return RejectionReason::InvalidPayload;
         }
+    } else if (const auto *slide =
+                   std::get_if<SlideCommand>(&command.payload)) {
+        const auto *traits = operationTraits(slide->operation);
+        if (!traits) {
+            return RejectionReason::InvalidPayload;
+        }
+        if (!check_reg(slide->destination) ||
+            !check_reg(slide->vectorSource)) {
+            return RejectionReason::InvalidRegisterGroup;
+        }
+        // Con el mismo LMUL y grupos alineados, dos grupos coinciden o son
+        // disjuntos. RVV reserva vslide1up con vd solapando vs2; no se
+        // ejecuta una codificación reservada. vslide1down sí lo admite.
+        if (!traits->destinationMayOverlapSource &&
+            slide->destination.firstReg == slide->vectorSource.firstReg) {
+            return RejectionReason::InvalidRegisterGroup;
+        }
     } else {
         const auto &memory = std::get<MemoryCommand>(command.payload);
         // Primero revisar que los campos tienen sentido; después comprobar
@@ -267,6 +292,16 @@ VectorSupport::checkCommand(const VectorCommand &command, uint32_t vlen_bytes,
                    std::get_if<MemoryCommand>(&command.payload)) {
         if (command.fpContext || !supportsMemory(*memory, config.sewBits)) {
             return RejectionReason::UnsupportedConfiguration;
+        }
+    } else if (const auto *slide =
+                   std::get_if<SlideCommand>(&command.payload)) {
+        // Las formas con máscara ya se rechazan en supportsConfiguration:
+        // no se ejecutan como si todos los elementos estuvieran activos.
+        const auto *traits = operationTraits(slide->operation);
+        if (command.fpContext || !traits ||
+            !traits->offloadsWidth(config.sewBits) ||
+            !supportsSlide(*slide, config.sewBits)) {
+            return RejectionReason::UnsupportedOperation;
         }
     } else {
         return RejectionReason::InvalidPayload;

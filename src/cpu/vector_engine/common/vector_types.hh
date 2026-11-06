@@ -128,6 +128,23 @@ enum class ElementSignedness : uint8_t
     Unsigned,
 };
 
+/**
+ * Slide de un elemento que MinorCPU describe y SlideUnit ejecuta, según
+ * RVV 1.0 (edición 20240411, Vector Slide1up y Vector Slide1down):
+ *
+ * - Slide1Up: vd[0] = x[rs1] y vd[i] = vs2[i-1] para los demás índices.
+ * - Slide1Down: vd[vl-1] = x[rs1] y vd[i] = vs2[i+1] para los demás.
+ *
+ * El escalar sólo se inserta si su índice de destino está activo. Ambas
+ * mueven patrones de bits del ancho SEW; no interpretan signo ni formato.
+ */
+enum class SlideOperation : uint8_t
+{
+    Invalid,
+    Slide1Up,
+    Slide1Down,
+};
+
 /** MinorCPU indica carga o store; AraVLSU selecciona el recorrido de datos. */
 enum class MemoryDirection : uint8_t
 {
@@ -149,13 +166,15 @@ enum class MemoryOrdering : uint8_t
 
 /**
  * AraSequencer usa este valor para indicar la unidad responsable de la tarea.
- * Lanes corresponde al reparto aritmético; Vlsu, a las operaciones de memoria.
+ * Lanes corresponde al reparto aritmético; Vlsu, a las operaciones de
+ * memoria; Slide, a los movimientos entre elementos de SlideUnit.
  */
 enum class VectorUnitClass : uint8_t
 {
     Invalid,
     Lanes,
     Vlsu,
+    Slide,
 };
 
 } // namespace gem5::vector_engine

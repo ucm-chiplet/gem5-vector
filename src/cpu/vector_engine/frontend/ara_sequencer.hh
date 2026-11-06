@@ -56,7 +56,7 @@ struct ActiveCommandState
 
     // AraSequencer crea una tarea para [vstart, vl), salvo si está vacío.
     // Conserva el mismo descriptor y TaskKey cuando la unidad devuelve Retry.
-    std::optional<std::variant<ArithmeticTask, MemoryTask>> task;
+    std::optional<std::variant<ArithmeticTask, MemoryTask, SlideTask>> task;
 
     // La unidad la ha aceptado, pero no terminado; AraSequencer no la reenvía.
     bool taskAccepted = false;
@@ -97,10 +97,12 @@ namespace gem5::vector_engine
  * Se inicia como máximo un comando por ciclo, y el cierre de un comando
  * permite iniciar otro a partir del ciclo siguiente.
  *
- * El propietario conecta los envíos a TaskDistributor y AraVLSU y llama a
- * wakeup después de dispatch. Las unidades copian la tarea al aceptarla y
- * llaman a recvCompletion sólo después de cerrar accesos y writebacks.
- * Los callbacks pueden responder durante el envío; no destruyen el módulo.
+ * El propietario conecta los envíos a TaskDistributor, AraVLSU y SlideUnit
+ * y llama a wakeup después de dispatch. Una slide no es barrera de
+ * memoria: sólo respeta capacidad, aislamiento y dependencias. Las unidades
+ * copian la tarea al aceptarla y llaman a recvCompletion sólo después de
+ * cerrar accesos y writebacks. Los callbacks pueden responder durante el
+ * envío; no destruyen el módulo.
  *
  * El propietario, la cola y los receptores deben sobrevivir al sequencer.
  * La destrucción no sustituye drain ni cancela tareas aceptadas.
@@ -111,11 +113,13 @@ class AraSequencer
     using ArithmeticSender =
         std::function<TransferResult(const ArithmeticTask &)>;
     using MemorySender = std::function<TransferResult(const MemoryTask &)>;
+    using SlideSender = std::function<TransferResult(const SlideTask &)>;
 
     AraSequencer(ClockedObject &owner, CommandQueue &queue,
                  CpuCompletionEndpoint &completion_endpoint,
                  uint32_t vlen_bytes, uint32_t max_active_commands,
-                 ArithmeticSender send_arithmetic, MemorySender send_memory);
+                 ArithmeticSender send_arithmetic, MemorySender send_memory,
+                 SlideSender send_slide);
 
     ~AraSequencer();
 
@@ -136,7 +140,7 @@ class AraSequencer
     }
 
   private:
-    using BackendTask = std::variant<ArithmeticTask, MemoryTask>;
+    using BackendTask = std::variant<ArithmeticTask, MemoryTask, SlideTask>;
 
     /** Causas, no excluyentes, por las que la cabeza no puede iniciar. */
     struct StartBlockers
@@ -168,6 +172,7 @@ class AraSequencer
     statistics::Scalar arithmeticCommands;
     statistics::Scalar loadCommands;
     statistics::Scalar storeCommands;
+    statistics::Scalar slideCommands;
     statistics::Scalar emptyCommands;
     statistics::Scalar overlappedStarts;
     statistics::Scalar multiActiveTicks;
@@ -187,6 +192,7 @@ class AraSequencer
 
     ArithmeticSender sendArithmetic;
     MemorySender sendMemory;
+    SlideSender sendSlide;
 
     // Comandos iniciados, en orden de inicio (de más antiguo a más joven).
     std::vector<detail::ActiveCommandState> active;

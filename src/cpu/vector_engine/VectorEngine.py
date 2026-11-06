@@ -135,6 +135,16 @@ class VectorEngine(ClockedObject):
         0, "Delivery bytes/cycle"
     )
     interconnect_transit_latency = Param.Cycles(1, "Transit excluding service")
+    # SlideUnit: entradas al LRF y buffers por lane (vslide1up/down).
+    slide_vrf_inputs_per_lane = Param.UInt32(
+        1, "Persistent slide word-access inputs per lane register file"
+    )
+    slide_source_buffers_per_lane = Param.UInt32(
+        1, "Read source words per lane until copied or accepted by network"
+    )
+    slide_assembly_buffers_per_lane = Param.UInt32(
+        2, "Destination words per lane until WriteAck; at least two"
+    )
     address_bits = Param.Unsigned("Target address width: 32 or 64")
     target_byte_order = Param.ByteOrder("Target CPU byte order")
 

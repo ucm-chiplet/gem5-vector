@@ -50,6 +50,7 @@ class AraVLSU;
 class CommandQueue;
 class InterconnectStats;
 class LaneRegisterFile;
+class SlideUnit;
 class TaskDistributor;
 class VectorInterconnect;
 
@@ -131,6 +132,7 @@ class VectorEngine : public ClockedObject,
     std::vector<std::unique_ptr<LaneRegisterFile>> registerFiles;
     std::vector<std::unique_ptr<AraLane>> lanes;
     std::unique_ptr<AraVLSU> vlsu;
+    std::unique_ptr<SlideUnit> slideUnit;
     std::unique_ptr<VectorMemoryBackend> memoryBackend;
     EventFunctionWrapper drainEvent;
 

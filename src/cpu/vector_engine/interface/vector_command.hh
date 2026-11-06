@@ -167,14 +167,48 @@ operator!=(const MemoryCommand &lhs, const MemoryCommand &rhs)
 }
 
 // --------------------------------------------------------------------------
+// Comando de slide.
+// --------------------------------------------------------------------------
+
+/**
+ * Slide de un elemento (vslide1up.vx o vslide1down.vx) sin predicación.
+ * vectorSource es vs2. scalar es x[rs1] leído una sola vez en CPU y
+ * normalizado a SEW con ElementCodec::normalizeScalar: con XLEN < SEW se
+ * extiende el signo y con XLEN > SEW se conservan los bits bajos. La VPU
+ * sólo usa los SEW bits bajos y no vuelve a leer el registro escalar.
+ */
+struct SlideCommand
+{
+    SlideOperation operation = SlideOperation::Invalid;
+    VectorRegRef destination;
+    VectorRegRef vectorSource;
+    RegVal scalar = 0;
+};
+
+inline bool
+operator==(const SlideCommand &lhs, const SlideCommand &rhs)
+{
+    return lhs.operation == rhs.operation &&
+           lhs.destination == rhs.destination &&
+           lhs.vectorSource == rhs.vectorSource && lhs.scalar == rhs.scalar;
+}
+
+inline bool
+operator!=(const SlideCommand &lhs, const SlideCommand &rhs)
+{
+    return !(lhs == rhs);
+}
+
+// --------------------------------------------------------------------------
 // Contenido específico del comando.
 // --------------------------------------------------------------------------
 
 /**
- * MinorCPU selecciona una operación aritmética o de memoria.
+ * MinorCPU selecciona una operación aritmética, de memoria o de slide.
  * AraSequencer usa la alternativa para crear la tarea de la unidad adecuada.
  */
-using VectorCommandPayload = std::variant<ArithmeticCommand, MemoryCommand>;
+using VectorCommandPayload =
+    std::variant<ArithmeticCommand, MemoryCommand, SlideCommand>;
 
 // --------------------------------------------------------------------------
 // Descriptor compartido entre CPU y VPU.

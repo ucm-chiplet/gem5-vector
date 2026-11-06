@@ -20,13 +20,16 @@ aritméticos independientes activos, con scoreboard conservador; Minor aún
 despacha uno cada vez, de modo que su parte CPU queda pendiente. La
 [entrega VPU de fase 6](<Fase 6 - FPU, operaciones enteras y varias ALUs.md>)
 añade en backend Mul/Div/resto enteros, FP32 y varias ALUs por lane; Minor
-todavía no decodifica esas operaciones. Estas
+todavía no decodifica esas operaciones. La [entrega VPU de fase 7](
+<Fase 7 - Interconexión y slides.md>) construye el crossbar detrás de la
+interfaz común de red y ejecuta en backend `vslide1up.vx` y
+`vslide1down.vx`; Minor tampoco las decodifica todavía. Estas
 entregas mantienen las responsabilidades CPU y no acreditan por sí solas
 ejecución funcional de toda la matriz ni cierre de integración CPU--VPU.
 El resto del diseño conserva su estado de propuesta.
 El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
 para repetirlo. El diseño y el diagrama describen la organización objetivo;
-las entregas de fases 1--5 distinguen contratos, backend implementado,
+las entregas de fases 1--7 distinguen contratos, backend implementado,
 integración CPU y comprobaciones de los recursos y operaciones pendientes.
 
 Su papel dentro de VAMPIRE es aportar recursos finitos y observabilidad
@@ -48,8 +51,10 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
 - [Entrega VPU de fase 6](<Fase 6 - FPU, operaciones enteras y varias ALUs.md>):
   semántica entera y FP32, perfiles temporales, clases de unidad, matriz de
   soporte y diferencias con Ara.
+- [Entrega VPU de fase 7](<Fase 7 - Interconexión y slides.md>): crossbar,
+  métricas comunes de red, `SlideUnit`, solapamiento en down y parámetros.
 - [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): parte CPU
-  que falta en las fases 2.1--2.6.
+  que falta en las fases 2.1--2.7.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):
   orden, tareas, interfaces, resultados y criterios de cierre por fase.
 - [Plan de evolución: hitos 2 a 5](<../Plan de evolución - Hitos 2 a 5.md>):
@@ -224,6 +229,11 @@ exigirá al terminar el hito; no enumera código que falta hoy:
 | Grupos | Validar alineamiento, capacidad y LMUL legales dentro del perfil configurado. |
 | Máscaras (`vm=0`) | Pendiente para otro hito: requiere aplicar la máscara del destino y las políticas `vma` correspondientes. |
 
+Estado: la [entrega VPU de fase 7](<Fase 7 - Interconexión y slides.md>)
+cubre en backend las filas de esta tabla salvo las máscaras, que se rechazan
+antes de producir efectos. La normalización del escalar desde XLEN y el
+decode son parte de Minor y siguen [pendientes][pendientes-minor-27].
+
 Por tanto, para ampliar estas dos instrucciones a sus variantes con
 predicación quedará pendiente leer `v0`, decidir qué destinos se escriben y
 aplicar la política de elementos enmascarados sin modificar los que deban
@@ -379,3 +389,4 @@ expone la progresión completa de los cinco hitos y sus convenciones.
 [manual-rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
 [predicacion]: <../Plan de evolución - Hitos 2 a 5.md#fase-32-predicación-y-escrituras-parciales>
 [clusters]: <../Plan de evolución - Hitos 2 a 5.md#fase-37-preparación-para-clusterización>
+[pendientes-minor-27]: <Pendientes de Minor - Fases 1 a 5.md#fase-27-slides>

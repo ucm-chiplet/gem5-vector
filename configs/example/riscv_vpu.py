@@ -54,6 +54,7 @@ from m5.objects.configuration import (
     FpuConfiguration,
     InterconnectConfiguration,
     LaneConfiguration,
+    SlideConfiguration,
     VpuConfiguration,
     VrfConfiguration,
 )
@@ -140,8 +141,8 @@ parser.add_argument(
     default=FpuConfiguration.result_entries,
     help="FPU-class result buffers per lane",
 )
-# Red entre lanes (fase 7 del hito 2). Los valores por defecto
-# coinciden con InterconnectConfiguration; cero en
+# Red entre lanes y slides (fase 7 del hito 2). Los valores por defecto
+# coinciden con InterconnectConfiguration y SlideConfiguration; cero en
 # tamaños y anchos de banda usa el tamaño de palabra del VRF.
 parser.add_argument(
     "--vpu-interconnect-transit-latency",
@@ -160,6 +161,18 @@ parser.add_argument(
     type=int,
     default=InterconnectConfiguration.source_bytes_per_cycle,
     help="Crossbar source and destination bytes per cycle",
+)
+parser.add_argument(
+    "--vpu-slide-source-buffers",
+    type=int,
+    default=SlideConfiguration.source_buffers_per_lane,
+    help="Slide source word buffers per lane",
+)
+parser.add_argument(
+    "--vpu-slide-assembly-buffers",
+    type=int,
+    default=SlideConfiguration.assembly_buffers_per_lane,
+    help="Slide destination word buffers per lane; at least two",
 )
 parser.add_argument("binary", type=Path, help="RV64 SE executable")
 parser.add_argument("arguments", nargs=argparse.REMAINDER)
@@ -214,6 +227,10 @@ if not args.no_offload:
                     args.vpu_interconnect_bytes_per_cycle
                 ),
                 transit_latency=args.vpu_interconnect_transit_latency,
+            ),
+            slide=SlideConfiguration(
+                source_buffers_per_lane=args.vpu_slide_source_buffers,
+                assembly_buffers_per_lane=args.vpu_slide_assembly_buffers,
             ),
             command_queue_entries=args.vpu_command_queue_entries,
             max_active_commands=args.vpu_max_active_commands,

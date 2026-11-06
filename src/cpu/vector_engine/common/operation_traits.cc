@@ -61,7 +61,8 @@ integerTraits(bool requires_signedness)
                            false, // No necesita redondeo FP.
                            requires_signedness,
                            false, // No accede a memoria.
-                           IntegerElementWidths};
+                           IntegerElementWidths,
+                           true}; // Igual ancho: vd puede ser una fuente.
 }
 
 /**
@@ -79,7 +80,27 @@ floatTraits(OperationWidths widths, OperationWidths offload_widths)
                            true,  // Necesita el redondeo capturado.
                            false, // Sin signo de comando.
                            false, // No accede a memoria.
-                           offload_widths};
+                           offload_widths,
+                           true}; // Igual ancho: vd puede ser una fuente.
+}
+
+/**
+ * Ficha de una slide de un elemento: SlideUnit, 8/16/32/64 bits, sólo
+ * forma .vx y sin contexto FP. Copia patrones de bits del ancho SEW.
+ */
+constexpr OperationTraits
+slideTraits(bool destination_may_overlap_source)
+{
+    return OperationTraits{ExecutionClass::Slide,
+                           ElementFormat::RawBits,
+                           IntegerElementWidths,
+                           false, // Sin forma .vv.
+                           true,  // Vector y escalar capturado (.vx).
+                           false, // No necesita redondeo FP.
+                           false, // Sin signo de comando.
+                           false, // No accede a memoria.
+                           IntegerElementWidths,
+                           destination_may_overlap_source};
 }
 
 } // anonymous namespace
@@ -151,17 +172,36 @@ operationTraits(MemoryDirection direction)
         ExecutionClass::Memory,
         ElementFormat::RawBits,
         IntegerElementWidths,
-        false,                 // No es una forma .vv.
-        false,                 // No es una forma .vx.
-        false,                 // No necesita redondeo FP.
-        false,                 // Sin signo de comando.
-        true,                  // Puede fallar un acceso.
-        IntegerElementWidths}; // Admisible desde CPU en todos los anchos.
+        false,                // No es una forma .vv.
+        false,                // No es una forma .vx.
+        false,                // No necesita redondeo FP.
+        false,                // Sin signo de comando.
+        true,                 // Puede fallar un acceso.
+        IntegerElementWidths, // Admisible desde CPU en todos los anchos.
+        true};                // Sin segunda fuente vectorial.
     if (direction == MemoryDirection::Load ||
         direction == MemoryDirection::Store) {
         return &memory;
     }
     return nullptr;
+}
+
+const OperationTraits *
+operationTraits(SlideOperation operation)
+{
+    // RVV 1.0, edición 20240411, Vector Slide Instructions: el destino de
+    // vslideup no puede solapar la fuente (codificación reservada); las
+    // slidedown no tienen esa restricción.
+    static constexpr OperationTraits slide_up = slideTraits(false);
+    static constexpr OperationTraits slide_down = slideTraits(true);
+    switch (operation) {
+        case SlideOperation::Slide1Up:
+            return &slide_up;
+        case SlideOperation::Slide1Down:
+            return &slide_down;
+        default:
+            return nullptr;
+    }
 }
 
 std::vector<OperandDescriptor>
@@ -214,6 +254,20 @@ describeOperands(const VectorCommand &command)
         operands.push_back({OperandRole::Address, OperandAccess::Read,
                             ElementFormat::Integer, 0, VectorLmul::Invalid,
                             CapturedScalar{memory->base}});
+    } else if (const auto *slide =
+                   std::get_if<SlideCommand>(&command.payload)) {
+        // Destino y vs2 usan SEW y LMUL del comando. El escalar ya está
+        // capturado y no ocupa un grupo vectorial.
+        operands.push_back({OperandRole::Destination, OperandAccess::Write,
+                            ElementFormat::RawBits, config.sewBits,
+                            config.lmul, slide->destination});
+        operands.push_back({OperandRole::Source, OperandAccess::Read,
+                            ElementFormat::RawBits, config.sewBits,
+                            config.lmul, slide->vectorSource});
+        operands.push_back({OperandRole::Source, OperandAccess::Read,
+                            ElementFormat::RawBits, config.sewBits,
+                            VectorLmul::Invalid,
+                            CapturedScalar{slide->scalar}});
     }
     return operands;
 }

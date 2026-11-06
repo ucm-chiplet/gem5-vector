@@ -17,6 +17,7 @@ namespace gem5::vector_engine
 
 struct ArithmeticCommand;
 struct MemoryCommand;
+struct SlideCommand;
 struct VectorCommand;
 enum class RejectionReason : uint8_t;
 
@@ -46,6 +47,9 @@ class VectorSupport
     supportsExecution(const ArithmeticCommand &arithmetic, uint16_t sew_bits,
                       const std::optional<FpExecutionContext> &fp_context);
     static bool supportsMemory(const MemoryCommand &memory, uint16_t sew_bits);
+    // Slides de un elemento .vx sin predicación en los anchos de su ficha.
+    // El solapamiento de grupos se comprueba en checkStructure.
+    static bool supportsSlide(const SlideCommand &slide, uint16_t sew_bits);
 
     // Tamaño y máscara para anchos ejecutables por las unidades actuales.
     static uint32_t elementBytes(uint16_t element_bits);
