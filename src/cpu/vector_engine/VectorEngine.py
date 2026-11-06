@@ -120,7 +120,9 @@ class VectorEngine(ClockedObject):
         1, "Persistent VLSU word-access inputs per lane register file"
     )
     memory_max_outstanding_packets = Param.UInt32(1, "Physical packet limit")
-    interconnect_enabled = Param.Bool(False, "Reserved for phase 7")
+    interconnect_model = Param.String(
+        "crossbar", "Inter-lane transport model; only crossbar exists"
+    )
     interconnect_max_packet_bytes = Param.UInt32(0, "Zero resolves to a word")
     interconnect_packets_per_destination = Param.UInt32(1, "Packet entries")
     interconnect_bytes_per_destination = Param.UInt32(

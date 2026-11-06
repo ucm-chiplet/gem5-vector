@@ -30,6 +30,9 @@
 
 #include <algorithm>
 
+#include "base/logging.hh"
+#include "cpu/vector_engine/vpu/interconnect/crossbar_interconnect.hh"
+
 namespace gem5::vector_engine
 {
 
@@ -49,6 +52,19 @@ InterconnectPacket::valid(const InterconnectCapabilities &caps) const
            std::all_of(
                byteEnable.begin(), byteEnable.end(),
                [](uint8_t value) { return value <= 1; });
+}
+
+std::unique_ptr<VectorInterconnect>
+makeInterconnect(ClockedObject &owner, statistics::Group &stats_parent,
+                 const InterconnectParameters &parameters)
+{
+    switch (parameters.model) {
+        case InterconnectModelKind::Crossbar:
+            return std::make_unique<CrossbarInterconnect>(owner, stats_parent,
+                                                          parameters);
+        default:
+            fatal("Unknown vector interconnect model");
+    }
 }
 
 } // namespace gem5::vector_engine

@@ -29,7 +29,9 @@
 #ifndef __CPU_VECTOR_ENGINE_COMMON_INTERCONNECT_TYPES_HH__
 #define __CPU_VECTOR_ENGINE_COMMON_INTERCONNECT_TYPES_HH__
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 
 #include "cpu/vector_engine/common/vrf_types.hh"
@@ -69,6 +71,28 @@ operator!=(const TransferKey &lhs, const TransferKey &rhs)
     return !(lhs == rhs);
 }
 
+/** Permite indexar tablas por la clave completa de transferencia. */
+struct TransferKeyHash
+{
+    std::size_t
+    operator()(const TransferKey &key) const
+    {
+        const auto task_hash = TaskKeyHash{}(key.task);
+        const auto id_hash = std::hash<TransferId>{}(key.transferId);
+        return task_hash ^
+               (id_hash + 0x9e3779b9U + (task_hash << 6) + (task_hash >> 2));
+    }
+};
+
+/**
+ * Modelo de red que VectorEngine construye. Se elige una vez al crear la
+ * VPU; los productores y receptores sólo ven VectorInterconnect.
+ */
+enum class InterconnectModelKind : uint8_t
+{
+    Crossbar
+};
+
 /** Indica para qué se mueve el dato; no contiene una instrucción CPU. */
 enum class TransferKind : uint8_t
 {
@@ -78,7 +102,10 @@ enum class TransferKind : uint8_t
 /**
  * Límites que anuncia la red: cuántos destinos conecta, cuánto cabe en un
  * paquete y cuánto puede guardar o mover. Los tamaños se expresan en bytes
- * y las velocidades en bytes por ciclo. Declararlos no construye una red.
+ * y las velocidades en bytes por ciclo. packetsPerDestination y
+ * bytesPerDestination acotan los paquetes aceptados hacia un destino que
+ * aún no se han entregado. Un productor divide sus movimientos en paquetes
+ * de como máximo maxPacketBytes.
  */
 struct InterconnectCapabilities
 {

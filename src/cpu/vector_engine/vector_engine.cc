@@ -39,6 +39,8 @@
 #include "cpu/vector_engine/frontend/ara_sequencer.hh"
 #include "cpu/vector_engine/frontend/command_queue.hh"
 #include "cpu/vector_engine/frontend/task_distributor.hh"
+#include "cpu/vector_engine/vpu/interconnect/interconnect_stats.hh"
+#include "cpu/vector_engine/vpu/interconnect/vector_interconnect.hh"
 #include "cpu/vector_engine/vpu/lanes/ara_lane.hh"
 #include "cpu/vector_engine/vpu/register_file/lane_register_file.hh"
 #include "cpu/vector_engine/vpu/vlsu/ara_vlsu.hh"
@@ -103,9 +105,10 @@ VectorEngine::makeConfiguration(const Params &params)
                    params.memory_vrf_inputs_per_lane};
     config.memory = {params.address_bits,
                      params.memory_max_outstanding_packets};
-    // Validar también los límites de la futura red aunque esté deshabilitada.
-    // Declararlos no crea enlaces ni permite enviar paquetes entre lanes.
-    config.interconnect.enabled = params.interconnect_enabled;
+    // La red se construye siempre; el modelo se elige aquí, una sola vez.
+    fatal_if(params.interconnect_model != "crossbar",
+             "Only the crossbar interconnect model is implemented");
+    config.interconnect.model = InterconnectModelKind::Crossbar;
     config.interconnect.capabilities = {
         config.vrf.numLanes,
         resolve_width(params.interconnect_max_packet_bytes),
@@ -172,9 +175,9 @@ VectorEngine::makeConfiguration(const Params &params)
     // Fase 4: un bloque unit-stride activo y un paquete físico en vuelo.
     fatal_if(config.memory.maxOutstandingPackets != 1 ||
                  config.vlsu.activeBlocks != 1 ||
-                 !config.vlsu.vrfInputsPerLane || config.interconnect.enabled,
-             "Memory profile has one block/packet, positive VLSU VRF inputs "
-             "and no interconnect");
+                 !config.vlsu.vrfInputsPerLane,
+             "Memory profile has one block/packet and positive VLSU VRF "
+             "inputs");
     fatal_if(params.mapping_policy != "word_striped",
              "Only word_striped VRF mapping is implemented");
     fatal_if(params.target_byte_order != ByteOrder::little &&
@@ -231,10 +234,6 @@ VectorEngine::makeConfiguration(const Params &params)
 VectorEngine::VectorEngine(const Params &params)
     : ClockedObject(params),
       stats(this, "commands", "dispatched vector commands"),
-      interconnectStats(this, "interconnect"),
-      interconnectEnabled(&interconnectStats, "enabled",
-                          statistics::units::Count::get(),
-                          "Zero: inter-lane transport is not implemented"),
       vpuParameters(makeConfiguration(params)),
       addressBits(params.address_bits),
       targetByteOrder(params.target_byte_order),
@@ -245,6 +244,15 @@ VectorEngine::VectorEngine(const Params &params)
     // Los constructores sólo guardan callbacks. Ninguno puede emitir trabajo
     // hasta completar el cableado, conectar la CPU y recibir dispatch.
     CpuCompletionEndpoint &completion_endpoint = *this;
+
+    // La red y sus métricas comunes existen antes que sus productores y
+    // receptores. Las métricas sólo observan; el modelo no las conoce.
+    interconnectStats =
+        std::make_unique<InterconnectStats>(this, vpuParameters.vrf.numLanes);
+    network = makeInterconnect(*this, *interconnectStats,
+                               vpuParameters.interconnect);
+    network->setObserver(interconnectStats->observer());
+
     commandQueue = std::make_unique<CommandQueue>(
         *this, vpuParameters.commandQueueEntries, vpuParameters.vrf.vlenBytes,
         vpuParameters.supportedLmuls, completion_endpoint,
@@ -538,7 +546,7 @@ bool
 VectorEngine::isIdle() const
 {
     if (!commandQueue->isIdle() || !sequencer->isIdle() ||
-        !distributor->isIdle() || !vlsu->isIdle() ||
+        !distributor->isIdle() || !vlsu->isIdle() || !network->isIdle() ||
         !memoryBackend->isIdle()) {
         return false;
     }
@@ -563,6 +571,7 @@ DrainState
 VectorEngine::drain()
 {
     commandQueue->beginDrain();
+    network->beginDrain();
     if (isIdle()) {
         if (drainEvent.scheduled()) {
             deschedule(drainEvent);

@@ -52,6 +52,7 @@ from m5.objects import (
 from m5.objects.configuration import (
     AluConfiguration,
     FpuConfiguration,
+    InterconnectConfiguration,
     LaneConfiguration,
     VpuConfiguration,
     VrfConfiguration,
@@ -139,6 +140,27 @@ parser.add_argument(
     default=FpuConfiguration.result_entries,
     help="FPU-class result buffers per lane",
 )
+# Red entre lanes (fase 7 del hito 2). Los valores por defecto
+# coinciden con InterconnectConfiguration; cero en
+# tamaños y anchos de banda usa el tamaño de palabra del VRF.
+parser.add_argument(
+    "--vpu-interconnect-transit-latency",
+    type=int,
+    default=InterconnectConfiguration.transit_latency,
+    help="Crossbar transit cycles after destination service",
+)
+parser.add_argument(
+    "--vpu-interconnect-packets-per-destination",
+    type=int,
+    default=InterconnectConfiguration.packets_per_destination,
+    help="Accepted and undelivered packets per destination lane",
+)
+parser.add_argument(
+    "--vpu-interconnect-bytes-per-cycle",
+    type=int,
+    default=InterconnectConfiguration.source_bytes_per_cycle,
+    help="Crossbar source and destination bytes per cycle",
+)
 parser.add_argument("binary", type=Path, help="RV64 SE executable")
 parser.add_argument("arguments", nargs=argparse.REMAINDER)
 args = parser.parse_args()
@@ -182,6 +204,16 @@ if not args.no_offload:
                     add_multiply_latency=args.vpu_fpu_add_multiply_latency,
                     divide_latency=args.vpu_fpu_divide_latency,
                 ),
+            ),
+            interconnect=InterconnectConfiguration(
+                packets_per_destination=(
+                    args.vpu_interconnect_packets_per_destination
+                ),
+                source_bytes_per_cycle=args.vpu_interconnect_bytes_per_cycle,
+                destination_bytes_per_cycle=(
+                    args.vpu_interconnect_bytes_per_cycle
+                ),
+                transit_latency=args.vpu_interconnect_transit_latency,
             ),
             command_queue_entries=args.vpu_command_queue_entries,
             max_active_commands=args.vpu_max_active_commands,

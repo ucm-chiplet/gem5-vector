@@ -48,8 +48,10 @@ class AraLane;
 class AraSequencer;
 class AraVLSU;
 class CommandQueue;
+class InterconnectStats;
 class LaneRegisterFile;
 class TaskDistributor;
+class VectorInterconnect;
 
 /**
  * Propietario y punto de conexión de la VPU Ara-like en modo SE timing.
@@ -110,8 +112,6 @@ class VectorEngine : public ClockedObject,
   private:
     // Declarados antes que los consumidores para sobrevivir a sus vistas.
     ModuleStats stats;
-    statistics::Group interconnectStats;
-    statistics::Scalar interconnectEnabled;
     const VpuParameters vpuParameters;
     const unsigned addressBits;
     const ByteOrder targetByteOrder;
@@ -120,6 +120,10 @@ class VectorEngine : public ClockedObject,
     CpuCompletionEndpoint *cpuEndpoint = nullptr;
     CpuBinding cpuBinding;
 
+    // Common transport metrics outlive the model that reports to them.
+    std::unique_ptr<InterconnectStats> interconnectStats;
+    // Built before its producers and receivers and destroyed after them.
+    std::unique_ptr<VectorInterconnect> network;
     std::unique_ptr<CommandQueue> commandQueue;
     std::unique_ptr<AraSequencer> sequencer;
     std::unique_ptr<TaskDistributor> distributor;

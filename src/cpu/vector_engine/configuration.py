@@ -158,13 +158,16 @@ class MemoryBackendConfiguration:
 
 @dataclass(frozen=True)
 class InterconnectConfiguration:
-    """Espacio, velocidad y tiempo de viaje previstos para la futura red.
+    """Modelo de red entre lanes, espacio, velocidad y tiempo de viaje.
 
-    Los tamaños son bytes y las velocidades, bytes por ciclo. Estos valores
-    se comprueban al construir, pero enabled sigue siendo False hasta fase 7.
+    model elige la implementación al construir la VPU; sólo existe
+    "crossbar". Los tamaños son bytes y las velocidades, bytes por ciclo;
+    un cero usa lane_word_bytes. packets_per_destination y
+    bytes_per_destination acotan los paquetes aceptados y no entregados
+    hacia cada destino. transit_latency son ciclos tras el servicio.
     """
 
-    enabled: bool = False
+    model: str = "crossbar"
     max_packet_bytes: int = 0  # Cero usa lane_word_bytes.
     packets_per_destination: int = 1
     bytes_per_destination: int = 0
@@ -188,6 +191,7 @@ class VpuConfiguration:
     en bloques, sin red. La fase 5 admite hasta max_active_commands
     comandos activos independientes; la memoria sigue siendo una barrera.
     La fase 6 añade Mul/Div/resto enteros, FP32 y varias ALUs por lane.
+    La fase 7 construye la red entre lanes (crossbar) detrás de su interfaz.
     LMUL usa exponentes de dos (-3 para mf8, 3 para m8).
     Los predeterminados conservan 16/32 bits y m1 y activan la concurrencia
     (cuatro comandos y cuatro contextos por lane); las rutas CPU se
@@ -242,7 +246,7 @@ class VpuConfiguration:
             "memory_max_outstanding_packets": (
                 self.memory.max_outstanding_packets
             ),
-            "interconnect_enabled": self.interconnect.enabled,
+            "interconnect_model": self.interconnect.model,
             "interconnect_max_packet_bytes": self.interconnect.max_packet_bytes,
             "interconnect_packets_per_destination": (
                 self.interconnect.packets_per_destination

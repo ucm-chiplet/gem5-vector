@@ -201,11 +201,14 @@ struct MemoryBackendParameters
     uint32_t maxOutstandingPackets = 1;
 };
 
-/** Límites de la futura red y tiempo de viaje una vez atendido el envío. */
+/**
+ * Red entre lanes: modelo elegido al construir, límites comunes y tiempo
+ * de viaje tras el servicio, en ciclos de la VPU. La latencia no incluye
+ * la espera por contención ni el servicio de ceil(bytes / ancho) ciclos.
+ */
 struct InterconnectParameters
 {
-    // La fase 1 declara estos valores, pero todavía no construye una red.
-    bool enabled = false;
+    InterconnectModelKind model = InterconnectModelKind::Crossbar;
     InterconnectCapabilities capabilities;
     Cycles transitLatency{1};
 };

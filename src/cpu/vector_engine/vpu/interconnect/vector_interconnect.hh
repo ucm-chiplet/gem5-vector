@@ -30,8 +30,12 @@
 #define __CPU_VECTOR_ENGINE_VPU_INTERCONNECT_VECTOR_INTERCONNECT_HH__
 
 #include <functional>
+#include <memory>
 
+#include "base/statistics.hh"
 #include "cpu/vector_engine/common/interconnect_types.hh"
+#include "cpu/vector_engine/common/vpu_parameters.hh"
+#include "sim/clocked_object.hh"
 
 namespace gem5::vector_engine
 {
@@ -51,12 +55,17 @@ class InterconnectReceiver
 
 /**
  * Interfaz común para enviar datos entre lanes, sea cual sea la red elegida.
- * En la fase 1 sólo se define la interfaz. Al aceptar un paquete, la futura
- * red copia sus datos y reserva espacio en el destino. Si pide reintentar,
- * el emisor conserva el paquete para el siguiente ciclo y no queda reserva.
+ * Al aceptar un paquete, la red copia sus datos y el receptor reserva su
+ * espacio. Si pide reintentar, no queda ninguna reserva: el emisor conserva
+ * el mismo paquete y su TransferKey y vuelve a llamar a send() desde su
+ * propio progreso, como pronto en el ciclo siguiente. La red no avisa de
+ * capacidad libre, de modo que el emisor no depende de detalles internos.
+ *
  * El propietario asigna transferId entre todos los emisores de una tarea.
- * Cada paquete se entrega entero una vez; su entrega aún no confirma que
- * el VRF se haya escrito ni habilita pasar resultados entre comandos.
+ * Cada paquete aceptado se entrega entero una sola vez, quizá en otro orden
+ * que el de envío; su entrega aún no confirma que el VRF se haya escrito ni
+ * habilita pasar resultados entre comandos. La topología, las rutas y el
+ * arbitraje quedan ocultos detrás de esta interfaz.
  */
 class VectorInterconnect
 {
@@ -85,6 +94,15 @@ class VectorInterconnect
     // Sólo está libre cuando no quedan reservas, datos ni eventos pendientes.
     virtual bool isIdle() const = 0;
 };
+
+/**
+ * Construye el modelo de red elegido. owner aporta reloj y eventos;
+ * stats_parent recibe las estadísticas propias del modelo. Los límites ya
+ * vienen validados por VectorEngine.
+ */
+std::unique_ptr<VectorInterconnect>
+makeInterconnect(ClockedObject &owner, statistics::Group &stats_parent,
+                 const InterconnectParameters &parameters);
 
 } // namespace gem5::vector_engine
 
