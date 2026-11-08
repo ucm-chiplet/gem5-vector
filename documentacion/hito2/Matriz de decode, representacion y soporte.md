@@ -19,15 +19,18 @@ las restricciones de implementación o simplificaciones del modelo VPU en gem5.
 
 ## 1. Matriz de correspondencia por operación
 
-| Familia / Mnemónico | 1. Decode Minor (`MinorCPU::Decode`) | 2. Representación (`VectorCommand`) | 3. Soporte VPU (`VectorSupport`) | Comportamiento si no se admite |
-| --- | --- | --- | --- | --- |
-| **Suma entera** (`vadd.vv`, `vadd.vx`) | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Add`). Detecta fuentes vectoriales y escalares (`VecRegClass`, `IntRegClass`). | `ArithmeticCommand` con `operation = Add`, `destination`, `vectorSource` y `secondOperand` (`VectorRegRef` o `RegVal`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8, mf4, mf2, m1, m2, m4, m8} en backend. Requiere forma no enmascarada y `vstart == 0`. | Rechazo con `UnsupportedConfiguration` o `UnsupportedOperation`; MinorCPU eleva `IllegalInstFault`. |
-| **Carga unit-stride** (`vle8.v`, `vle16.v`, `vle32.v`, `vle64.v`) | Clasificado en `tryDecodeMemoryOp` como `VpuOffload` (`MemoryDirection::Load`). Extrae EEW de `rv_inst->machInst.width` (8, 16, 32, 64 bits) y registro destino. | `MemoryCommand` con `direction = Load`, `dataReg`, `base` (Addr), `addressing = UnitStrideAddress`, `elementWidthBits = EEW`. | Admite EEW ∈ {8, 16, 32, 64}. **Exige estrictamente `EEW == SEW`** (`elementWidthBits == sew_bits`). | Rechazo con `UnsupportedConfiguration` si `EEW != SEW`; MinorCPU eleva `IllegalInstFault`. |
-| **Almacenamiento unit-stride** (`vse8.v`, `vse16.v`, `vse32.v`, `vse64.v`) | Clasificado en `tryDecodeMemoryOp` como `VpuOffload` (`MemoryDirection::Store`). Extrae EEW de `rv_inst->machInst.width` (8, 16, 32, 64 bits) y registro fuente. | `MemoryCommand` con `direction = Store`, `dataReg`, `base` (Addr), `addressing = UnitStrideAddress`, `elementWidthBits = EEW`. | Admite EEW ∈ {8, 16, 32, 64}. **Exige estrictamente `EEW == SEW`** (`elementWidthBits == sew_bits`). | Rechazo con `UnsupportedConfiguration` si `EEW != SEW`; MinorCPU eleva `IllegalInstFault`. |
-| **Otras ops aritméticas enteras** (`vsub`, `vmul`, lógicas, etc.) | No reconocidas en `tryDecodeArithmeticOp` (sólo se evalúa `vadd_vv` y `vadd_vx`). Clasificadas como `UnsupportedVector`. | `ArithmeticCommand` soporta representar `Sub`, `And`, `Or`, `Xor`, etc. en `ArithmeticOperation`. | Traits implementados en backend según fases avanzadas (Fase 6). | CPU lanza `IllegalInstFault` en fase de Decode sin llegar a la VPU. |
-| **Operaciones coma flotante** (`vfadd`, etc.) | Clasificadas como `UnsupportedVector` en Decode. | `VectorCommand` dispone de `fpContext` (`FpExecutionContext`). | Implementadas a nivel de backend para FP32/FP16 (Fase 6); offload desde CPU deshabilitado en fases iniciales. | CPU lanza `IllegalInstFault` en Decode. |
-| **Memoria strided / indexada** (`vlse`, `luxEI`, etc.) | No reconocidas por `VleMacroInst`/`VseMacroInst` unit-stride. Clasificadas como `UnsupportedVector`. | `MemoryAddressing` dispone de variantes `StridedAddress` e `IndexedAddress`. | `VectorSupport::supportsMemory` comprueba y exige exclusivamente `UnitStrideAddress`. | CPU lanza `IllegalInstFault` en Decode. |
-| **Slides** (`vslide1up.vx`, `vslide1down.vx`) | No reconocidas en el decode actual de MinorCPU (clasificadas como `UnsupportedVector`). | `SlideCommand` define operación, registros fuente/destino y escalar normalizado a SEW. | Backend cuenta con soporte para `Slide` en `VectorSupport::supportsSlide` (Fase 7). | CPU lanza `IllegalInstFault` en Decode. |
+| Familia / Mnemónico | SEW / EEW en CPU | 1. Decode Minor (`MinorCPU::Decode`) | 2. Representación (`VectorCommand`) | 3. Soporte VPU (`VectorSupport`) | Comportamiento si no se admite |
+| :--- | :---: | :--- | :--- | :--- | :--- |
+| **Suma entera** (`vadd.vv`, `vadd.vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Add`). Orden `vd = vs2 + vs1/rs1`. | `ArithmeticCommand` con `operation = Add`, `destination`, `vectorSource = vs2` y `secondOperand` (`VectorRegRef` o `RegVal`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8, mf4, mf2, m1, m2, m4, m8} en backend. Requiere forma no enmascarada y `vstart == 0`. | Rechazo con `UnsupportedConfiguration` o `UnsupportedOperation`; MinorCPU eleva `IllegalInstFault`. |
+| **Multiplicación entera** (`vmul.vv`, `vmul.vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Multiply`). Orden `vd = vs2 * vs1/rs1`. | `ArithmeticCommand` con `operation = Multiply`, `signedness = NotApplicable`, `destination`, `vectorSource = vs2` y `secondOperand`. | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. Requiere forma no enmascarada y `vstart == 0`. | Rechazo en admisión; MinorCPU eleva `IllegalInstFault`. |
+| **División entera** (`vdiv.vv/vx`, `vdivu.vv/vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Divide`). Orden no conmutativo estricto: `vd = vs2 / vs1/rs1`. | `ArithmeticCommand` con `operation = Divide`, propagando `signedness = Signed` (`vdiv`) o `Unsigned` (`vdivu`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. División por cero produce cociente según la norma sin generar excepción. | Rechazo en admisión; MinorCPU eleva `IllegalInstFault`. |
+| **Resto entero** (`vrem.vv/vx`, `vremu.vv/vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Remainder`). Orden no conmutativo: `vd = vs2 % vs1/rs1`. | `ArithmeticCommand` con `operation = Remainder`, propagando `signedness = Signed` (`vrem`) o `Unsigned` (`vremu`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. | Rechazo en admisión; MinorCPU eleva `IllegalInstFault`. |
+| **Coma flotante FP32** (`vfadd.vv`, `vfmul.vv`, `vfdiv.vv`) | **32 (FP32)** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`FloatAdd`, `FloatMultiply`, `FloatDivide`). Verifica `mstatus.FS != Off` antes de despachar. | `ArithmeticCommand` con `fpContext` capturando `frm`. Al retirar actualiza `mstatus.fs = DIRTY` y acumula excepciones en `fflags`. | Admite exclusivamente SEW = 32 (FP32) y LMUL ∈ {mf8..m8}. Requiere redondeos válidos (0..4). | Si `FS=Off` o redondeo inválido, MinorCPU aborta con excepción antes de dispatch. Fuera de SEW=32, rechazo en admisión. |
+| **Carga unit-stride** (`vle8/16/32/64.v`) | **EEW ∈ {8, 16, 32, 64}** *(exige SEW = EEW)* | Clasificado en `tryDecodeMemoryOp` como `VpuOffload` (`MemoryDirection::Load`). Extrae EEW de `rv_inst->machInst.width` (8, 16, 32, 64 bits) y registro destino. | `MemoryCommand` con `direction = Load`, `dataReg`, `base` (Addr), `addressing = UnitStrideAddress`, `elementWidthBits = EEW`. | Admite EEW ∈ {8, 16, 32, 64}. **Exige estrictamente `EEW == SEW`** (`elementWidthBits == sew_bits`). | Rechazo con `UnsupportedConfiguration` si `EEW != SEW`; MinorCPU eleva `IllegalInstFault`. |
+| **Almacenamiento unit-stride** (`vse8/16/32/64.v`) | **EEW ∈ {8, 16, 32, 64}** *(exige SEW = EEW)* | Clasificado en `tryDecodeMemoryOp` como `VpuOffload` (`MemoryDirection::Store`). Extrae EEW de `rv_inst->machInst.width` (8, 16, 32, 64 bits) y registro fuente. | `MemoryCommand` con `direction = Store`, `dataReg`, `base` (Addr), `addressing = UnitStrideAddress`, `elementWidthBits = EEW`. | Admite EEW ∈ {8, 16, 32, 64}. **Exige estrictamente `EEW == SEW`** (`elementWidthBits == sew_bits`). | Rechazo con `UnsupportedConfiguration` si `EEW != SEW`; MinorCPU eleva `IllegalInstFault`. |
+| **Slides de un elemento** (`vslide1up.vx`, `vslide1down.vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeSlideOp` como `VpuOffload` (`Slide1Up`, `Slide1Down`) sin descomponer la macro-op. Extrae `vd`, `vs2` y referencia a `rs1`. | `SlideCommand` con `operation`, `destination`, `vectorSource = vs2` y `scalar` normalizado con `ElementCodec::normalizeScalar`. | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. Solapamiento `vd == vs2` en up y formas con máscara (`vm=0`) rechazadas en admisión. | Solapamiento en up o máscara rechazados en admisión y traducidos por MinorCPU a `IllegalInstFault`. |
+| **Memoria strided / indexada** (`vlse`, `luxEI`, etc.) | *Ninguno* | No reconocidas por `VleMacroInst`/`VseMacroInst` unit-stride. Clasificadas como `UnsupportedVector`. | `MemoryAddressing` dispone de variantes `StridedAddress` e `IndexedAddress`. | `VectorSupport::supportsMemory` comprueba y exige exclusivamente `UnitStrideAddress`. | CPU lanza `IllegalInstFault` en Decode. |
+| **Otras ops aritméticas y vectoriales** (`vsub`, lógicas, `vmin`, `.vi`, etc.) | *Ninguno* | No reconocidas en Decode. Clasificadas como `UnsupportedVector`. | Variantes existentes en el modelo (`Sub`, `And`, etc.) o pendientes para fases posteriores (`vmin.vv` para 2.8). | Pendientes de fases posteriores o hitos futuros. | MinorCPU eleva `IllegalInstFault` en fase de Decode sin llegar a la VPU. |
 
 ---
 
@@ -80,13 +83,15 @@ En el modelo actual de la VPU Ara-like:
 | 1. MinorCPU Decode (decode.cc)                                    |
 |    - Filtra instrucciones RVV soportadas para offload            |
 |    - Extrae campos inmediatos, EEW de machInst, registros fuente  |
+|    - Reconoce macro-ops de slide sin descomposición a micro-ops   |
 +---------------------------------+---------------------------------+
                                   | Produce
                                   v
 +-------------------------------------------------------------------+
 | 2. Contrato de Transporte (vector_command.hh)                     |
 |    - VectorCommand inmutable con CommandKey, PC, VectorConfig     |
-|    - Payload desacoplado: ArithmeticCommand / MemoryCommand       |
+|    - Payload desacoplado: Arithmetic / Memory / SlideCommand      |
+|    - Normalización escalar canónica (ElementCodec)                |
 +---------------------------------+---------------------------------+
                                   | Valida vía requestGrant()
                                   v
@@ -94,6 +99,7 @@ En el modelo actual de la VPU Ara-like:
 | 3. Backend VPU Support (vector_support.cc)                        |
 |    - checkStructure: coherencia de registros y alineación LMUL    |
 |    - checkCommand / supportsMemory: valida EEW == SEW y perfiles  |
+|    - supportsSlide: valida anchos, solapamiento y máscaras        |
 |    - Emite RejectionReason ante combinaciones fuera de perfil    |
 +-------------------------------------------------------------------+
 ```
