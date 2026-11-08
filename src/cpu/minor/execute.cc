@@ -353,6 +353,7 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
                 } else if (result.status ==
                            vector_engine::GrantStatus::Rejected) {
                     vec_state.rejected = true;
+                    vec_state.rejectionReason = result.rejectionReason;
                     vec_state.phase = MinorVectorPhase::Completed;
                     /** Detener despacho de instrucciones posteriores. */
                     break;
@@ -1441,8 +1442,50 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                 dynamic_cast<const RiscvISA::RiscvStaticInst *>(
                     inst->staticInst.get());
             fatal_if(!riscv_inst, "VPU offload requires a RISC-V instruction");
+
+            const char *reason_str = "Unknown";
+            if (vec_state->rejectionReason) {
+                switch (*vec_state->rejectionReason) {
+                    case vector_engine::RejectionReason::InvalidIdentity:
+                        reason_str = "InvalidIdentity";
+                        break;
+                    case vector_engine::RejectionReason::InvalidVectorConfig:
+                        reason_str = "InvalidVectorConfig";
+                        break;
+                    case vector_engine::RejectionReason::InvalidRegisterGroup:
+                        reason_str = "InvalidRegisterGroup";
+                        break;
+                    case vector_engine::RejectionReason::InvalidPayload:
+                        reason_str = "InvalidPayload";
+                        break;
+                    case vector_engine::RejectionReason::UnsupportedOperation:
+                        reason_str = "UnsupportedOperation";
+                        break;
+                    case vector_engine::RejectionReason::
+                        UnsupportedConfiguration:
+                        reason_str = "UnsupportedConfiguration";
+                        break;
+                    case vector_engine::RejectionReason::DuplicateCommand:
+                        reason_str = "DuplicateCommand";
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            DPRINTF(MinorExecute,
+                    "VPU rejected vector command: reason=%s, inst: %s\n",
+                    reason_str, *inst);
+
+            std::string fault_msg = "VPU rejected vector command";
+            if (vec_state->rejectionReason) {
+                fault_msg += " (";
+                fault_msg += reason_str;
+                fault_msg += ")";
+            }
+
             fault = std::make_shared<RiscvISA::IllegalInstFault>(
-                "VPU rejected vector command", riscv_inst->machInst);
+                fault_msg, riscv_inst->machInst);
             fault->invoke(thread, inst->staticInst);
             tryToBranch(inst, fault, branch);
             completed_inst = true;
@@ -1468,26 +1511,56 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
 
             ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
 
-            if (vec_state->completion->status ==
-                vector_engine::CompletionStatus::MemoryFault) {
-                // Extraemos el objeto Fault real que creó el
-                // VectorMemoryBackend
-                fault = vec_state->completion->fault->fault;
+            switch (vec_state->completion->status) {
+                case vector_engine::CompletionStatus::Success:
+                    break;
 
-                DPRINTF(MinorExecute,
-                        "VPU Offload returned a memory fault: %s\n",
-                        fault->name());
+                case vector_engine::CompletionStatus::MemoryFault:
+                    panic_if(!vec_state->completion->fault,
+                             "VPU MemoryFault completion without fault info");
+                    fault = vec_state->completion->fault->fault;
+                    DPRINTF(MinorExecute,
+                            "VPU Offload returned a memory fault: %s\n",
+                            fault->name());
+                    fault->invoke(thread, inst->staticInst);
+                    break;
 
-                // Saltamos a la rutina del SO
-                fault->invoke(thread, inst->staticInst);
-            } else if (vec_state->completion->status !=
-                       vector_engine::CompletionStatus::Success) {
-                panic("Unexpected completion status from VPU");
+                case vector_engine::CompletionStatus::IllegalInstruction: {
+                    const auto *riscv_inst =
+                        dynamic_cast<const RiscvISA::RiscvStaticInst *>(
+                            inst->staticInst.get());
+                    fatal_if(!riscv_inst,
+                             "VPU offload requires a RISC-V instruction");
+                    DPRINTF(MinorExecute,
+                            "VPU Offload reported IllegalInstruction: %s\n",
+                            *inst);
+                    fault = std::make_shared<RiscvISA::IllegalInstFault>(
+                        "VPU reported illegal instruction during execution",
+                        riscv_inst->machInst);
+                    fault->invoke(thread, inst->staticInst);
+                    break;
+                }
+
+                case vector_engine::CompletionStatus::Cancelled:
+                    DPRINTF(MinorExecute,
+                            "VPU Offload instruction was cancelled: %s\n",
+                            *inst);
+                    break;
+
+                case vector_engine::CompletionStatus::InternalError:
+                default:
+                    panic("VPU reported InternalError for command "
+                          "[ctx:%d, cmd:%lu] (inst: %s)\n",
+                          vec_state->completion->command.contextId,
+                          vec_state->completion->command.commandId, *inst);
+                    break;
             }
 
             tryToBranch(inst, fault, branch);
             completed_inst = true;
-            committed = (fault == NoFault);
+            committed = (fault == NoFault &&
+                         vec_state->completion->status ==
+                             vector_engine::CompletionStatus::Success);
             return completed_inst;
         }
 

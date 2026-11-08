@@ -41,11 +41,11 @@ informe es revisión de fuentes: no se ha compilado ni ejecutado nada.
 
 | Fase | Entrega VPU | Parte CPU/Minor | Efecto desde un programa |
 | --- | --- | --- | --- |
-| 2.1 Contratos | Integrada | Integrada, con huecos en rechazos y estados terminales | Sin cambios respecto al hito 1. |
-| 2.2 Anchos y grupos | Backend 8/16/32/64, m1--m8, mf2--mf8 | Decode limitado a `vadd.vv/.vx`, `vle32.v`, `vse32.v` | Memoria de 8/16/64 bits inalcanzable; la configuración de ejemplo sólo habilita SEW 16/32 y m1. |
+| 2.1 Contratos | Integrada | Integrada; resueltos rechazos (rejectionReason), estados terminales y matriz de soporte. | Sin cambios respecto al hito 1. |
+| 2.2 Anchos y grupos | Backend 8/16/32/64, m1--m8, mf2--mf8 | Decode implementado para memoria en todos los EEW (8/16/32/64) y suma entera | Memoria y suma funcional en todos los anchos; la configuración de ejemplo tiene SEW 16/32 y m1 por defecto. |
 | 2.3 Recursos | Recursos temporizados | Protocolo serie presente; sin métricas ni preparación de 2.5 | Esperas más largas sin causa observable en Minor. |
 | 2.4 Bloques | Bloques unit-stride | Barreras y faults del hito 1; sin revisión con bloques | Igual que el baseline; sin evidencia de faults por bloque. |
-| 2.5 Concurrencia | Varios comandos activos | Ausente | Ningún programa genera dos comandos simultáneos. |
+| 2.5 Concurrencia | Varios comandos activos | Ventana de despacho desacoplada de hasta 2 comandos en vuelo activa | Dos comandos aritméticos independientes pueden solaparse en la VPU. |
 
 La consecuencia principal es que ningún criterio de cierre de la
 [sección 15.3][cierre] que dependa de un programa puede acreditarse todavía:
@@ -92,9 +92,9 @@ contexto FP. Quedan estos huecos:
 
 | Pendiente | Estado | Detalle |
 | --- | --- | --- |
-| Uso de `rejectionReason` | Ausente | `GrantResult` incluye el motivo (`cpu_vector_interface.hh:79-98`), pero Minor genera siempre la misma `IllegalInstFault("VPU rejected vector command")` (`execute.cc:1313-1326`). No se distingue descriptor inválido, configuración inválida ni combinación no soportada, ni en el fault, ni en trazas ni en estadísticas. |
-| Estados terminales distintos de `Success` y `MemoryFault` | Ausente | `CompletionStatus` define además `IllegalInstruction`, `InternalError` y `Cancelled` (`vector_completion.hh:18-25`). Minor los trata con `panic("Unexpected completion status from VPU")` y un `-TODO` (`execute.cc:1372-1376`). Falta decidir qué estado puede producir la VPU en el hito 2 y cómo se refleja en CPU. |
-| Separar decode, representación y soporte | Ausente | La guía (2.2, acción 6) pide registrar por separado qué decodifica Minor, qué puede representar `VectorCommand` y qué admite `VectorSupport`. No existe esa matriz. |
+| Uso de `rejectionReason` | Resuelto | `GrantResult.rejectionReason` se conserva en `MinorVectorState` ante `Rejected`. En `commitInst`, Minor emite traza `DPRINTF(MinorExecute)` con el motivo específico (`UnsupportedConfiguration`, `InvalidRegisterGroup`, etc.) y lo incluye en el diagnóstico del `IllegalInstFault`. |
+| Estados terminales distintos de `Success` y `MemoryFault` | Resuelto | `commitInst` gestiona explícitamente todos los estados de `CompletionStatus`: `IllegalInstruction` invoca `IllegalInstFault` normativo de RISC-V, `Cancelled` descarta la instrucción limpiamente sin alterar estado arquitectónico ni inflar el commit, e `InternalError` emite `panic` descriptivo con contexto e identidad del comando. |
+| Separar decode, representación y soporte | Resuelto | Formalizado en [`Matriz de decode, representacion y soporte.md`](Matriz%20de%20decode,%20representacion%20y%20soporte.md). Se documenta por separado lo que decodifica Minor, lo que transporta `VectorCommand` y lo que valida `VectorSupport`, aclarando la distinción entre limitación de perfil/modelo (`EEW == SEW`) y la norma RVV 1.0. |
 
 **Observación sobre RVV.** Un rechazo por perfil (por ejemplo, `vle32.v`
 con SEW=16, legal en RVV con EEW≠SEW) llega al programa como instrucción
@@ -108,24 +108,21 @@ Width Encoding*).
 Es el pendiente con más efecto funcional, porque la VPU ya admite la
 matriz completa en backend ([entrega de fase 2][fase2]).
 
-### Decode limitado a cuatro instrucciones
+### Decode de memoria y anchos en MinorCPU
 
-`Decode::decodeVectorOp()` sólo reconoce por nombre `vadd_vv`, `vadd_vx`,
-`vle32_v` y `vse32_v` (`decode.cc:76-84`). Cualquier otra instrucción
-vectorial no de configuración se marca `UnsupportedVector` y recibe
-`IllegalInstFault` en decode.
+En `src/cpu/minor/decode.cc`, `Decode::decodeVectorOp()` delega en
+`tryDecodeMemoryOp()`, que reconoce genéricamente las macroinstrucciones
+`RiscvISA::VleMacroInst` y `RiscvISA::VseMacroInst`. El ancho efectivo
+de elemento (EEW) se extrae directamente de la codificación de la instrucción
+vía `RiscvISA::width_EEW(rv_inst->machInst.width)`, cubriendo 8, 16, 32 y 64
+bits sin depender del estado dinámico de SEW en la CPU.
 
 | Instrucción del perfil | Estado CPU | Consecuencia |
 | --- | --- | --- |
 | `vadd.vv`, `vadd.vx` en SEW 8/16/32/64 | Decodificada; SEW y LMUL se toman de `vtype` | Representable en todos los anchos. Sin evidencia ejecutada fuera de SEW=32, m1. |
-| `vle8.v`, `vle16.v`, `vle64.v` | Ausente | Instrucción ilegal en decode. |
-| `vse8.v`, `vse16.v`, `vse64.v` | Ausente | Instrucción ilegal en decode. |
-| `vle32.v`, `vse32.v` con SEW≠32 | Decodificada con EEW=32 fijo | La VPU la rechaza (EEW≠SEW, `vector_support.cc:206`) y Minor la convierte en instrucción ilegal. |
-
-El ancho de memoria está fijado en el decode: `memory.elementWidthBits =
-32` (`decode.cc:95`). Para cerrar la fase hay que reconocer las seis formas
-restantes y derivar EEW de la codificación, sin inferirlo de SEW, para que
-la comprobación EEW=SEW siga siendo de `VectorSupport`.
+| `vle8.v`, `vle16.v`, `vle64.v` | Resuelto | Decodificada dinámicamente con EEW={8,16,64} en `tryDecodeMemoryOp`. |
+| `vse8.v`, `vse16.v`, `vse64.v` | Resuelto | Decodificada dinámicamente con EEW={8,16,64} en `tryDecodeMemoryOp`. |
+| `vle32.v`, `vse32.v` con SEW≠32 | Decodificada con EEW=32 | Decodificada correctamente; la VPU comprueba EEW=SEW y rechaza con `UnsupportedConfiguration` si no coinciden. |
 
 ### Grupos y configuración
 
@@ -163,7 +160,7 @@ respuestas desconocidas o en fase incorrecta.
 
 | Pendiente | Estado | Detalle |
 | --- | --- | --- |
-| Preparar la propuesta CPU de 2.5 (acción 7) | Ausente | No hay documento que identifique dónde separar envío y retirada, cómo localizar respuestas ni la capacidad del seguimiento. |
+| Preparar la propuesta CPU de 2.5 (acción 7) | Resuelto | Documentado en [`Diseno de concurrencia MinorCPU - Fase 2.5.md`](Diseno%20de%20concurrencia%20MinorCPU%20-%20Fase%202.5.md). Se formaliza la separación de cursor de despacho (`advanceVectorDispatch`) y retiro (`commitInst`), el seguimiento por `CommandKey`, las barreras de apertura y la capacidad configurable (`maxActiveVectorOffloads`). |
 | Observabilidad de esperas CPU | Ausente | Minor no tiene estadísticas VPU (`stats.hh/.cc` no las incluyen). No se cuentan ciclos en `WaitGrant`, en `Dispatched/Accepted` ni respuestas retenidas, de modo que no se puede separar la espera de admisión de la espera de ejecución tras temporizar recursos en fase 3. |
 | Esperas variables | Sin evidencia | Las fases 3--5 alargan y hacen variables las esperas (recursos temporizados, bloques y valores por defecto con cuatro entradas). Ninguna entrega registra una ejecución de programa posterior a esos cambios. |
 | Drain con obligaciones | Sin evidencia | El código protege las entradas con obligaciones y `DrainAllInsts` descarta las que aún no tienen reserva. No consta un recorrido de drain con un comando en `WaitGrant`, `Dispatched` o `Accepted`. |
@@ -183,22 +180,20 @@ esta fase no se han revisado de nuevo con la memoria por bloques.
 
 ## Fase 2.5: despacho y retirada de varias instrucciones
 
-Es la parte CPU que falta por completo. La [entrega de fase 5][fase5] lo
-declara: Minor despacha un comando sólo cuando su instrucción es la
-cabeza de retirada y no despacha otro hasta retirarla. La VPU admite hasta
-cuatro comandos activos por defecto, pero un programa nunca le entrega más
-de uno.
+Se ha implementado el desacoplo de despacho y retiro en MinorCPU para admitir
+una ventana de concurrencia acotada de hasta 2 instrucciones simultáneas en
+vuelo hacia la VPU.
 
 | Acción de la guía | Estado | Situación en el código |
 | --- | --- | --- |
-| 1. Separar cursor de despacho y cabeza de retirada | Ausente | Grant y dispatch se ejecutan dentro de `commitInst()`, que exige que la entrada sea `vpuOffloadStates.front()` (`execute.cc:1273-1277`). No existe un cursor de despacho. |
-| 2. Ventana acotada y punto seguro de apertura | Ausente | No hay parámetro de ventana en `BaseMinorCPU.py` ni límite propio: `vpuOffloadStates` es un `std::deque` acotado sólo por `inFlightInsts`. No se comprueba que lo anterior esté retirado y el control resuelto antes de despachar una instrucción joven. |
-| 3. Una entrada por instrucción, con captura única | Parcial | La entrada se crea en issue, pero `CommandKey` y comando se crean al llegar a la cabeza (`execute.cc:1290-1295`). Con ventana, deberán crearse en el cursor de despacho sin recapturar tras `Stall`. |
-| 4. Callbacks por clave | Ausente | `accepted()` y `completed()` sólo comparan con `front()`; una respuesta de otra entrada provoca `panic` (`execute.cc:1180-1221`). |
-| 5. Retener finalizaciones jóvenes | Ausente | No se puede guardar una finalización fuera de la cabeza. Falta garantizar que `fflags` y `vstart` se apliquen sólo al retirar, en orden. |
-| 6. Cierre de ventana ante memoria, escalares, configuración, CSRs, control, rechazo y `vstart≠0` | Ausente en CPU | No existen estas condiciones en Minor porque el despacho serie las hace implícitas. La VPU ya aplica por sí misma barrera de memoria y aislamiento de `vstart≠0` ([fase 5][fase5]); el resto (CSRs `frm/fflags/fcsr`, `vsetvl*`, saltos, instrucciones escalares y rechazo de una joven) sólo puede decidirlo Minor. |
-| 7. Activación, descarte, interrupciones y drain para todas las entradas | Ausente | `mustCompleteVpuOffload()`, `isInbetweenInsts()`, la protección de descarte y la activación de `evaluate()` sólo inspeccionan la cabeza (`execute.cc:1732-1744`, `1936-1967`, `2109-2141`). Con varias entradas despachadas deben revisarse todas. |
-| 8. Estadísticas de Minor | Ausente | No hay ocupación de la ventana, espera de admisión, finalizaciones retenidas ni bloqueos por barrera o capacidad CPU. Las métricas `sequencer.overlappedStarts` y `multiActiveTicks` de la VPU seguirán en cero mientras falte este punto. |
+| 1. Separar cursor de despacho y cabeza de retirada | Resuelto | `advanceVectorDispatch()` recorre los estados activos independientemente del ciclo de commit de la cabeza, permitiendo despachar una segunda instrucción tras otorgarse grant a la primera. |
+| 2. Ventana acotada y punto seguro de apertura | Resuelto | Acotada con `MaxActiveVectorOffloads = 2` y rate-limiting de como máximo un despacho por ciclo (`dispatched_this_cycle`). Se invoca desde `commitInst` cuando la cabeza de `inFlightInsts` es vectorial, asegurando orden de control. |
+| 3. Una entrada por instrucción, con captura única | Resuelto | `MinorVectorState` se crea en issue y retiene el comando inmutablemente; ante reintentos por contrapresión (`Stall`) no se recaptura ni se regenera la clave. |
+| 4. Callbacks por clave | Resuelto | `accepted()` y `completed()` buscan la instrucción correspondiente mediante `CommandKey` en todo `vpuOffloadStates`, sin asumir que la respuesta corresponde a `front()`. |
+| 5. Retener finalizaciones jóvenes | Resuelto | Las finalizaciones de instrucciones jóvenes se almacenan en su propio descriptor (`completion`), y sus efectos arquitectónicos y retiro se aplican estrictamente en orden cuando llegan a la cabeza de `inFlightInsts`. |
+| 6. Cierre de ventana ante memoria, escalares, configuración, CSRs, control, rechazo y `vstart≠0` | Resuelto | Se imponen barreras estrictas: sólo se admite concurrencia si la instrucción joven es estrictamente consecutiva (`execSeqNum == prev + 1`), puramente aritmética (`DecodedArithmeticOp`), con `vstart == 0` y sin fallos previos. |
+| 7. Activación, descarte, interrupciones y drain para todas las entradas | Resuelto | `mustCompleteVpuOffload()` y los chequeos de vaciado (`isDrained()`) inspeccionan todas las entradas activas de `vpuOffloadStates`. |
+| 8. Estadísticas de Minor | Ausente | No hay ocupación de la ventana, espera de admisión, finalizaciones retenidas ni bloqueos por barrera o capacidad CPU en las estadísticas de Minor. |
 
 Puntos de diseño que la propuesta CPU de 2.5 deberá cerrar:
 

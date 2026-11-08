@@ -75,6 +75,10 @@ struct MinorVectorState
      *  programa. */
     bool rejected = false;
 
+    /** Motivo de rechazo de admisión devuelto por la VPU si rejected
+     *  es true. */
+    std::optional<vector_engine::RejectionReason> rejectionReason;
+
     // Una clave sin reserva no obliga a terminar el intento durante drain.
     bool
     mustComplete() const
