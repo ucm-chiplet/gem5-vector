@@ -280,6 +280,7 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
              *  la VPU. */
             if (vec_state.inst->id.execSeqNum !=
                 prev_state.inst->id.execSeqNum + 1) {
+                cpu.stats.vectorBlockedOrder++;
                 break;
             }
 
@@ -289,11 +290,13 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
             if (!prev_state.decoded.payload ||
                 !std::holds_alternative<DecodedArithmeticOp>(
                     *prev_state.decoded.payload)) {
+                cpu.stats.vectorBlockedStructural++;
                 break;
             }
             if (!vec_state.decoded.payload ||
                 !std::holds_alternative<DecodedArithmeticOp>(
                     *vec_state.decoded.payload)) {
+                cpu.stats.vectorBlockedStructural++;
                 break;
             }
 
@@ -304,6 +307,7 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
 
             /** Instrucciones con vstart != 0 se ejecutan aisladas. */
             if (tc->readMiscRegNoEffect(RiscvISA::MISCREG_VSTART) != 0) {
+                cpu.stats.vectorBlockedVstart++;
                 break;
             }
         } else {
@@ -359,6 +363,12 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
             cpu.stats.vectorOffloadCommands++;
             vector_interface.dispatch(token, command);
         }
+    }
+
+    /** Si hay más instrucciones en espera que exceden la ventana de
+     *  capacidad de despacho concurrente, se registra el bloqueo. */
+    if (states.size() > maxActiveVectorOffloads) {
+        cpu.stats.vectorBlockedCapacity++;
     }
 }
 
@@ -2153,11 +2163,11 @@ Execute::evaluate()
         bool any_wait_grant = false;
         bool any_in_vpu = false;
         bool any_retained_completion = false;
+        unsigned int active_in_vpu_count = 0;
 
         for (const auto &info : executeInfo) {
-            for (size_t i = 0;
-                 i < info.vpuOffloadStates.size() &&
-                 !(any_wait_grant && any_in_vpu && any_retained_completion);
+            for (size_t i = 0; i < info.vpuOffloadStates.size() &&
+                               i < maxActiveVectorOffloads;
                  ++i) {
                 const auto &st = info.vpuOffloadStates[i];
                 if (st.phase == MinorVectorPhase::WaitGrant) {
@@ -2165,6 +2175,7 @@ Execute::evaluate()
                 } else if (st.phase == MinorVectorPhase::Dispatched ||
                            st.phase == MinorVectorPhase::Accepted) {
                     any_in_vpu = true;
+                    active_in_vpu_count++;
                 } else if (st.phase == MinorVectorPhase::Completed && i > 0) {
                     any_retained_completion = true;
                 }
@@ -2180,6 +2191,13 @@ Execute::evaluate()
         if (any_retained_completion) {
             cpu.stats.vectorRetainedCompletionCycles++;
         }
+
+        if (active_in_vpu_count >= 2) {
+            cpu.stats.vectorMultiActiveCycles++;
+        }
+        /** vectorActiveCommandsDistribution[7]: active commands >7 */
+        const unsigned int dist_index = std::min(active_in_vpu_count, 7U);
+        cpu.stats.vectorActiveCommandsDistribution[dist_index]++;
     }
 #endif
 

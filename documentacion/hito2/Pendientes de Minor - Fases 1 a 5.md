@@ -193,7 +193,7 @@ vuelo hacia la VPU.
 | 5. Retener finalizaciones jóvenes | Resuelto | Las finalizaciones de instrucciones jóvenes se almacenan en su propio descriptor (`completion`), y sus efectos arquitectónicos y retiro se aplican estrictamente en orden cuando llegan a la cabeza de `inFlightInsts`. |
 | 6. Cierre de ventana ante memoria, escalares, configuración, CSRs, control, rechazo y `vstart≠0` | Resuelto | Se imponen barreras estrictas: sólo se admite concurrencia si la instrucción joven es estrictamente consecutiva (`execSeqNum == prev + 1`), puramente aritmética (`DecodedArithmeticOp`), con `vstart == 0` y sin fallos previos. |
 | 7. Activación, descarte, interrupciones y drain para todas las entradas | Resuelto | `mustCompleteVpuOffload()` y los chequeos de vaciado (`isDrained()`) inspeccionan todas las entradas activas de `vpuOffloadStates`. |
-| 8. Estadísticas de Minor | Ausente | No hay ocupación de la ventana, espera de admisión, finalizaciones retenidas ni bloqueos por barrera o capacidad CPU en las estadísticas de Minor. |
+| 8. Estadísticas de Minor | Resuelto | Integradas en `MinorStats` (`stats.hh/.cc` y `execute.cc`): ocupación y distribución de comandos activos en vuelo (`vectorActiveCommandsDistribution`, `vectorMultiActiveCycles`) y causas de bloqueo de la ventana concurrente (`vectorBlockedCapacity`, `vectorBlockedOrder`, `vectorBlockedStructural`, `vectorBlockedVstart`). |
 
 Puntos de diseño que la propuesta CPU de 2.5 deberá cerrar:
 

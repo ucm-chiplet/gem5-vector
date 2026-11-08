@@ -166,3 +166,19 @@ Aunque las instrucciones pueden completar asíncronamente en la VPU:
 * **Drain seguro:** El método `isDrained()` de la etapa de Execute verifica
   que `vpuOffloadStates` se encuentre completamente vacío antes de confirmar
   el vaciado del procesador.
+
+---
+
+## 9. Observabilidad y Estadísticas de Concurrencia
+
+En `MinorStats` se añaden métricas para auditar la ventana concurrente:
+* `vectorMultiActiveCycles`: Ciclos con $\ge 2$ comandos simultáneamente
+  activos en la VPU (no cuentan completed).
+* `vectorActiveCommandsDistribution`: Vector con la distribución de ciclos
+  según el número de comandos activos en vuelo ($0, 1, 2\dots$).
+* Contadores de causa de bloqueo que cerraron la ventana concurrente:
+  - `vectorBlockedCapacity`: Superado el límite de ventana
+    (`maxActiveVectorOffloads`).
+  - `vectorBlockedOrder`: Secuencia no consecutiva (`execSeqNum`).
+  - `vectorBlockedStructural`: Operación no puramente aritmética.
+  - `vectorBlockedVstart`: Instrucción con `vstart != 0`.

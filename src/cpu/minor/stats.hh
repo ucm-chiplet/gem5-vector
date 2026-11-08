@@ -77,6 +77,28 @@ struct MinorStats : public statistics::Group
 
     /** Número total de comandos vectoriales despachados hacia la VPU */
     statistics::Scalar vectorOffloadCommands;
+
+    /** Estadísticas de concurrencia y ventana (Fase 2.5) */
+    /** Ciclos con dos o más comandos simultáneamente activos en la VPU */
+    statistics::Scalar vectorMultiActiveCycles;
+
+    /** Ocupación de la ventana: ciclos según el número de comandos
+     *  activos en la VPU (0, 1, 2, ...) */
+    statistics::Vector vectorActiveCommandsDistribution;
+
+    /** Bloqueos de la ventana concurrente. Motivo: límite de capacidad */
+    statistics::Scalar vectorBlockedCapacity;
+
+    /** Bloqueos de la ventana concurrente. Motivo: orden de programa no
+     * consecutivo */
+    statistics::Scalar vectorBlockedOrder;
+
+    /** Bloqueos de la ventana concurrente. Motivo: operación no aritmética */
+    statistics::Scalar vectorBlockedStructural;
+
+    /** Bloqueos de la ventana concurrente. Motivo: instrucción aislada por
+     * vstart!=0 */
+    statistics::Scalar vectorBlockedVstart;
 };
 
 } // namespace minor

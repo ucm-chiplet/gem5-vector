@@ -57,13 +57,34 @@ MinorStats::MinorStats(BaseCPU *base_cpu)
                "Total cycles young completed vector instructions are held "
                "waiting for retirement"),
       ADD_STAT(vectorOffloadCommands, statistics::units::Count::get(),
-               "Total vector offload commands dispatched to the VPU")
+               "Total vector offload commands dispatched to the VPU"),
+      ADD_STAT(vectorMultiActiveCycles, statistics::units::Cycle::get(),
+               "Total cycles with more than 1 vector commands active in VPU"),
+      ADD_STAT(
+          vectorActiveCommandsDistribution, statistics::units::Cycle::get(),
+          "Cycles distribution by number of active vector commands in VPU"),
+      ADD_STAT(vectorBlockedCapacity, statistics::units::Count::get(),
+               "Times young vector dispatch stopped due to window capacity"),
+      ADD_STAT(
+          vectorBlockedOrder, statistics::units::Count::get(),
+          "Times young vector dispatch stopped due to program order barrier"),
+      ADD_STAT(vectorBlockedStructural, statistics::units::Count::get(),
+               "Times young vector dispatch stopped due to non-arithmetic op"),
+      ADD_STAT(vectorBlockedVstart, statistics::units::Count::get(),
+               "Times young vector dispatch stopped due to non-zero vstart")
 {
     quiesceCycles.prereq(quiesceCycles);
     vectorWaitGrantCycles.prereq(vectorWaitGrantCycles);
     vectorWaitCompletionCycles.prereq(vectorWaitCompletionCycles);
     vectorRetainedCompletionCycles.prereq(vectorRetainedCompletionCycles);
     vectorOffloadCommands.prereq(vectorOffloadCommands);
+    vectorMultiActiveCycles.prereq(vectorMultiActiveCycles);
+    vectorActiveCommandsDistribution.init(8).flags(statistics::pdf |
+                                                   statistics::total);
+    vectorBlockedCapacity.prereq(vectorBlockedCapacity);
+    vectorBlockedOrder.prereq(vectorBlockedOrder);
+    vectorBlockedStructural.prereq(vectorBlockedStructural);
+    vectorBlockedVstart.prereq(vectorBlockedVstart);
 }
 
 } // namespace minor
