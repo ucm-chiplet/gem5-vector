@@ -181,6 +181,11 @@ classifyVectorArithOp(const std::string_view name)
             return ArithmeticOpClassification{ArithmeticOperation::Remainder,
                                               ElementSignedness::Unsigned};
 
+        // Mínimo entero con signo (Pathfinder, Fase 2.8)
+        case hashString("vmin_vv"):
+            return ArithmeticOpClassification{ArithmeticOperation::Minimum,
+                                              ElementSignedness::Signed};
+
         // Coma flotante (FP32)
         case hashString("vfadd_vv"):
             return ArithmeticOpClassification{

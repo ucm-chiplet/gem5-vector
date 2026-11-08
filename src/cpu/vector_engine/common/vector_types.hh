@@ -102,6 +102,7 @@ enum class ArithmeticOperation : uint8_t
     Remainder,
     FloatMultiply,
     FloatDivide,
+    Minimum,
 };
 
 /**
