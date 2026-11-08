@@ -89,6 +89,19 @@ struct DecodedMemoryOp
 };
 
 /**
+ * Desplazamiento (slide) de un elemento que Decode describe para Execute.
+ * Execute resuelve el escalar en rs1 y construye el SlideCommand.
+ */
+struct DecodedSlideOp
+{
+    vector_engine::SlideOperation operation =
+        vector_engine::SlideOperation::Invalid;
+    RegIndex destination = 0;
+    RegIndex vectorSource = 0;
+    ScalarOperandRef scalar;
+};
+
+/**
  * Descripción que Decode entrega a Execute sin repetir la decodificación.
  * Permanece en MinorCPU; las unidades de la VPU reciben VectorCommand.
  */
@@ -100,7 +113,9 @@ struct DecodedVectorOp
     bool masked = false;
 
     // Sólo VpuOffload lleva payload; las demás clases siguen sus rutas CPU.
-    std::optional<std::variant<DecodedArithmeticOp, DecodedMemoryOp>> payload;
+    std::optional<
+        std::variant<DecodedArithmeticOp, DecodedMemoryOp, DecodedSlideOp>>
+        payload;
 };
 
 } // namespace gem5::minor

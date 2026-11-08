@@ -115,6 +115,9 @@ struct MinorStats : public statistics::Group
     /** Comandos de memoria despachados a la VPU */
     statistics::Scalar vectorMemCommands;
 
+    /** Comandos de slide despachados a la VPU */
+    statistics::Scalar vectorSlideCommands;
+
     /** Comandos FP que produjeron excepciones IEEE 754 (fflags) */
     statistics::Scalar vectorFpExceptions;
 };

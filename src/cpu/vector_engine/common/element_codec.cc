@@ -107,7 +107,7 @@ ElementCodec::normalizeScalar(uint64_t value, unsigned xlen,
     panic_if(xlen != 32 && xlen != 64, "Invalid scalar register width");
     // Primero conservar sólo los bits que existen en el registro CPU.
     value &= mask(xlen);
-    // Si el elemento es mayor, repetir el bit de signo en los bits nuevos.
+    // Si SEW > XLEN, repetir el bit de signo en los bits nuevos.
     if (xlen < element_bits && (value & (uint64_t{1} << (xlen - 1)))) {
         value |= ~mask(xlen);
     }

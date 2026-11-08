@@ -81,6 +81,8 @@ MinorStats::MinorStats(BaseCPU *base_cpu)
                "Total floating-point arithmetic commands dispatched to VPU"),
       ADD_STAT(vectorMemCommands, statistics::units::Count::get(),
                "Total memory commands dispatched to VPU"),
+      ADD_STAT(vectorSlideCommands, statistics::units::Count::get(),
+               "Total slide commands dispatched to VPU"),
       ADD_STAT(vectorFpExceptions, statistics::units::Count::get(),
                "Total vector floating-point commands producing IEEE 754 flags")
 {

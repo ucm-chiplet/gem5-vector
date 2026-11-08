@@ -262,6 +262,58 @@ tryDecodeArithmeticOp(const StaticInstPtr &static_inst,
     return true;
 }
 
+/**
+ * Clasifica la operación slide a partir del nemónico de la instrucción.
+ * Se hace con hash en vez de dynamic_cast. O(1) en ejecución.
+ */
+std::optional<vector_engine::SlideOperation>
+classifyVectorSlideOp(const std::string_view name)
+{
+    using vector_engine::SlideOperation;
+
+    switch (hashString(name)) {
+        case hashString("vslide1up_vx"):
+            return SlideOperation::Slide1Up;
+        case hashString("vslide1down_vx"):
+            return SlideOperation::Slide1Down;
+        default:
+            return std::nullopt;
+    }
+}
+
+/**
+ * Intenta decodificar una instrucción vectorial de slide soportada
+ * (vslide1up.vx, vslide1down.vx).
+ *
+ * Retorna true si la instrucción fue reconocida y empaquetada como
+ * VpuOffload en decoded, o false en caso contrario.
+ */
+bool
+tryDecodeSlideOp(const StaticInstPtr &static_inst,
+                 const RiscvISA::RiscvStaticInst *rv_inst,
+                 DecodedVectorOp &decoded)
+{
+    const auto op = classifyVectorSlideOp(static_inst->getName());
+    if (!op) {
+        return false;
+    }
+
+    DecodedSlideOp slide;
+    slide.operation = *op;
+    slide.destination = rv_inst->machInst.vd;
+    slide.vectorSource = rv_inst->machInst.vs2;
+    slide.scalar = ScalarOperandRef{0}; // rs1
+
+    panic_if(slide.destination >= 32,
+             "VPU slide destination is not an architectural register");
+    panic_if(slide.vectorSource >= 32,
+             "VPU slide source is not an architectural register");
+
+    decoded.executionClass = VectorExecutionClass::VpuOffload;
+    decoded.payload = slide;
+    return true;
+}
+
 } // anonymous namespace
 #endif
 
@@ -297,6 +349,11 @@ Decode::decodeVectorOp(const StaticInstPtr &static_inst)
 
     // Reconocer operaciones aritméticas soportadas delegando en la ISA.
     if (tryDecodeArithmeticOp(static_inst, decoded)) {
+        return decoded;
+    }
+
+    // Reconocer operaciones de desplazamiento (slide) soportadas.
+    if (tryDecodeSlideOp(static_inst, rv_inst, decoded)) {
         return decoded;
     }
 

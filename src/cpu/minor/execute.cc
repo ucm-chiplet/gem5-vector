@@ -228,6 +228,30 @@ Execute::buildVectorCommand(MinorVectorState &state,
         memory.fieldCount = 1;
 
         command.payload = memory;
+    } else if (auto *slide_op =
+                   std::get_if<DecodedSlideOp>(&payload_variant)) {
+        vector_engine::SlideCommand slide;
+        slide.operation = slide_op->operation;
+        slide.destination = make_ref(slide_op->destination);
+        slide.vectorSource = make_ref(slide_op->vectorSource);
+        slide.scalar = thread->getReg(state.inst->staticInst->srcRegIdx(
+            slide_op->scalar.sourceOperandIndex));
+
+        // Adaptar el escalar una sola vez según RVV 1.0 (edición 20240411,
+        // sección 16.3) y ElementCodec::normalizeScalar. Si el envío debe
+        // esperar, el comando conserva este valor inmutablemente.
+        if (vector_engine::ElementCodec::validWidth(command.config.sewBits)) {
+            auto *isa = dynamic_cast<RiscvISA::ISA *>(thread->getIsaPtr());
+            panic_if(!isa, "RVV scalar normalization requires RISC-V ISA");
+            unsigned xlen = 64;
+            if (isa->rvType() == RiscvISA::RV32) {
+                xlen = 32;
+            }
+            slide.scalar = vector_engine::ElementCodec::normalizeScalar(
+                slide.scalar, xlen, command.config.sewBits);
+        }
+
+        command.payload = slide;
     }
 
     return command;
@@ -412,6 +436,9 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
                 } else if (std::holds_alternative<DecodedMemoryOp>(
                                *vec_state.decoded.payload)) {
                     cpu.stats.vectorMemCommands++;
+                } else if (std::holds_alternative<DecodedSlideOp>(
+                               *vec_state.decoded.payload)) {
+                    cpu.stats.vectorSlideCommands++;
                 }
             }
 
