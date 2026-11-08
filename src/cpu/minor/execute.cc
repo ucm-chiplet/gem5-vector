@@ -164,13 +164,13 @@ Execute::buildVectorCommand(MinorVectorState &state,
 
         vector_engine::ArithmeticCommand arithmetic;
         arithmetic.operation = arith_op->operation;
-        // -TODO por el momento solo puede ser destination vectorial.
+        arithmetic.signedness = arith_op->signedness;
+        // Por el momento solo puede ser destination vectorial.
         arithmetic.destination = make_ref(arith_op->destination);
         // Siempre vectorSource va a ser vectorial
         arithmetic.vectorSource = make_ref(arith_op->vectorSource);
 
-        // -TODO de momento solo puede ser vector o escalar, habría que
-        // modificar decode para aceptar imm también en un futuro próximo
+        //  Por el momento solo puede ser vector o escalar el segundo operando.
 
         // As secondOperand: ArithmeticOperand = std::variant<VectorRegRef,
         // RegVal, int64_t>;
@@ -267,6 +267,42 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
             continue;
         }
 
+        /** Comprobar permisos arquitectónicos en mstatus (VS y FS) antes
+         *  de iniciar la reserva de admisión hacia la VPU.
+         *  No contabilizamos como rejected command. */
+        if (vec_state.phase == MinorVectorPhase::ReadyToGrant) {
+            const auto misa = static_cast<RiscvISA::MISA>(
+                tc->readMiscRegNoEffect(RiscvISA::MISCREG_ISA));
+            const auto status = static_cast<RiscvISA::STATUS>(
+                tc->readMiscRegNoEffect(RiscvISA::MISCREG_STATUS));
+
+            bool illegal = false;
+            const char *illegal_msg = nullptr;
+
+            if (!misa.rvv || status.vs == RiscvISA::FPUStatus::OFF) {
+                illegal = true;
+                illegal_msg = "RVV is disabled or VPU is off";
+            } else if (vec_state.decoded.payload) {
+                if (const auto *arith = std::get_if<DecodedArithmeticOp>(
+                        &*vec_state.decoded.payload)) {
+                    const auto *traits =
+                        vector_engine::operationTraits(arith->operation);
+                    if (traits && traits->requiresFpContext &&
+                        status.fs == RiscvISA::FPUStatus::OFF) {
+                        illegal = true;
+                        illegal_msg = "FPU is off";
+                    }
+                }
+            }
+
+            if (illegal) {
+                vec_state.rejected = true;
+                vec_state.cpuFaultMessage = illegal_msg;
+                vec_state.phase = MinorVectorPhase::Completed;
+                break;
+            }
+        }
+
         /** Comprobar barreras de concurrencia: */
         if (i > 0) {
             /** Instrucción joven (i > 0): */
@@ -347,6 +383,7 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
                     vec_state.rejected = true;
                     vec_state.rejectionReason = result.rejectionReason;
                     vec_state.phase = MinorVectorPhase::Completed;
+                    cpu.stats.vectorRejectedCommands++;
                     /** Detener despacho de instrucciones posteriores. */
                     break;
                 } else {
@@ -361,6 +398,23 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
             vec_state.phase = MinorVectorPhase::Dispatched;
             num_dispatched_this_cycle++;
             cpu.stats.vectorOffloadCommands++;
+
+            if (vec_state.decoded.payload) {
+                if (const auto *arith = std::get_if<DecodedArithmeticOp>(
+                        &*vec_state.decoded.payload)) {
+                    const auto *traits =
+                        vector_engine::operationTraits(arith->operation);
+                    if (traits && traits->requiresFpContext) {
+                        cpu.stats.vectorFpuCommands++;
+                    } else {
+                        cpu.stats.vectorAluCommands++;
+                    }
+                } else if (std::holds_alternative<DecodedMemoryOp>(
+                               *vec_state.decoded.payload)) {
+                    cpu.stats.vectorMemCommands++;
+                }
+            }
+
             vector_interface.dispatch(token, command);
         }
     }
@@ -1428,54 +1482,65 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
             advanceVectorDispatch(thread_id);
         }
 
-        /** Si la instrucción fue rechazada por la VPU, procesamos la
-         *  excepción arquitectónica aquí en su punto de retiro en orden
-         *  de programa. */
+        /** Si la instrucción fue rechazada por la CPU o por la VPU,
+         *  procesamos la excepción arquitectónica aquí en su punto de
+         *  retiro en orden de programa. */
         if (vec_state->rejected) {
             const auto *riscv_inst =
                 dynamic_cast<const RiscvISA::RiscvStaticInst *>(
                     inst->staticInst.get());
             fatal_if(!riscv_inst, "VPU offload requires a RISC-V instruction");
 
-            const char *reason_str = "Unknown";
-            if (vec_state->rejectionReason) {
-                switch (*vec_state->rejectionReason) {
-                    case vector_engine::RejectionReason::InvalidIdentity:
-                        reason_str = "InvalidIdentity";
-                        break;
-                    case vector_engine::RejectionReason::InvalidVectorConfig:
-                        reason_str = "InvalidVectorConfig";
-                        break;
-                    case vector_engine::RejectionReason::InvalidRegisterGroup:
-                        reason_str = "InvalidRegisterGroup";
-                        break;
-                    case vector_engine::RejectionReason::InvalidPayload:
-                        reason_str = "InvalidPayload";
-                        break;
-                    case vector_engine::RejectionReason::UnsupportedOperation:
-                        reason_str = "UnsupportedOperation";
-                        break;
-                    case vector_engine::RejectionReason::
-                        UnsupportedConfiguration:
-                        reason_str = "UnsupportedConfiguration";
-                        break;
-                    case vector_engine::RejectionReason::DuplicateCommand:
-                        reason_str = "DuplicateCommand";
-                        break;
-                    default:
-                        break;
+            std::string fault_msg;
+            if (vec_state->cpuFaultMessage) {
+                fault_msg = *vec_state->cpuFaultMessage;
+                DPRINTF(MinorExecute,
+                        "CPU aborted vector offload: %s, inst: %s\n",
+                        fault_msg.c_str(), *inst);
+            } else {
+                const char *reason_str = "Unknown";
+                if (vec_state->rejectionReason) {
+                    switch (*vec_state->rejectionReason) {
+                        case vector_engine::RejectionReason::InvalidIdentity:
+                            reason_str = "InvalidIdentity";
+                            break;
+                        case vector_engine::RejectionReason::
+                            InvalidVectorConfig:
+                            reason_str = "InvalidVectorConfig";
+                            break;
+                        case vector_engine::RejectionReason::
+                            InvalidRegisterGroup:
+                            reason_str = "InvalidRegisterGroup";
+                            break;
+                        case vector_engine::RejectionReason::InvalidPayload:
+                            reason_str = "InvalidPayload";
+                            break;
+                        case vector_engine::RejectionReason::
+                            UnsupportedOperation:
+                            reason_str = "UnsupportedOperation";
+                            break;
+                        case vector_engine::RejectionReason::
+                            UnsupportedConfiguration:
+                            reason_str = "UnsupportedConfiguration";
+                            break;
+                        case vector_engine::RejectionReason::DuplicateCommand:
+                            reason_str = "DuplicateCommand";
+                            break;
+                        default:
+                            break;
+                    }
                 }
-            }
 
-            DPRINTF(MinorExecute,
-                    "VPU rejected vector command: reason=%s, inst: %s\n",
-                    reason_str, *inst);
+                DPRINTF(MinorExecute,
+                        "VPU rejected vector command: reason=%s, inst: %s\n",
+                        reason_str, *inst);
 
-            std::string fault_msg = "VPU rejected vector command";
-            if (vec_state->rejectionReason) {
-                fault_msg += " (";
-                fault_msg += reason_str;
-                fault_msg += ")";
+                fault_msg = "VPU rejected vector command";
+                if (vec_state->rejectionReason) {
+                    fault_msg += " (";
+                    fault_msg += reason_str;
+                    fault_msg += ")";
+                }
             }
 
             fault = std::make_shared<RiscvISA::IllegalInstFault>(
@@ -1499,6 +1564,7 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                     thread->readMiscReg(RiscvISA::MISCREG_FFLAGS);
                 thread->setMiscReg(RiscvISA::MISCREG_FFLAGS,
                                    flags | vec_state->completion->fpFlags);
+                cpu.stats.vectorFpExceptions++;
             }
             thread->setMiscReg(RiscvISA::MISCREG_VSTART,
                                vec_state->completion->finalVstart);
@@ -1506,8 +1572,36 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
             ExecContext context(cpu, *cpu.threads[thread_id], *this, inst);
 
             switch (vec_state->completion->status) {
-                case vector_engine::CompletionStatus::Success:
+                case vector_engine::CompletionStatus::Success: {
+                    const auto *riscv_inst =
+                        dynamic_cast<const RiscvISA::RiscvStaticInst *>(
+                            inst->staticInst.get());
+                    fatal_if(!riscv_inst,
+                             "VPU offload requires a RISC-V instruction");
+
+                    // Actualizar mstatus.vs = DIRTY utilizando la función
+                    // nativa de la ISA de gem5.
+                    RiscvISA::updateVPUStatus(&context, riscv_inst->machInst,
+                                              /* set_dirty */ true,
+                                              /* check_vill */ false);
+
+                    // Si produjo flags de coma flotante o fue una operación
+                    // FP, actualizar mstatus.fs = DIRTY.
+                    if (vec_state->completion->fpFlags ||
+                        (vec_state->decoded.payload &&
+                         std::holds_alternative<DecodedArithmeticOp>(
+                             *vec_state->decoded.payload) &&
+                         vector_engine::operationTraits(
+                             std::get<DecodedArithmeticOp>(
+                                 *vec_state->decoded.payload)
+                                 .operation)
+                             ->requiresFpContext)) {
+                        RiscvISA::updateFPUStatus(&context,
+                                                  riscv_inst->machInst,
+                                                  /* set_dirty */ true);
+                    }
                     break;
+                }
 
                 case vector_engine::CompletionStatus::MemoryFault:
                     panic_if(!vec_state->completion->fault,

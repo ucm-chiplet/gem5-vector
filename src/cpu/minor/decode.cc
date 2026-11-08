@@ -117,6 +117,89 @@ tryDecodeMemoryOp(const StaticInstPtr &static_inst,
  * Retorna true si la instrucción fue reconocida y empaquetada como
  * VpuOffload en decoded, o false en caso contrario.
  */
+// Estructura auxiliar para clasificar operaciones aritméticas vectoriales
+// reconocidas.
+struct ArithmeticOpClassification
+{
+    vector_engine::ArithmeticOperation operation;
+    vector_engine::ElementSignedness signedness;
+};
+
+constexpr uint64_t
+hashString(std::string_view str)
+{
+    uint64_t hash = 14695981039346656037ULL;
+    for (char c : str) {
+        hash = (hash ^ static_cast<uint64_t>(c)) * 1099511628211ULL;
+    }
+    return hash;
+}
+
+/**
+ * Catálogo auxiliar de instrucciones aritméticas vectoriales reconocidas para
+ * offload hacia la VPU. Desacopla la lógica de decodificación del pipeline
+ * de las variantes y mnemónicos de la ISA mediante un switch evaluado en
+ * tiempo de compilación.
+ */
+static std::optional<ArithmeticOpClassification>
+classifyVectorArithOp(const std::string_view name)
+{
+    using vector_engine::ArithmeticOperation;
+    using vector_engine::ElementSignedness;
+
+    switch (hashString(name)) {
+        // Suma entera
+        case hashString("vadd_vv"):
+        case hashString("vadd_vx"):
+            return ArithmeticOpClassification{
+                ArithmeticOperation::Add, ElementSignedness::NotApplicable};
+
+        // Multiplicación entera
+        case hashString("vmul_vv"):
+        case hashString("vmul_vx"):
+            return ArithmeticOpClassification{
+                ArithmeticOperation::Multiply,
+                ElementSignedness::NotApplicable};
+
+        // División entera (con y sin signo)
+        case hashString("vdiv_vv"):
+        case hashString("vdiv_vx"):
+            return ArithmeticOpClassification{ArithmeticOperation::Divide,
+                                              ElementSignedness::Signed};
+        case hashString("vdivu_vv"):
+        case hashString("vdivu_vx"):
+            return ArithmeticOpClassification{ArithmeticOperation::Divide,
+                                              ElementSignedness::Unsigned};
+
+        // Resto entero (con y sin signo)
+        case hashString("vrem_vv"):
+        case hashString("vrem_vx"):
+            return ArithmeticOpClassification{ArithmeticOperation::Remainder,
+                                              ElementSignedness::Signed};
+        case hashString("vremu_vv"):
+        case hashString("vremu_vx"):
+            return ArithmeticOpClassification{ArithmeticOperation::Remainder,
+                                              ElementSignedness::Unsigned};
+
+        // Coma flotante (FP32)
+        case hashString("vfadd_vv"):
+            return ArithmeticOpClassification{
+                ArithmeticOperation::FloatAdd,
+                ElementSignedness::NotApplicable};
+        case hashString("vfmul_vv"):
+            return ArithmeticOpClassification{
+                ArithmeticOperation::FloatMultiply,
+                ElementSignedness::NotApplicable};
+        case hashString("vfdiv_vv"):
+            return ArithmeticOpClassification{
+                ArithmeticOperation::FloatDivide,
+                ElementSignedness::NotApplicable};
+
+        default:
+            return std::nullopt;
+    }
+}
+
 bool
 tryDecodeArithmeticOp(const StaticInstPtr &static_inst,
                       DecodedVectorOp &decoded)
@@ -129,27 +212,23 @@ tryDecodeArithmeticOp(const StaticInstPtr &static_inst,
         return false;
     }
 
-    // SimdAdd agrupa operaciones de suma/resta vectorial.
-    if (arith_inst->opClass() != OpClass::SimdAdd) {
-        return false;
-    }
-
-    // Identificar la operación concreta a partir del mnemónico que la ISA
-    // ya decodificó en tiempo de fetch.
-    const std::string name = static_inst->getName();
-    const bool is_vadd_vv = (name == "vadd_vv");
-    const bool is_vadd_vx = (name == "vadd_vx");
-
-    if (!is_vadd_vv && !is_vadd_vx) {
+    // Clasificar la operación a partir del catálogo auxiliar.
+    const auto classification = classifyVectorArithOp(static_inst->getName());
+    if (!classification) {
         return false;
     }
 
     DecodedArithmeticOp arithmetic;
-    arithmetic.operation = vector_engine::ArithmeticOperation::Add;
+    arithmetic.operation = classification->operation;
+    arithmetic.signedness = classification->signedness;
     arithmetic.destination = static_inst->destRegIdx(0).index();
 
-    // Delegación de operandos: la ISA ya clasificó cada fuente en
-    // VecRegClass o IntRegClass al construir la instrucción en decoder.isa.
+    // En RVV 1.0: vd = vs2 op (vs1 | rs1).
+    // En la codificación de gem5 (formats/vector_arith.isa):
+    // - srcRegIdx(0) es vs1 (si .vv) o rs1 (si .vx).
+    // - srcRegIdx(1) es vs2.
+    // El primer operando (vectorSource) debe ser vs2 para respetar la
+    // semántica no conmutativa en divisiones, restos y coma flotante.
     const bool src0_is_vec =
         (static_inst->srcRegIdx(0).classValue() == VecRegClass);
     const bool src1_is_vec =
@@ -157,19 +236,17 @@ tryDecodeArithmeticOp(const StaticInstPtr &static_inst,
          static_inst->srcRegIdx(1).classValue() == VecRegClass);
 
     if (src0_is_vec && src1_is_vec) {
-        // Formato vector-vector (.vv)
-        arithmetic.vectorSource = static_inst->srcRegIdx(0).index();
-        arithmetic.secondOperand = static_inst->srcRegIdx(1).index();
-    } else if (src0_is_vec) {
-        // Formato vector-escalar (.vx): src0 es vector, src1 es escalar
-        arithmetic.vectorSource = static_inst->srcRegIdx(0).index();
-        arithmetic.secondOperand = ScalarOperandRef{1};
-    } else if (src1_is_vec) {
-        // Formato vector-escalar (.vx): src1 es vector, src0 es escalar
+        // Formato vector-vector (.vv): vs2 en src1, vs1 en src0
+        arithmetic.vectorSource = static_inst->srcRegIdx(1).index();
+        arithmetic.secondOperand = static_inst->srcRegIdx(0).index();
+    } else if (src1_is_vec && !src0_is_vec) {
+        // Formato vector-escalar (.vx): vs2 en src1, rs1 en src0
         arithmetic.vectorSource = static_inst->srcRegIdx(1).index();
         arithmetic.secondOperand = ScalarOperandRef{0};
-    } else {
-        panic("VPU arithmetic instruction without any vector source register");
+    } else if (src0_is_vec && !src1_is_vec) {
+        panic(
+            "VPU arithmetic instruction '%s' has an unexpected operand layout",
+            static_inst->getName());
     }
 
     panic_if(arithmetic.vectorSource >= 32,

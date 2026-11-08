@@ -71,7 +71,18 @@ MinorStats::MinorStats(BaseCPU *base_cpu)
       ADD_STAT(vectorBlockedStructural, statistics::units::Count::get(),
                "Times young vector dispatch stopped due to non-arithmetic op"),
       ADD_STAT(vectorBlockedVstart, statistics::units::Count::get(),
-               "Times young vector dispatch stopped due to non-zero vstart")
+               "Times young vector dispatch stopped due to non-zero vstart"),
+      ADD_STAT(
+          vectorRejectedCommands, statistics::units::Count::get(),
+          "Total vector commands rejected by CPU permissions or VPU grant"),
+      ADD_STAT(vectorAluCommands, statistics::units::Count::get(),
+               "Total integer arithmetic commands dispatched to VPU"),
+      ADD_STAT(vectorFpuCommands, statistics::units::Count::get(),
+               "Total floating-point arithmetic commands dispatched to VPU"),
+      ADD_STAT(vectorMemCommands, statistics::units::Count::get(),
+               "Total memory commands dispatched to VPU"),
+      ADD_STAT(vectorFpExceptions, statistics::units::Count::get(),
+               "Total vector floating-point commands producing IEEE 754 flags")
 {
     quiesceCycles.prereq(quiesceCycles);
     vectorWaitGrantCycles.prereq(vectorWaitGrantCycles);
@@ -85,6 +96,11 @@ MinorStats::MinorStats(BaseCPU *base_cpu)
     vectorBlockedOrder.prereq(vectorBlockedOrder);
     vectorBlockedStructural.prereq(vectorBlockedStructural);
     vectorBlockedVstart.prereq(vectorBlockedVstart);
+    vectorRejectedCommands.prereq(vectorRejectedCommands);
+    vectorAluCommands.prereq(vectorAluCommands);
+    vectorFpuCommands.prereq(vectorFpuCommands);
+    vectorMemCommands.prereq(vectorMemCommands);
+    vectorFpExceptions.prereq(vectorFpExceptions);
 }
 
 } // namespace minor

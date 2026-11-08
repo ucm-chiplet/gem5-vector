@@ -79,6 +79,10 @@ struct MinorVectorState
      *  es true. */
     std::optional<vector_engine::RejectionReason> rejectionReason;
 
+    /** Mensaje de excepción si el rechazo se originó en la CPU
+     *  (por ejemplo, mstatus.VS=Off o FS=Off). */
+    std::optional<std::string> cpuFaultMessage;
+
     // Una clave sin reserva no obliga a terminar el intento durante drain.
     bool
     mustComplete() const

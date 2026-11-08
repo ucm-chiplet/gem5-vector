@@ -68,6 +68,8 @@ struct DecodedArithmeticOp
 {
     vector_engine::ArithmeticOperation operation =
         vector_engine::ArithmeticOperation::Invalid;
+    vector_engine::ElementSignedness signedness =
+        vector_engine::ElementSignedness::NotApplicable;
     RegIndex destination = 0;
     RegIndex vectorSource = 0;
     std::variant<RegIndex, ScalarOperandRef> secondOperand;

@@ -99,6 +99,24 @@ struct MinorStats : public statistics::Group
     /** Bloqueos de la ventana concurrente. Motivo: instrucción aislada por
      * vstart!=0 */
     statistics::Scalar vectorBlockedVstart;
+
+    /** Número total de instrucciones vectoriales rechazadas antes de emitirse
+     *  a la VPU o rechazadas en admisión */
+    statistics::Scalar vectorRejectedCommands;
+
+    /** Comandos enteros despachados a la VPU
+     */
+    statistics::Scalar vectorAluCommands;
+
+    /** Comandos de coma flotante despachados a la VPU
+     */
+    statistics::Scalar vectorFpuCommands;
+
+    /** Comandos de memoria despachados a la VPU */
+    statistics::Scalar vectorMemCommands;
+
+    /** Comandos FP que produjeron excepciones IEEE 754 (fflags) */
+    statistics::Scalar vectorFpExceptions;
 };
 
 } // namespace minor
