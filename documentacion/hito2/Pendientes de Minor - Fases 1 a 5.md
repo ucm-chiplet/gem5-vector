@@ -161,7 +161,7 @@ respuestas desconocidas o en fase incorrecta.
 | Pendiente | Estado | Detalle |
 | --- | --- | --- |
 | Preparar la propuesta CPU de 2.5 (acción 7) | Resuelto | Documentado en [`Diseno de concurrencia MinorCPU - Fase 2.5.md`](Diseno%20de%20concurrencia%20MinorCPU%20-%20Fase%202.5.md). Se formaliza la separación de cursor de despacho (`advanceVectorDispatch`) y retiro (`commitInst`), el seguimiento por `CommandKey`, las barreras de apertura y la capacidad configurable (`maxActiveVectorOffloads`). |
-| Observabilidad de esperas CPU | Ausente | Minor no tiene estadísticas VPU (`stats.hh/.cc` no las incluyen). No se cuentan ciclos en `WaitGrant`, en `Dispatched/Accepted` ni respuestas retenidas, de modo que no se puede separar la espera de admisión de la espera de ejecución tras temporizar recursos en fase 3. |
+| Observabilidad de esperas CPU | Resuelto | Integradas métricas escalares en `MinorStats` (`stats.hh/.cc` y `execute.cc`): `vectorWaitGrantCycles` (espera de admisión/contrapresión), `vectorWaitCompletionCycles` (espera de ejecución VPU en `Dispatched/Accepted`), `vectorRetainedCompletionCycles` (instrucciones jóvenes retenidas en `Completed` esperando retiro) y `vectorOffloadCommands` (total de comandos despachados). |
 | Esperas variables | Sin evidencia | Las fases 3--5 alargan y hacen variables las esperas (recursos temporizados, bloques y valores por defecto con cuatro entradas). Ninguna entrega registra una ejecución de programa posterior a esos cambios. |
 | Drain con obligaciones | Sin evidencia | El código protege las entradas con obligaciones y `DrainAllInsts` descarta las que aún no tienen reserva. No consta un recorrido de drain con un comando en `WaitGrant`, `Dispatched` o `Accepted`. |
 

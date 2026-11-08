@@ -102,6 +102,12 @@ class Execute : public Named
     /** Number of functional units to produce */
     unsigned int numFuncUnits;
 
+    /** Maximum active vector offload commands in flight to VPU */
+    unsigned int maxActiveVectorOffloads;
+
+    /** Maximum vector offload commands that can be dispatched per cycle */
+    unsigned int vectorDispatchWidth;
+
     /** Longest latency of any FU, useful for setting up the activity
      *  recoder */
     Cycles longestFuLatency;

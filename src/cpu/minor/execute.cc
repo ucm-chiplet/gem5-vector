@@ -246,25 +246,16 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
         return;
     }
 
-    /** Capacidad finita de seguimiento concurrente de la CPU en Fase 2.5
-     *  (permite solapar hasta dos instrucciones aritméticas vectoriales)
-     *  Fijo por el momento, luego lo suyo sería que fuese un parametro
-     *  de la CPU. */
-    constexpr size_t MaxActiveVectorOffloads = 2;
+    ThreadContext *tc = cpu.getContext(thread_id);
+    auto &vector_interface = cpu.getCpuVectorInterface();
+    const ContextID context_id = tc->contextId();
 
-    size_t active_in_vpu = 0;
-    for (const auto &st : states) {
-        if (st.phase == MinorVectorPhase::Dispatched ||
-            st.phase == MinorVectorPhase::Accepted) {
-            active_in_vpu++;
-        }
-    }
+    unsigned int num_dispatched_this_cycle = 0;
+    const size_t limit =
+        std::min(states.size(), static_cast<size_t>(maxActiveVectorOffloads));
 
-    bool dispatched_this_cycle = false;
-
-    for (size_t i = 0; i < states.size() && i < MaxActiveVectorOffloads &&
-                       active_in_vpu < MaxActiveVectorOffloads;
-         ++i) {
+    for (size_t i = 0;
+         i < limit && num_dispatched_this_cycle < vectorDispatchWidth; ++i) {
         auto &vec_state = states[i];
 
         /** Si ya está despachada, aceptada o completada, o fue rechazada,
@@ -312,7 +303,6 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
             }
 
             /** Instrucciones con vstart != 0 se ejecutan aisladas. */
-            ThreadContext *tc = cpu.getContext(thread_id);
             if (tc->readMiscRegNoEffect(RiscvISA::MISCREG_VSTART) != 0) {
                 break;
             }
@@ -331,12 +321,10 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
 
         /** Consideramos que se puede pasar de ReadyToGrant a WaitGrant y
          *  de WaitGrant a Dispatched en el mismo ciclo. */
-        auto &vector_interface = cpu.getCpuVectorInterface();
         if (vec_state.phase == MinorVectorPhase::ReadyToGrant) {
-            vec_state.commandKey = vector_interface.allocateCommandKey(
-                cpu.getContext(thread_id)->contextId());
-            vec_state.command =
-                buildVectorCommand(vec_state, cpu.getContext(thread_id));
+            vec_state.commandKey =
+                vector_interface.allocateCommandKey(context_id);
+            vec_state.command = buildVectorCommand(vec_state, tc);
             vec_state.phase = MinorVectorPhase::WaitGrant;
         }
 
@@ -367,15 +355,9 @@ Execute::advanceVectorDispatch(ThreadID thread_id)
             const auto command = *vec_state.command;
             vec_state.grantToken.reset();
             vec_state.phase = MinorVectorPhase::Dispatched;
-            active_in_vpu++;
-            dispatched_this_cycle = true;
+            num_dispatched_this_cycle++;
+            cpu.stats.vectorOffloadCommands++;
             vector_interface.dispatch(token, command);
-        }
-
-        /** Máximo de 1 instrucción vectorial despachada a la VPU
-         *  por ciclo. */
-        if (dispatched_this_cycle) {
-            break;
         }
     }
 }
@@ -416,6 +398,8 @@ Execute::Execute(const std::string &name_, MinorCPU &cpu_,
       processMoreThanOneInput(params.executeCycleInput),
       fuDescriptions(*params.executeFuncUnits),
       numFuncUnits(fuDescriptions.funcUnits.size()),
+      maxActiveVectorOffloads(params.maxActiveVectorOffloads),
+      vectorDispatchWidth(params.vectorDispatchWidth),
       setTraceTimeOnCommit(params.executeSetTraceTimeOnCommit),
       setTraceTimeOnIssue(params.executeSetTraceTimeOnIssue),
       allowEarlyMemIssue(params.executeAllowEarlyMemoryIssue),
@@ -2162,6 +2146,43 @@ Execute::isInbetweenInsts(ThreadID thread_id) const
 void
 Execute::evaluate()
 {
+#if USE_RISCV_ISA
+    /** Actualizar estadísticas de observabilidad de esperas vectoriales
+     *  en este ciclo de la etapa de Execute. */
+    if (cpu.isVectorOffloadEnabled()) {
+        bool any_wait_grant = false;
+        bool any_in_vpu = false;
+        bool any_retained_completion = false;
+
+        for (const auto &info : executeInfo) {
+            for (size_t i = 0;
+                 i < info.vpuOffloadStates.size() &&
+                 !(any_wait_grant && any_in_vpu && any_retained_completion);
+                 ++i) {
+                const auto &st = info.vpuOffloadStates[i];
+                if (st.phase == MinorVectorPhase::WaitGrant) {
+                    any_wait_grant = true;
+                } else if (st.phase == MinorVectorPhase::Dispatched ||
+                           st.phase == MinorVectorPhase::Accepted) {
+                    any_in_vpu = true;
+                } else if (st.phase == MinorVectorPhase::Completed && i > 0) {
+                    any_retained_completion = true;
+                }
+            }
+        }
+
+        if (any_wait_grant) {
+            cpu.stats.vectorWaitGrantCycles++;
+        }
+        if (any_in_vpu) {
+            cpu.stats.vectorWaitCompletionCycles++;
+        }
+        if (any_retained_completion) {
+            cpu.stats.vectorRetainedCompletionCycles++;
+        }
+    }
+#endif
+
     if (!inp.outputWire->isBubble())
         inputBuffer[inp.outputWire->threadId].setTail(*inp.outputWire);
 

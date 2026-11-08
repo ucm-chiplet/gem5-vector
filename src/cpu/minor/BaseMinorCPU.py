@@ -454,6 +454,14 @@ class BaseMinorCPU(BaseCPU):
         NULL, "Vector Engine to offload supported vector instructions to"
     )
 
+    maxActiveVectorOffloads = Param.Unsigned(
+        2, "Maximum active vector commands in flight to VPU"
+    )
+
+    vectorDispatchWidth = Param.Unsigned(
+        1, "Maximum vector offload commands dispatched per cycle"
+    )
+
     def addCheckerCpu(self):
         print("Checker not yet supported by MinorCPU")
         exit(1)

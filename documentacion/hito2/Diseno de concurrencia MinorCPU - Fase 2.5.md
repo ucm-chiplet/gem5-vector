@@ -39,17 +39,19 @@ concurrentes en vuelo hacia la VPU, garantizando:
 ### Capacidad finita de seguimiento
 La concurrencia en la CPU no es ilimitada:
 * Está acotada por un parámetro configurable de la CPU:
-  `maxActiveVectorOffloads` (con valor por defecto 2 en la configuración
-  inicial de Fase 2.5).
+  `maxActiveVectorOffloads` (declarado en `BaseMinorCPU.py` con valor
+  predeterminado 2 para la configuración de Fase 2.5).
 * Este parámetro define el número máximo de comandos vectoriales que pueden
   encontrarse simultáneamente en estados activos de VPU (`Dispatched` o
   `Accepted`) dentro de la estructura de seguimiento `vpuOffloadStates`.
 
-### Tasa de despacho
-Para evitar ráfagas descontroladas sobre el puerto de admisión y modelar
-fielmente los anchos de interfaz:
-* Se limita la tasa a **como máximo un despacho vectorial por ciclo de reloj**
-  (`dispatched_this_cycle`).
+### Tasa de despacho configurable
+Para controlar las ráfagas sobre el puerto de admisión y modelar anchos de
+interfaz configurables:
+* La tasa está acotada por el parámetro `vectorDispatchWidth` de `MinorCPU`
+  (con valor predeterminado 1 en `BaseMinorCPU.py`), limitando cuántos
+  comandos vectoriales pueden transicionar a `Dispatched` en un mismo ciclo
+  de reloj (`num_dispatched_this_cycle < vectorDispatchWidth`). -> Se puede parametrizar y que el desarollador elija el ancho de dispatch a la VPU.
 
 ---
 
@@ -115,7 +117,7 @@ siguientes condiciones en MinorCPU:
 * Al despachar, el comando `VectorCommand` captura sus operandos escalares
   (como el valor `rs1` para formas `.vx`) y su `CommandKey` única.
 * **Invariante de contrapresión:** Si admisión responde con contrapresión
-  (`GrantResult::Stall`), el estado pasa a `WaitGrant`, conservando el
+  (`GrantResult::Stall`), el estado se mantiene en `WaitGrant` y no permite requestGrant de instrucciones posteriores (sale del búcle de dispatch), conservando el
   comando construido de forma inmutable. En los siguientes ciclos, el
   reintento reutiliza dicho comando sin recapturar registros ni regenerar
   la clave.

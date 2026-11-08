@@ -45,11 +45,25 @@ namespace minor
 
 MinorStats::MinorStats(BaseCPU *base_cpu)
     : statistics::Group(base_cpu),
-    ADD_STAT(quiesceCycles, statistics::units::Cycle::get(),
-             "Total number of cycles that CPU has spent quiesced or waiting "
-             "for an interrupt")
+      ADD_STAT(quiesceCycles, statistics::units::Cycle::get(),
+               "Total number of cycles that CPU has spent quiesced or waiting "
+               "for an interrupt"),
+      ADD_STAT(vectorWaitGrantCycles, statistics::units::Cycle::get(),
+               "Total cycles waiting for VPU grant admission (WaitGrant)"),
+      ADD_STAT(vectorWaitCompletionCycles, statistics::units::Cycle::get(),
+               "Total cycles waiting for VPU execution completion "
+               "(Dispatched/Accepted)"),
+      ADD_STAT(vectorRetainedCompletionCycles, statistics::units::Cycle::get(),
+               "Total cycles young completed vector instructions are held "
+               "waiting for retirement"),
+      ADD_STAT(vectorOffloadCommands, statistics::units::Count::get(),
+               "Total vector offload commands dispatched to the VPU")
 {
     quiesceCycles.prereq(quiesceCycles);
+    vectorWaitGrantCycles.prereq(vectorWaitGrantCycles);
+    vectorWaitCompletionCycles.prereq(vectorWaitCompletionCycles);
+    vectorRetainedCompletionCycles.prereq(vectorRetainedCompletionCycles);
+    vectorOffloadCommands.prereq(vectorOffloadCommands);
 }
 
 } // namespace minor

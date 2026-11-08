@@ -62,6 +62,21 @@ struct MinorStats : public statistics::Group
     /** Number of cycles in quiescent state */
     statistics::Scalar quiesceCycles;
 
+    /** Estadísticas relacionadas con la VPU en MinorCPU */
+    /** Ciclos durante los cuales al menos una instrucción espera
+     *  concesión (WaitGrant) */
+    statistics::Scalar vectorWaitGrantCycles;
+
+    /** Ciclos donde al menos una instrucción está en vuelo en la VPU
+     *  esperando finalización (Dispatched o Accepted) */
+    statistics::Scalar vectorWaitCompletionCycles;
+
+    /** Ciclos donde una instrucción completada fuera del head
+     *  está retenida esperando su turno de retiro en orden */
+    statistics::Scalar vectorRetainedCompletionCycles;
+
+    /** Número total de comandos vectoriales despachados hacia la VPU */
+    statistics::Scalar vectorOffloadCommands;
 };
 
 } // namespace minor
