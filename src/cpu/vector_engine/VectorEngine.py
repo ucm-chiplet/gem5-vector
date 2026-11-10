@@ -80,6 +80,14 @@ class VectorEngine(ClockedObject):
     alu_multiply_initiation_interval = Param.Cycles(
         1, "Minimum VPU cycles between integer multiply admissions"
     )
+    # vmin/vminu: comparador segmentado. El valor por defecto replica la
+    # suma; es un parámetro del modelo, no una latencia calibrada.
+    alu_minimum_latency = Param.Cycles(
+        1, "Integer minimum latency in VPU cycles"
+    )
+    alu_minimum_initiation_interval = Param.Cycles(
+        1, "Minimum VPU cycles between integer minimum admissions"
+    )
     alu_divide_latencies = VectorParam.UInt32(
         [10, 18, 34, 66],
         "Unpipelined divide/remainder latency for SEW 8/16/32/64",

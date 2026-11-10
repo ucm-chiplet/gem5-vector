@@ -47,18 +47,19 @@ containsWidth(const OperationWidths &widths, uint16_t bits)
 
 /**
  * Ficha común de las operaciones enteras de igual ancho: ALU, 8/16/32/64
- * bits, formas .vv y .vx, sin contexto FP y admisibles desde CPU en todos
- * sus anchos. Sólo cambia si el comando debe declarar el signo.
+ * bits, forma .vv, sin contexto FP y admisibles desde CPU en todos sus
+ * anchos. Cambia si el comando debe declarar el signo y si la operación
+ * admite también la forma .vx con el escalar capturado por CPU.
  */
 constexpr OperationTraits
-integerTraits(bool requires_signedness)
+integerTraits(bool requires_signedness, bool vector_scalar = true)
 {
     return OperationTraits{ExecutionClass::IntegerAlu,
                            ElementFormat::Integer,
                            IntegerElementWidths,
-                           true,  // Dos fuentes vectoriales (.vv).
-                           true,  // Vector y escalar capturado (.vx).
-                           false, // No necesita redondeo FP.
+                           true,          // Dos fuentes vectoriales (.vv).
+                           vector_scalar, // Vector y escalar (.vx).
+                           false,         // No necesita redondeo FP.
                            requires_signedness,
                            false, // No accede a memoria.
                            IntegerElementWidths,
@@ -133,14 +134,18 @@ operationTraits(ArithmeticOperation operation)
     // Referencias semánticas: RVV 1.0, edición 20240411, secciones Vector
     // Single-Width Integer Add and Subtract, Vector Single-Width Integer
     // Multiply Instructions, Vector Integer Divide Instructions, Vector
-    // Single-Width Floating-Point Add/Subtract Instructions y Vector
-    // Single-Width Floating-Point Multiply/Divide Instructions.
+    // Integer Min/Max Instructions, Vector Single-Width Floating-Point
+    // Add/Subtract Instructions y Vector Single-Width Floating-Point
+    // Multiply/Divide Instructions.
     static constexpr OperationTraits add = integerTraits(false);
     // vmul: bits bajos; idénticos con o sin signo, así que no se declara.
     static constexpr OperationTraits multiply = integerTraits(false);
     // vdiv/vdivu y vrem/vremu comparten ficha; el signo los distingue.
     static constexpr OperationTraits divide = integerTraits(true);
     static constexpr OperationTraits remainder = integerTraits(true);
+    // vmin/vminu: el signo decide la comparación. Las formas .vx quedan
+    // fuera de esta entrega, así que sólo se admite .vv.
+    static constexpr OperationTraits minimum = integerTraits(true, false);
     // binary16 es una capacidad interna; CPU sólo puede pedir binary32.
     static constexpr OperationTraits float_add = floatTraits({16, 32}, {32});
     static constexpr OperationTraits float_multiply = floatTraits({32}, {32});
@@ -154,6 +159,8 @@ operationTraits(ArithmeticOperation operation)
             return &divide;
         case ArithmeticOperation::Remainder:
             return &remainder;
+        case ArithmeticOperation::Minimum:
+            return &minimum;
         case ArithmeticOperation::FloatAdd:
             return &float_add;
         case ArithmeticOperation::FloatMultiply:

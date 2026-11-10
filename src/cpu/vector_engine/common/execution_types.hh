@@ -23,7 +23,8 @@ struct ExecutionBundle
 {
     LaneFragmentKey key;
     ArithmeticOperation operation = ArithmeticOperation::Invalid;
-    // Copia del comando: elige vdiv/vrem (Signed) o vdivu/vremu (Unsigned).
+    // Copia del comando: elige vdiv/vrem/vmin (Signed) o
+    // vdivu/vremu/vminu (Unsigned).
     ElementSignedness signedness = ElementSignedness::NotApplicable;
     uint16_t sewBits = 0;
     ElementRange elements;

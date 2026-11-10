@@ -23,7 +23,9 @@ añade en backend Mul/Div/resto enteros, FP32 y varias ALUs por lane; Minor
 todavía no decodifica esas operaciones. La [entrega VPU de fase 7](
 <Fase 7 - Interconexión y slides.md>) construye el crossbar detrás de la
 interfaz común de red y ejecuta en backend `vslide1up.vx` y
-`vslide1down.vx`; Minor tampoco las decodifica todavía. Estas
+`vslide1down.vx`; Minor tampoco las decodifica todavía. La [entrega VPU
+de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md>) añade
+`vmin`/`vminu` `.vv` en la ALU para Pathfinder. Estas
 entregas mantienen las responsabilidades CPU y no acreditan por sí solas
 ejecución funcional de toda la matriz ni cierre de integración CPU--VPU.
 El resto del diseño conserva su estado de propuesta.
@@ -53,6 +55,10 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   soporte y diferencias con Ara.
 - [Entrega VPU de fase 7](<Fase 7 - Interconexión y slides.md>): crossbar,
   métricas comunes de red, `SlideUnit`, solapamiento en down y parámetros.
+- [Entrega VPU de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md>):
+  `vmin`/`vminu` `.vv` en ALU, 8/16/32/64 bits, parámetro y estadística.
+- [Matriz de decode, representación y soporte](<Matriz de decode, representacion y soporte.md>):
+  qué decodifica Minor, qué representa el contrato y qué admite la VPU.
 - [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): parte CPU
   que falta en las fases 2.1--2.7.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):

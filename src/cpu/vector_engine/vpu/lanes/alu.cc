@@ -90,6 +90,29 @@ signedDivide(ArithmeticOperation operation, uint64_t dividend_bits,
 }
 
 /**
+ * Mínimo de dos elementos de SEW bits: vmin (Signed) compara en
+ * complemento a dos y vminu (Unsigned) compara los bits como naturales.
+ * Devuelve uno de los operandos sin modificar, así que el resultado ya
+ * tiene sus SEW bits; no hay overflow ni flags.
+ */
+uint64_t
+integerMinimum(ElementSignedness signedness, uint64_t lhs, uint64_t rhs,
+               uint16_t bits)
+{
+    bool lhs_is_smaller = false;
+    if (signedness == ElementSignedness::Signed) {
+        lhs_is_smaller = signExtend(lhs, bits) < signExtend(rhs, bits);
+    } else {
+        const uint64_t mask = ElementCodec::mask(bits);
+        lhs_is_smaller = (lhs & mask) < (rhs & mask);
+    }
+    if (lhs_is_smaller) {
+        return lhs;
+    }
+    return rhs;
+}
+
+/**
  * Calcula vd = lhs op rhs para un elemento, con lhs = vs2 y rhs = vs1 o
  * el escalar normalizado por CPU. Los operandos llegan con sus SEW bits;
  * el resultado puede tener bits altos, que ElementCodec::write descarta.
@@ -97,8 +120,9 @@ signedDivide(ArithmeticOperation operation, uint64_t dividend_bits,
  * Suma y multiplicación usan uint64_t, que es aritmética módulo 2^64 sin
  * overflow con signo del host; sus SEW bits bajos no dependen del signo.
  * Referencia: RVV 1.0, edición 20240411, Vector Single-Width Integer Add
- * and Subtract, Vector Single-Width Integer Multiply Instructions y Vector
- * Integer Divide Instructions (casos extremos de la extensión M).
+ * and Subtract, Vector Single-Width Integer Multiply Instructions, Vector
+ * Integer Divide Instructions (casos extremos de la extensión M) y Vector
+ * Integer Min/Max Instructions.
  */
 uint64_t
 computeInteger(const ExecutionBundle &bundle, uint64_t lhs, uint64_t rhs)
@@ -115,6 +139,8 @@ computeInteger(const ExecutionBundle &bundle, uint64_t lhs, uint64_t rhs)
                                     bundle.sewBits);
             }
             return unsignedDivide(bundle.operation, lhs, rhs, bundle.sewBits);
+        case ArithmeticOperation::Minimum:
+            return integerMinimum(bundle.signedness, lhs, rhs, bundle.sewBits);
         default:
             panic("Unsupported operation in an admitted ALU bundle");
     }
@@ -163,6 +189,9 @@ Alu::Alu(ClockedObject &owner, LaneId lane_id, std::size_t instance,
       remainderElements(&stats, "remainderElements",
                         statistics::units::Count::get(),
                         "Admitted elements of integer remainders"),
+      minimumElements(&stats, "minimumElements",
+                      statistics::units::Count::get(),
+                      "Admitted elements of integer minimums"),
       capacityStalls(&stats, "capacityStalls", statistics::units::Count::get(),
                      "Bundle attempts blocked by execution capacity"),
       intervalStalls(&stats, "intervalStalls", statistics::units::Count::get(),
@@ -183,7 +212,8 @@ Alu::Alu(ClockedObject &owner, LaneId lane_id, std::size_t instance,
     fatal_if(parameters.unit.capacity > pending.max_size(),
              "ALU capacity exceeds host container capacity");
     // Validate configured deadlines before accepting any command effects.
-    for (const auto &profile : {parameters.add, parameters.multiply}) {
+    for (const auto &profile :
+         {parameters.add, parameters.multiply, parameters.minimum}) {
         vpuClockEdge(owner, profile.latency);
         vpuClockEdge(owner, profile.initiationInterval);
     }
@@ -205,6 +235,8 @@ Alu::timing(ArithmeticOperation operation, uint16_t sew_bits) const
             return parameters.add;
         case ArithmeticOperation::Multiply:
             return parameters.multiply;
+        case ArithmeticOperation::Minimum:
+            return parameters.minimum;
         case ArithmeticOperation::Divide:
         case ArithmeticOperation::Remainder: {
             // Divisor no segmentado: la instancia no admite otro bundle
@@ -250,6 +282,9 @@ Alu::countElements(const ExecutionBundle &bundle)
             break;
         case ArithmeticOperation::Remainder:
             remainderElements += count;
+            break;
+        case ArithmeticOperation::Minimum:
+            minimumElements += count;
             break;
         default:
             panic("Unsupported operation in an admitted ALU bundle");

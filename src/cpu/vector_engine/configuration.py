@@ -72,16 +72,18 @@ class ExecutionConfiguration:
 class AluConfiguration(ExecutionConfiguration):
     """ALU entera: perfil temporal por operación, en ciclos de la VPU.
 
-    Suma y multiplicación son segmentadas. División y resto usan un divisor
-    no segmentado: su intervalo de iniciación es su latencia, que se da por
-    SEW en el orden 8/16/32/64. Son parámetros del modelo, no latencias de
-    hardware verificadas.
+    Suma, multiplicación y mínimo son segmentados. División y resto usan un
+    divisor no segmentado: su intervalo de iniciación es su latencia, que
+    se da por SEW en el orden 8/16/32/64. Son parámetros del modelo, no
+    latencias de hardware verificadas.
     """
 
     add_latency: int = 1
     add_initiation_interval: int = 1
     multiply_latency: int = 3
     multiply_initiation_interval: int = 1
+    minimum_latency: int = 1
+    minimum_initiation_interval: int = 1
     divide_latencies: Tuple[int, ...] = (10, 18, 34, 66)
 
 

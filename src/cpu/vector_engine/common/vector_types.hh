@@ -86,6 +86,7 @@ operator!=(const VectorConfig &lhs, const VectorConfig &rhs)
  *
  * - Add, Multiply: enteros; Multiply conserva los SEW bits bajos.
  * - Divide, Remainder: enteros; el signo viaja en ElementSignedness.
+ * - Minimum: entero, sólo .vv; Signed es vmin y Unsigned es vminu.
  * - FloatAdd: binary16 interno y binary32 desde CPU.
  * - FloatMultiply, FloatDivide: binary32.
  *
@@ -118,9 +119,10 @@ enum class ElementWidthMode : uint8_t
 
 /**
  * Interpretación del signo que MinorCPU indica en el comando aritmético.
- * Divide y Remainder exigen Signed (vdiv, vrem) o Unsigned (vdivu, vremu);
- * las demás operaciones exigen NotApplicable, porque sus bits de resultado
- * no dependen del signo. OperationTraits declara qué caso aplica.
+ * Divide, Remainder y Minimum exigen Signed (vdiv, vrem, vmin) o Unsigned
+ * (vdivu, vremu, vminu); las demás operaciones exigen NotApplicable,
+ * porque sus bits de resultado no dependen del signo. OperationTraits
+ * declara qué caso aplica.
  */
 enum class ElementSignedness : uint8_t
 {

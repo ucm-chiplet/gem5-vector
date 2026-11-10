@@ -92,7 +92,7 @@ struct ExecutionParameters
 };
 
 /**
- * ALU entera. Suma y multiplicación son segmentadas. División y resto
+ * ALU entera. Suma, multiplicación y mínimo son segmentados. División y resto
  * comparten un divisor no segmentado: ocupan la instancia hasta entregar
  * el resultado, de modo que su intervalo de iniciación es su latencia.
  * divideLatency se indexa por SEW: 8, 16, 32 y 64 bits.
@@ -102,6 +102,8 @@ struct AluParameters
     ExecutionParameters unit;
     OperationTiming add;
     OperationTiming multiply;
+    // vmin/vminu, segmentado como la suma pero con perfil propio.
+    OperationTiming minimum;
     std::array<Cycles, 4> divideLatency{Cycles(1), Cycles(1), Cycles(1),
                                         Cycles(1)};
 
@@ -109,7 +111,7 @@ struct AluParameters
     currentProfile(uint32_t word_bytes) const
     {
         return unit.currentProfile(word_bytes) && add.valid() &&
-               multiply.valid() &&
+               multiply.valid() && minimum.valid() &&
                std::all_of(divideLatency.begin(), divideLatency.end(),
                            [](Cycles c) { return c >= Cycles(1); });
     }

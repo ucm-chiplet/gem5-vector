@@ -75,6 +75,7 @@ class Alu
     statistics::Scalar multiplyElements;
     statistics::Scalar divideElements;
     statistics::Scalar remainderElements;
+    statistics::Scalar minimumElements;
     statistics::Scalar capacityStalls;
     statistics::Scalar intervalStalls;
     ClockedObject &owner;

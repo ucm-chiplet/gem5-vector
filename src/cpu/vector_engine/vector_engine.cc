@@ -85,6 +85,8 @@ VectorEngine::makeConfiguration(const Params &params)
     alu.add = {params.alu_add_latency, params.alu_add_initiation_interval};
     alu.multiply = {params.alu_multiply_latency,
                     params.alu_multiply_initiation_interval};
+    alu.minimum = {params.alu_minimum_latency,
+                   params.alu_minimum_initiation_interval};
     // Una latencia por SEW, en el orden 8/16/32/64 de divideLatency.
     fatal_if(params.alu_divide_latencies.size() != alu.divideLatency.size(),
              "alu_divide_latencies requires one value per SEW: 8/16/32/64");

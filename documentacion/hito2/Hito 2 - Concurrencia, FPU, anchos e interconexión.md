@@ -1567,8 +1567,11 @@ concretará operandos, grupos, codificaciones, `vstart`, faults y drain
 según RVV. El cierre incluye la copia inicial escalar y el cálculo de
 Pathfinder con resultado contrastado. Se registrarán toolchain, opciones
 y desensamblado final para comprobar ese perfil; `vl2re32.v`/`vs2r.v`
-dejan de ser requisitos. No incorpora otros anchos de mínimo ni familias
-completas.
+dejan de ser requisitos. No incorpora otras familias completas. La
+[entrega VPU de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md>),
+aprobada el 10 de noviembre de 2026, amplía el mínimo en backend y
+admisión a 8/16/32/64 bits y a ambos signos (`vmin`/`vminu`), sólo `.vv`;
+Pathfinder sigue requiriendo únicamente `vmin.vv` con SEW=32.
 
 **Trabajo que realizar.**
 
