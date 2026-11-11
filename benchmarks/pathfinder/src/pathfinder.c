@@ -174,7 +174,7 @@ static int32_t scalarRows[2][PATHFINDER_COLS];
  * memory ordering.
  *
  * The initial copy is scalar: -fno-vectorize keeps it out of RVV.
- * noinline keeps the kernel in its own symbol, so tools/check_profile.py
+ * noinline keeps the kernel in its own symbol, so check_profile.py
  * can verify that every RVV instruction belongs to it.
  */
 static __attribute__((noinline)) void

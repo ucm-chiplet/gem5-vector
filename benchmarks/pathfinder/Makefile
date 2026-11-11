@@ -48,8 +48,12 @@ $(DISASM): $(BINARY)
 
 disasm: $(DISASM)
 
-check: $(DISASM) tools/check_profile.py
-	$(PYTHON) tools/check_profile.py $<
+# Los 7 tipos RVV del kernel de Pathfinder (plan de benchmarks).
+KERNEL_TYPES = vsetvli,vle32.v,vse32.v,vslide1up.vx,vslide1down.vx,vmin.vv,vadd.vv
+
+check: $(DISASM) ../common/check_profile.py
+	$(PYTHON) ../common/check_profile.py --kernel runVector \
+	    --types $(KERNEL_TYPES) $<
 
 clean:
 	rm -rf build

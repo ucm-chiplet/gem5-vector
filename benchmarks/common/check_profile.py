@@ -24,17 +24,16 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-"""Comprueba el perfil RVV del binario de Pathfinder.
+"""Comprueba el perfil RVV de un benchmark de la VPU.
 
 Lee el desensamblado de ``llvm-objdump -d --mattr=+v`` y exige que:
 
-1. Sólo aparezcan los 7 tipos RVV del kernel acordados en el plan de
-   benchmarks (``vsetvli``, ``vle32.v``, ``vse32.v``, ``vslide1up.vx``,
-   ``vslide1down.vx``, ``vmin.vv`` y ``vadd.vv``).
-2. Aparezcan los 7, para detectar que el compilador no haya sustituido
+1. Sólo aparezcan los tipos RVV indicados con ``--types``.
+2. Aparezcan todos, para detectar que el compilador no haya sustituido
    alguno.
-3. Todas las instrucciones RVV pertenezcan al símbolo del kernel, de modo
-   que la preparación y la verificación sean escalares.
+3. Todas las instrucciones RVV pertenezcan al símbolo del kernel
+   (``--kernel``), de modo que la preparación y la verificación sean
+   escalares.
 
 En RV64GC ningún mnemónico escalar empieza por ``v``, así que basta el
 prefijo para reconocer una instrucción vectorial.
@@ -45,16 +44,6 @@ import collections
 import re
 import sys
 from pathlib import Path
-
-KERNEL_TYPES = {
-    "vsetvli",
-    "vle32.v",
-    "vse32.v",
-    "vslide1up.vx",
-    "vslide1down.vx",
-    "vmin.vv",
-    "vadd.vv",
-}
 
 SYMBOL = re.compile(r"^[0-9a-f]+ <(?P<name>[^>]+)>:$")
 # Dirección, bytes de la codificación y mnemónico separados por espacios
@@ -82,10 +71,14 @@ def collect(disassembly):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("disassembly", type=Path)
+    parser.add_argument("--kernel", required=True, help="Kernel symbol name")
     parser.add_argument(
-        "--kernel", default="runVector", help="Kernel symbol name"
+        "--types",
+        required=True,
+        help="Comma-separated RVV mnemonics allowed and required",
     )
     args = parser.parse_args()
+    kernel_types = {item for item in args.types.split(",") if item}
 
     per_symbol = collect(args.disassembly.read_text(encoding="utf-8"))
     found = collections.Counter()
@@ -93,10 +86,10 @@ def main():
         found.update(counts)
 
     errors = []
-    unexpected = sorted(set(found) - KERNEL_TYPES)
+    unexpected = sorted(set(found) - kernel_types)
     if unexpected:
         errors.append("unexpected RVV types: " + ", ".join(unexpected))
-    missing = sorted(KERNEL_TYPES - set(found))
+    missing = sorted(kernel_types - set(found))
     if missing:
         errors.append("missing kernel types: " + ", ".join(missing))
     outside = sorted(name for name in per_symbol if name != args.kernel)
