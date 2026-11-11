@@ -54,6 +54,40 @@
 #define NUM_RUNS 1
 #endif
 
+/* 1 delimits the kernel with gem5 statistics m5ops; 0 removes them. */
+#ifndef PATHFINDER_ROI
+#define PATHFINDER_ROI 1
+#endif
+
+#if PATHFINDER_ROI
+/*
+ * gem5 RISC-V m5ops: opcode 0x7b (custom-3) with the function in bits
+ * 31:25 (util/m5/src/abi/riscv/m5op.S). a0 (delay) and a1 (period) are 0,
+ * so the action is immediate and not repeated. The functions come from
+ * include/gem5/asm/generic/m5ops.h: 0x40 resets and 0x41 dumps the
+ * statistics. They are emitted inline to avoid linking libm5.
+ *
+ * Minor retires in order and a vector instruction retires only after
+ * the VPU completes it, so the dump happens after all kernel work.
+ */
+#define M5OP_RESET_STATS_WORD "0x8000007b" /* 0x7b | (0x40 << 25) */
+#define M5OP_DUMP_STATS_WORD "0x8200007b"  /* 0x7b | (0x41 << 25) */
+
+static void
+m5Stats(int dump)
+{
+    register long a0 __asm__("a0") = 0;
+    register long a1 __asm__("a1") = 0;
+    if (dump) {
+        __asm__ volatile (".long " M5OP_DUMP_STATS_WORD
+                          : "+r" (a0) : "r" (a1) : "memory");
+    } else {
+        __asm__ volatile (".long " M5OP_RESET_STATS_WORD
+                          : "+r" (a0) : "r" (a1) : "memory");
+    }
+}
+#endif
+
 /* Linux SE startup: use the supplied stack, set gp, then exit(main()). */
 __asm__ (
     ".section .text\n"
@@ -241,12 +275,41 @@ checkRow(const char *name, const int32_t *row)
     return 0;
 }
 
+/*
+ * Prints a fingerprint of the vector result so that runs in different
+ * modes can be compared beyond PASS. Elements are taken as uint32_t: the
+ * sum (at most COLS * 2^32) fits in 64 bits and the xor in 32 bits.
+ */
+static void
+printChecksum(const int32_t *row)
+{
+    uint64_t sum = 0;
+    uint32_t xor_value = 0;
+    for (size_t i = 0; i < PATHFINDER_COLS; ++i) {
+        sum += (uint32_t)row[i];
+        xor_value ^= (uint32_t)row[i];
+    }
+    printText("[pathfinder] checksum: sum=");
+    printInt((long)sum);
+    printText(" xor=");
+    printInt((long)xor_value);
+    printText("\n");
+}
+
 int
 main(void)
 {
+    /* Statistics between reset and dump cover only the vector kernel. */
+#if PATHFINDER_ROI
+    m5Stats(0);
+#endif
     runVector();
+#if PATHFINDER_ROI
+    m5Stats(1);
+#endif
     const int32_t *scalar = runScalar();
 
+    printChecksum(vectorResult);
     int failures = checkRow("vector", vectorResult);
     failures += checkRow("scalar", scalar);
     if (failures != 0)

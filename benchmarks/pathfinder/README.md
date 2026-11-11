@@ -10,9 +10,9 @@ Es la carga de referencia del cierre del hito 2 (criterio 16 del
 `vle32.v`, `vse32.v`, `vslide1up.vx`, `vslide1down.vx`, `vmin.vv` y
 `vadd.vv`, con SEW=32 y LMUL=m1.
 
-Este paquete compila el binario y comprueba su perfil RVV. Ejecutarlo en
-gem5 y comparar los modos offload y nativo corresponde al paquete P3 del
-[plan de cierre de la fase 8][plan].
+`make check` compila el binario y comprueba su perfil RVV; `run.py` lo
+ejecuta en gem5 con la VPU y con el RVV nativo de MinorCPU y contrasta
+ambos resultados (paquetes P2 y P3 del [plan de cierre de la fase 8][plan]).
 
 ## Procedencia
 
@@ -49,8 +49,11 @@ revisión y colocarse en `input/` para usar `INPUT=medium` o
    algoritmo escalar.
 4. **`NUM_RUNS` configurable**, 1 por defecto (el original usa 100). Cada
    repetición recalcula el mismo resultado.
-5. **Sin medida con `gettimeofday`.** Cómo delimitar la región de medida
-   se decide en P3.
+5. **Región de medida con m5ops** en lugar de `gettimeofday`:
+   `m5_reset_stats` y `m5_dump_stats` rodean sólo `runVector()`. Se
+   emiten como instrucciones (`.long`, opcode `0x7b`) para no enlazar
+   `libm5`; `-DPATHFINDER_ROI=0` las elimina. Además se imprime una
+   huella del resultado (`checksum`) para comparar modos.
 6. **`runVector` es `noinline`**, para que el kernel conserve su símbolo y
    `check_profile.py` pueda exigir que todo el RVV esté en él.
 
@@ -89,11 +92,36 @@ instalado; `LINKER`, `CLANG` y `OBJDUMP` permiten cambiar las herramientas.
 Toolchain usada al preparar el paquete: Clang 20.1.8 (Fedora 20.1.8-4.fc42),
 `llvm-objdump` 20.1.8 y GNU ld 2.46 de `/opt/riscv`.
 
+## Ejecutar en gem5
+
+Con `build/RISCV/gem5.opt` compilado, desde la raíz del repositorio:
+
+```bash
+python3 benchmarks/pathfinder/run.py                  # tiny, ambos modos
+python3 benchmarks/pathfinder/run.py --input small
+python3 benchmarks/pathfinder/run.py --mode offload \
+    --config-arg=--vpu-alus-per-lane=2
+```
+
+El runner ejecuta `make check` y no simula si el perfil RVV falla. Después
+ejecuta `offload` (VPU) y `native` (`--no-offload`). Un modo pasa si el
+programa devuelve 0 y escribe `PASS`; en offload, además, la VPU debe
+completar todos los comandos que despacha Minor y la red debe entregar
+todo lo aceptado. Con ambos modos, las huellas deben coincidir.
+`--config-arg` pasa opciones de la VPU a `riscv_vpu.py` sólo en offload.
+
+Los resultados quedan en `results/<fecha>/`, ignorado por Git:
+`summary.md` (resultado y métricas del kernel por modo), `results.json`,
+`build.log` y, por modo, `simulation.log`, `stats.txt` (primer volcado:
+kernel; último: programa completo), `roi-statistics.csv` y la
+configuración instanciada.
+
 ## Salida esperada
 
 El programa devuelve 0 y escribe, por ejemplo:
 
 ```text
+[pathfinder] checksum: sum=1731 xor=29
 [pathfinder] PASS: 32x32, runs=1
 ```
 
