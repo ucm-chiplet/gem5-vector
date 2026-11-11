@@ -2275,52 +2275,64 @@ Execute::isInbetweenInsts(ThreadID thread_id) const
 }
 
 void
-Execute::evaluate()
+Execute::sampleVectorWaits()
 {
 #if USE_RISCV_ISA
-    /** Actualizar estadísticas de observabilidad de esperas vectoriales
-     *  en este ciclo de la etapa de Execute. */
-    if (cpu.isVectorOffloadEnabled()) {
-        bool any_wait_grant = false;
-        bool any_in_vpu = false;
-        bool any_retained_completion = false;
-        unsigned int active_in_vpu_count = 0;
+    if (!cpu.isVectorOffloadEnabled()) {
+        return;
+    }
 
-        for (const auto &info : executeInfo) {
-            for (size_t i = 0; i < info.vpuOffloadStates.size() &&
-                               i < maxActiveVectorOffloads;
-                 ++i) {
-                const auto &st = info.vpuOffloadStates[i];
-                if (st.phase == MinorVectorPhase::WaitGrant) {
-                    any_wait_grant = true;
-                } else if (st.phase == MinorVectorPhase::Dispatched ||
-                           st.phase == MinorVectorPhase::Accepted) {
-                    any_in_vpu = true;
-                    active_in_vpu_count++;
-                } else if (st.phase == MinorVectorPhase::Completed && i > 0) {
-                    any_retained_completion = true;
-                }
+    // Atribuir los ciclos transcurridos al estado de la evaluación
+    // anterior, que se mantuvo hasta ahora salvo por callbacks de la VPU.
+    const Cycles now = cpu.curCycle();
+    if (vectorSampleValid && now > lastVectorSampleCycle) {
+        const Cycles elapsed = now - lastVectorSampleCycle;
+        const auto &previous = lastVectorSample;
+        if (previous.waitGrant) {
+            cpu.stats.vectorWaitGrantCycles += elapsed;
+        }
+        if (previous.inVpu) {
+            cpu.stats.vectorWaitCompletionCycles += elapsed;
+        }
+        if (previous.retainedCompletion) {
+            cpu.stats.vectorRetainedCompletionCycles += elapsed;
+        }
+        if (previous.inVpuCount >= 2) {
+            cpu.stats.vectorMultiActiveCycles += elapsed;
+        }
+        // La última posición agrupa siete o más comandos en la VPU.
+        const unsigned int dist_index = std::min(previous.inVpuCount, 7U);
+        cpu.stats.vectorActiveCommandsDistribution[dist_index] += elapsed;
+    }
+
+    // Observar el estado actual de la ventana de cada hilo.
+    VectorWaitSample sample;
+    for (const auto &info : executeInfo) {
+        for (size_t i = 0;
+             i < info.vpuOffloadStates.size() && i < maxActiveVectorOffloads;
+             ++i) {
+            const auto &st = info.vpuOffloadStates[i];
+            if (st.phase == MinorVectorPhase::WaitGrant) {
+                sample.waitGrant = true;
+            } else if (st.phase == MinorVectorPhase::Dispatched ||
+                       st.phase == MinorVectorPhase::Accepted) {
+                sample.inVpu = true;
+                sample.inVpuCount++;
+            } else if (st.phase == MinorVectorPhase::Completed && i > 0) {
+                sample.retainedCompletion = true;
             }
         }
-
-        if (any_wait_grant) {
-            cpu.stats.vectorWaitGrantCycles++;
-        }
-        if (any_in_vpu) {
-            cpu.stats.vectorWaitCompletionCycles++;
-        }
-        if (any_retained_completion) {
-            cpu.stats.vectorRetainedCompletionCycles++;
-        }
-
-        if (active_in_vpu_count >= 2) {
-            cpu.stats.vectorMultiActiveCycles++;
-        }
-        /** vectorActiveCommandsDistribution[7]: active commands >7 */
-        const unsigned int dist_index = std::min(active_in_vpu_count, 7U);
-        cpu.stats.vectorActiveCommandsDistribution[dist_index]++;
     }
+    lastVectorSample = sample;
+    lastVectorSampleCycle = now;
+    vectorSampleValid = true;
 #endif
+}
+
+void
+Execute::evaluate()
+{
+    sampleVectorWaits();
 
     if (!inp.outputWire->isBubble())
         inputBuffer[inp.outputWire->threadId].setTail(*inp.outputWire);

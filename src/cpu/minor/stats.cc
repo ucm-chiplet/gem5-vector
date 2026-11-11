@@ -43,35 +43,42 @@ namespace gem5
 namespace minor
 {
 
-MinorStats::MinorStats(BaseCPU *base_cpu)
+MinorStats::MinorStats(BaseCPU *base_cpu, bool vector_offload)
     : statistics::Group(base_cpu),
       ADD_STAT(quiesceCycles, statistics::units::Cycle::get(),
                "Total number of cycles that CPU has spent quiesced or waiting "
                "for an interrupt"),
       ADD_STAT(vectorWaitGrantCycles, statistics::units::Cycle::get(),
-               "Total cycles waiting for VPU grant admission (WaitGrant)"),
-      ADD_STAT(vectorWaitCompletionCycles, statistics::units::Cycle::get(),
-               "Total cycles waiting for VPU execution completion "
-               "(Dispatched/Accepted)"),
+               "Cycles with a vector instruction waiting for VPU grant "
+               "(WaitGrant), counted by intervals including idle cycles"),
+      ADD_STAT(
+          vectorWaitCompletionCycles, statistics::units::Cycle::get(),
+          "Cycles with a vector command in the VPU (Dispatched/Accepted), "
+          "counted by intervals including idle cycles"),
       ADD_STAT(vectorRetainedCompletionCycles, statistics::units::Cycle::get(),
-               "Total cycles young completed vector instructions are held "
-               "waiting for retirement"),
+               "Cycles with a young completed vector instruction held for "
+               "in-order retirement, counted by intervals"),
       ADD_STAT(vectorOffloadCommands, statistics::units::Count::get(),
                "Total vector offload commands dispatched to the VPU"),
       ADD_STAT(vectorMultiActiveCycles, statistics::units::Cycle::get(),
-               "Total cycles with more than 1 vector commands active in VPU"),
-      ADD_STAT(
-          vectorActiveCommandsDistribution, statistics::units::Cycle::get(),
-          "Cycles distribution by number of active vector commands in VPU"),
+               "Cycles with two or more commands in the VPU (dispatched, not "
+               "completed; includes queued ones, not only executing)"),
+      ADD_STAT(vectorActiveCommandsDistribution,
+               statistics::units::Cycle::get(),
+               "Cycles by number of commands in the VPU (dispatched, not "
+               "completed; includes queued ones); last bucket is 7 or more"),
       ADD_STAT(vectorBlockedCapacity, statistics::units::Count::get(),
-               "Times young vector dispatch stopped due to window capacity"),
-      ADD_STAT(
-          vectorBlockedOrder, statistics::units::Count::get(),
-          "Times young vector dispatch stopped due to program order barrier"),
+               "Execute evaluations with more vector instructions than the "
+               "dispatch window"),
+      ADD_STAT(vectorBlockedOrder, statistics::units::Count::get(),
+               "Execute evaluations where young dispatch stopped: not "
+               "consecutive in program order"),
       ADD_STAT(vectorBlockedStructural, statistics::units::Count::get(),
-               "Times young vector dispatch stopped due to non-arithmetic op"),
+               "Execute evaluations where young dispatch stopped: a "
+               "non-arithmetic instruction"),
       ADD_STAT(vectorBlockedVstart, statistics::units::Count::get(),
-               "Times young vector dispatch stopped due to non-zero vstart"),
+               "Execute evaluations where young dispatch stopped: non-zero "
+               "vstart"),
       ADD_STAT(
           vectorRejectedCommands, statistics::units::Count::get(),
           "Total vector commands rejected by CPU permissions or VPU grant"),
@@ -87,22 +94,31 @@ MinorStats::MinorStats(BaseCPU *base_cpu)
                "Total vector floating-point commands producing IEEE 754 flags")
 {
     quiesceCycles.prereq(quiesceCycles);
-    vectorWaitGrantCycles.prereq(vectorWaitGrantCycles);
-    vectorWaitCompletionCycles.prereq(vectorWaitCompletionCycles);
-    vectorRetainedCompletionCycles.prereq(vectorRetainedCompletionCycles);
-    vectorOffloadCommands.prereq(vectorOffloadCommands);
-    vectorMultiActiveCycles.prereq(vectorMultiActiveCycles);
     vectorActiveCommandsDistribution.init(8).flags(statistics::pdf |
                                                    statistics::total);
-    vectorBlockedCapacity.prereq(vectorBlockedCapacity);
-    vectorBlockedOrder.prereq(vectorBlockedOrder);
-    vectorBlockedStructural.prereq(vectorBlockedStructural);
-    vectorBlockedVstart.prereq(vectorBlockedVstart);
-    vectorRejectedCommands.prereq(vectorRejectedCommands);
-    vectorAluCommands.prereq(vectorAluCommands);
-    vectorFpuCommands.prereq(vectorFpuCommands);
-    vectorMemCommands.prereq(vectorMemCommands);
-    vectorFpExceptions.prereq(vectorFpExceptions);
+
+    // Con offload, las métricas vectoriales se escriben aunque valgan cero:
+    // un cero es un resultado, no una ausencia. Sin offload se ocultan
+    // mientras valgan cero, para no añadir líneas a las simulaciones de
+    // Minor que no usan la VPU.
+    if (!vector_offload) {
+        vectorWaitGrantCycles.prereq(vectorWaitGrantCycles);
+        vectorWaitCompletionCycles.prereq(vectorWaitCompletionCycles);
+        vectorRetainedCompletionCycles.prereq(vectorRetainedCompletionCycles);
+        vectorOffloadCommands.prereq(vectorOffloadCommands);
+        vectorMultiActiveCycles.prereq(vectorMultiActiveCycles);
+        vectorActiveCommandsDistribution.prereq(vectorOffloadCommands);
+        vectorBlockedCapacity.prereq(vectorBlockedCapacity);
+        vectorBlockedOrder.prereq(vectorBlockedOrder);
+        vectorBlockedStructural.prereq(vectorBlockedStructural);
+        vectorBlockedVstart.prereq(vectorBlockedVstart);
+        vectorRejectedCommands.prereq(vectorRejectedCommands);
+        vectorAluCommands.prereq(vectorAluCommands);
+        vectorFpuCommands.prereq(vectorFpuCommands);
+        vectorMemCommands.prereq(vectorMemCommands);
+        vectorSlideCommands.prereq(vectorSlideCommands);
+        vectorFpExceptions.prereq(vectorFpExceptions);
+    }
 }
 
 } // namespace minor

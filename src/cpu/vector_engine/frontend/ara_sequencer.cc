@@ -46,12 +46,19 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
                          statistics::units::Tick::get(),
                          "Ticks the queue head waited for nonzero-vstart "
                          "isolation"),
+      hazardWaitTicks(&stats, "hazardWaitTicks",
+                      statistics::units::Tick::get(),
+                      "Ticks the queue head waited on any RAW/WAR/WAW "
+                      "hazard; each interval counted once"),
       rawWaitTicks(&stats, "rawWaitTicks", statistics::units::Tick::get(),
-                   "Ticks the queue head waited on a RAW hazard"),
+                   "Ticks the queue head waited on a RAW hazard; overlaps "
+                   "WAR/WAW, do not add"),
       warWaitTicks(&stats, "warWaitTicks", statistics::units::Tick::get(),
-                   "Ticks the queue head waited on a WAR hazard"),
+                   "Ticks the queue head waited on a WAR hazard; overlaps "
+                   "RAW/WAW, do not add"),
       wawWaitTicks(&stats, "wawWaitTicks", statistics::units::Tick::get(),
-                   "Ticks the queue head waited on a WAW hazard"),
+                   "Ticks the queue head waited on a WAW hazard; overlaps "
+                   "RAW/WAR, do not add"),
       owner(owner),
       queue(queue),
       completionEndpoint(completion_endpoint),
@@ -245,6 +252,11 @@ AraSequencer::accountHeadWait(const std::optional<VectorCommand> &head,
         }
         if (previous.isolation) {
             isolationWaitTicks += elapsed;
+        }
+        // hazardWaitTicks cuenta el intervalo una vez aunque haya varios
+        // tipos de dependencia; los tres siguientes lo repiten por tipo.
+        if (previous.hazards.any()) {
+            hazardWaitTicks += elapsed;
         }
         if (previous.hazards.raw) {
             rawWaitTicks += elapsed;

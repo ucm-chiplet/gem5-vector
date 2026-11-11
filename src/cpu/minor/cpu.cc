@@ -60,7 +60,7 @@ namespace gem5
 MinorCPU::MinorCPU(const BaseMinorCPUParams &params)
     : BaseCPU(params),
       threadPolicy(params.threadPolicy),
-      stats(this),
+      stats(this, params.vectorOffloadEnabled),
       vectorOffloadEnabledFlag(params.vectorOffloadEnabled)
 {
     /* This is only written for one thread at the moment */

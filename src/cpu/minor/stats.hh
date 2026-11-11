@@ -57,7 +57,9 @@ namespace minor
 /** Currently unused stats class. */
 struct MinorStats : public statistics::Group
 {
-    MinorStats(BaseCPU *parent);
+    /** vector_offload indica si la CPU usa la VPU. Sin ella, las métricas
+     *  vectoriales se ocultan mientras valgan cero. */
+    MinorStats(BaseCPU *parent, bool vector_offload = false);
 
     /** Number of cycles in quiescent state */
     statistics::Scalar quiesceCycles;

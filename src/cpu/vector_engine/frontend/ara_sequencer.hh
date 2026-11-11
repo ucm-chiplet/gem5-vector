@@ -179,6 +179,7 @@ class AraSequencer
     statistics::Scalar capacityWaitTicks;
     statistics::Scalar memoryBarrierWaitTicks;
     statistics::Scalar isolationWaitTicks;
+    statistics::Scalar hazardWaitTicks;
     statistics::Scalar rawWaitTicks;
     statistics::Scalar warWaitTicks;
     statistics::Scalar wawWaitTicks;

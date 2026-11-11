@@ -328,6 +328,38 @@ class Execute : public Named
      *  desacoplada del retiro en orden. */
     void advanceVectorDispatch(ThreadID thread_id);
 
+    /** Estado de la ventana vectorial observado en una evaluación. */
+    struct VectorWaitSample
+    {
+        /** Alguna entrada espera la reserva de la VPU (WaitGrant). */
+        bool waitGrant = false;
+        /** Alguna entrada está en la VPU (Dispatched o Accepted). */
+        bool inVpu = false;
+        /** Alguna entrada joven completada espera su retirada. */
+        bool retainedCompletion = false;
+        /** Entradas en la VPU: despachadas y sin terminar, incluidas las
+         *  que esperan en su cola. */
+        unsigned int inVpuCount = 0;
+    };
+
+    /**
+     * Actualiza las estadísticas de espera vectorial por intervalos.
+     *
+     * Minor deja de evaluar la pipeline cuando no tiene actividad, por
+     * ejemplo mientras espera a la VPU. Contar sólo los ciclos evaluados
+     * perdería esos ciclos. En su lugar, cada evaluación atribuye los
+     * ciclos transcurridos desde la anterior al estado que se observó
+     * entonces, y guarda el estado actual. Entre dos evaluaciones el estado
+     * sólo cambia por callbacks de la VPU, que despiertan la pipeline; el
+     * error es como mucho un ciclo por callback.
+     */
+    void sampleVectorWaits();
+
+    /** Último estado observado y ciclo en que se observó. */
+    VectorWaitSample lastVectorSample;
+    Cycles lastVectorSampleCycle{0};
+    bool vectorSampleValid = false;
+
     /** Try and commit instructions from the ends of the functional unit
      *  pipelines.
      *  If only_commit_microops is true then only commit upto the
