@@ -253,7 +253,10 @@ dependencias portables del repositorio.
 | 4 | MatMul, `_matmul/bin/matmul_vector.dump` | `vsetvli`, `vsetivli`, `vle64.v`, `vse64.v`, `vlse64.v`, `vfmacc.vv`, `vfredosum.vs`, `vmv.v.i`, `vmv1r.v` (9). | Reutilizar FP64 del 3 y completar FMA/reducción del 4; incorporar `vlse64.v` y movimientos auxiliares del kernel. La verificación es escalar. |
 
 Los dumps se comunicaron bajo
-`/home/dani/riscv-vectorized-benchmark-suite/`. El equipo sitúa el kernel
+`/home/dani/riscv-vectorized-benchmark-suite/`. El 11 de noviembre de 2026
+se confirma que Pathfinder procede de [RiVEC][rivec] y que se compilará con
+Clang; su revisión exacta y su adaptación se fijan en el
+[plan de cierre de la fase 8](<hito2/Plan de cierre de la fase 8.md>). El equipo sitúa el kernel
 de AXPY en `axpy_vector` y el de MatMul en `matrixmul_intrinsics`.
 MatMul no se identifica automáticamente con un kernel de BLIS por realizar
 multiplicación matricial.
@@ -372,3 +375,4 @@ actualiza documentación: no crea pruebas, scripts ni adaptaciones de código.
 [deepseek]: https://arxiv.org/html/2606.19348
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
 [objetivos]: <Objetivos a medio y largo plazo.md>
+[rivec]: https://github.com/RALC88/riscv-vectorized-benchmark-suite

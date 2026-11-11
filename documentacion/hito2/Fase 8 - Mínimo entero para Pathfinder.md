@@ -134,7 +134,8 @@ Comprobaciones realizadas:
   también Minor. SCons avisa de que GCC 15.2.1 no está oficialmente
   soportado; no hay otros avisos ni errores.
 
-Pendientes fuera de esta entrega:
+Pendientes fuera de esta entrega, organizados en el
+[plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
 
 - Compilar y ejecutar Pathfinder: copia escalar inicial, toolchain,
   opciones, desensamblado y resultado contrastado (criterio 16).
