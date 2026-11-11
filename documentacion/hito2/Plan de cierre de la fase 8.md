@@ -47,9 +47,9 @@ Acordadas con el usuario el 11 de noviembre de 2026:
    LMUL m1, sin opciones para cambiarlos. El kernel usa `e32, m1, ta, ma`,
    dentro de ese perfil, así que P3 no necesita cambiarlo.
 4. **Dos ventanas de concurrencia.** Minor admite 2 instrucciones
-   vectoriales en vuelo y la VPU 4 comandos activos por defecto. No es un
-   error, pero P5 debe revisar que capacidad, contrapresión y drain son
-   coherentes de extremo a extremo.
+   vectoriales en vuelo y la VPU 4 comandos activos por defecto. P5
+   confirma que capacidad, contrapresión y drain son coherentes; con la
+   ventana de Minor en 2, los 4 activos de la VPU no se alcanzan.
 
 ## Paquetes de trabajo
 
@@ -59,7 +59,7 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 | P2 | Pathfinder: fuente y compilación | `benchmarks/pathfinder/` con el patrón del baseline: fuente adaptada de RiVEC, Makefile con Clang, README. Kernel RVV explícito; copia inicial, inicialización y verificación escalares. Desensamblado y script que compruebe que sólo aparecen los 7 tipos RVV del kernel. | Binario reproducible con revisión, toolchain, opciones y desensamblado registrados **Hecho el 11 de noviembre de 2026** en [`benchmarks/pathfinder/`](../../benchmarks/pathfinder/README.md): RiVEC `32a14ddfb9`, Clang 20.1.8, sin libc; perfil de 7 tipos comprobado con `tiny` y `small` | 16 (toolchain y perfil) |
 | P3 | Pathfinder: ejecución y contraste | Runner como `baseline/run.py`, modos offload y nativo, verificación escalar y comparación de salidas. Opciones de perfil SEW/LMUL en `riscv_vpu.py` si el kernel las necesita. | Ejecución funcional registrada y estadísticas de ALU, slide, red, VLSU y VRF **Hecho el 11 de noviembre de 2026** (`4c08b72fce`): `tiny` y `small` pasan en offload y native con huella idéntica; evidencia en la [entrega de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md#evidencia-de-ejecución-de-pathfinder>) | 16; en parte 6, 7 y 11 |
 | P4 | Observabilidad (punto 4 de 13.8) | Revisar que las estadísticas explican dependencias, unidades, VRF, memoria y red con unidades claras y sin doble recuento, incluidas las esperas nuevas de Minor frente a las de la VPU. Usar Pathfinder como carga real. | Informe y correcciones mínimas, si hacen falta **Hecho el 11 de noviembre de 2026**: [análisis de observabilidad](<Observabilidad - análisis con Pathfinder.md>), con reparto del tiempo, criterio 5 para bancos, lanes y red, 7 hallazgos y 5 correcciones propuestas. Pathfinder no sirve para el criterio 1: su kernel es serie | 7, 12 |
-| P5 | Repaso de extremo a extremo (punto 6) | Propiedad de buffers, identidad (`CommandKey`, `TaskKey`, `VrfAccessKey`, `requestId`), reservas, liberación y drain con las dos ventanas. Comprobar que `VectorSupport` es la única autoridad de soporte. | Informe; los cambios, en propuestas aparte | 2, 8, 15 |
+| P5 | Repaso de extremo a extremo (punto 6) | Propiedad de buffers, identidad (`CommandKey`, `TaskKey`, `VrfAccessKey`, `requestId`), reservas, liberación y drain con las dos ventanas. Comprobar que `VectorSupport` es la única autoridad de soporte. | Informe; los cambios, en propuestas aparte **Hecho el 11 de noviembre de 2026**: [revisión](<Revisión de extremo a extremo - Minor y VPU.md>) sin defectos de corrección y con cinco matices de semántica | 2, 8, 15 |
 | P6 | Matriz y fichas (puntos 1--2) | Una matriz por operación, forma, ancho y ruta que separe implementado, comprobado, parcial y candidato, unificando la matriz de decode y la tabla de la fase 6. Plantilla de ficha para la siguiente instrucción. | Matriz consolidada y plantilla | 9 |
 | P7 | Cierre frente a 15.3 (punto 5) | Estado de los 16 criterios: evidencia registrada, implementado sin evidencia o pendiente, con enlaces a las entregas. | Documento de cierre del hito 2 | Todos |
 | P8 | Entrega al hito 3 (puntos 3 y 7) | Contratos que deben ampliarse (disponibilidad por rangos, predicación, resultados escalares, colectivos, memoria concurrente, clústeres) y campaña de micro-kernels propuesta con su ROI, sin implementarla. | Sección de traspaso y ficha de campaña | 15 |
