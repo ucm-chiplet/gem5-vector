@@ -1,39 +1,70 @@
-# Matriz de Decode, Representación y Soporte (Hito 2)
+# Matriz de decode, representación y soporte (hito 2)
 
-Este documento formaliza la separación exigida en la Fase 2.1 (Punto 3)
-y en la sección 2.2 (acción 6) de las especificaciones del Hito 2 entre:
-1. **Decode en MinorCPU** (`src/cpu/minor/decode.cc`): qué instrucciones de la
-   ISA RISC-V decodifica el frontend de la CPU como offload hacia la VPU.
-2. **Representación en el contrato** (`src/cpu/vector_engine/interface/`):
-   qué información, tipos de operaciones y variantes de direccionamiento puede
+**Matriz vigente** del hito 2, actualizada el 11 de noviembre de 2026
+sobre `c02a2da837` (paquete P6 del [plan de cierre de la fase 8][plan-f8]).
+Sustituye a las tablas de las entregas de fase, que describen el estado en
+su fecha. Separa, como pide la Fase 2.1 (punto 3) y la sección 2.2
+(acción 6) del diseño:
+
+1. **Decode en MinorCPU** (`src/cpu/minor/decode.cc`): qué instrucciones
+   RISC-V traduce Minor a un comando para la VPU.
+2. **Representación** (`src/cpu/vector_engine/interface/`): qué puede
    transportar un `VectorCommand`.
-3. **Soporte activo en el backend** (`src/cpu/vector_engine/common/vector_support.cc`):
-   qué combinaciones de operación, anchos de elemento (SEW/EEW) y multiplicadores
-   de longitud de registro (LMUL) admite y ejecuta la VPU según su perfil.
+3. **Admisión y backend** (`OperationTraits` y `VectorSupport`): qué
+   combinaciones de operación, ancho y grupo acepta y ejecuta la VPU.
+4. **Evidencia**: qué se ha ejecutado desde un programa, con qué carga y
+   configuración, y con qué resultado.
 
-Adicionalmente, se documenta la distinción entre una ilegalidad normativa
-según el estándar RISC-V Vector Extension (RVV 1.0) y un rechazo derivado de
-las restricciones de implementación o simplificaciones del modelo VPU en gem5.
+También distingue una ilegalidad según RVV 1.0 de un rechazo por
+limitación del modelo.
 
----
+## 1. Matriz por operación
 
-## 1. Matriz de correspondencia por operación
+**Niveles.** *Implementado*: decode, admisión y backend existen y
+compilan. *Ejecutado*: un programa lo ejecuta en offload con resultado
+verificado y la misma huella que en RVV nativo. Todo lo demás es
+*candidato* o está fuera del hito.
 
-| Familia / Mnemónico | SEW / EEW en CPU | 1. Decode Minor (`MinorCPU::Decode`) | 2. Representación (`VectorCommand`) | 3. Soporte VPU (`VectorSupport`) | Comportamiento si no se admite |
-| :--- | :---: | :--- | :--- | :--- | :--- |
-| **Suma entera** (`vadd.vv`, `vadd.vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Add`). Orden `vd = vs2 + vs1/rs1`. | `ArithmeticCommand` con `operation = Add`, `destination`, `vectorSource = vs2` y `secondOperand` (`VectorRegRef` o `RegVal`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8, mf4, mf2, m1, m2, m4, m8} en backend. Requiere forma no enmascarada y `vstart == 0`. | Rechazo con `UnsupportedConfiguration` o `UnsupportedOperation`; MinorCPU eleva `IllegalInstFault`. |
-| **Multiplicación entera** (`vmul.vv`, `vmul.vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Multiply`). Orden `vd = vs2 * vs1/rs1`. | `ArithmeticCommand` con `operation = Multiply`, `signedness = NotApplicable`, `destination`, `vectorSource = vs2` y `secondOperand`. | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. Requiere forma no enmascarada y `vstart == 0`. | Rechazo en admisión; MinorCPU eleva `IllegalInstFault`. |
-| **División entera** (`vdiv.vv/vx`, `vdivu.vv/vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Divide`). Orden no conmutativo estricto: `vd = vs2 / vs1/rs1`. | `ArithmeticCommand` con `operation = Divide`, propagando `signedness = Signed` (`vdiv`) o `Unsigned` (`vdivu`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. División por cero produce cociente según la norma sin generar excepción. | Rechazo en admisión; MinorCPU eleva `IllegalInstFault`. |
-| **Resto entero** (`vrem.vv/vx`, `vremu.vv/vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Remainder`). Orden no conmutativo: `vd = vs2 % vs1/rs1`. | `ArithmeticCommand` con `operation = Remainder`, propagando `signedness = Signed` (`vrem`) o `Unsigned` (`vremu`). | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. | Rechazo en admisión; MinorCPU eleva `IllegalInstFault`. |
-| **Coma flotante FP32** (`vfadd.vv`, `vfmul.vv`, `vfdiv.vv`) | **32 (FP32)** | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`FloatAdd`, `FloatMultiply`, `FloatDivide`). Verifica `mstatus.FS != Off` antes de despachar. | `ArithmeticCommand` con `fpContext` capturando `frm`. Al retirar actualiza `mstatus.fs = DIRTY` y acumula excepciones en `fflags`. | Admite exclusivamente SEW = 32 (FP32) y LMUL ∈ {mf8..m8}. Requiere redondeos válidos (0..4). | Si `FS=Off` o redondeo inválido, MinorCPU aborta con excepción antes de dispatch. Fuera de SEW=32, rechazo en admisión. |
-| **Carga unit-stride** (`vle8/16/32/64.v`) | **EEW ∈ {8, 16, 32, 64}** *(exige SEW = EEW)* | Clasificado en `tryDecodeMemoryOp` como `VpuOffload` (`MemoryDirection::Load`). Extrae EEW de `rv_inst->machInst.width` (8, 16, 32, 64 bits) y registro destino. | `MemoryCommand` con `direction = Load`, `dataReg`, `base` (Addr), `addressing = UnitStrideAddress`, `elementWidthBits = EEW`. | Admite EEW ∈ {8, 16, 32, 64}. **Exige estrictamente `EEW == SEW`** (`elementWidthBits == sew_bits`). | Rechazo con `UnsupportedConfiguration` si `EEW != SEW`; MinorCPU eleva `IllegalInstFault`. |
-| **Almacenamiento unit-stride** (`vse8/16/32/64.v`) | **EEW ∈ {8, 16, 32, 64}** *(exige SEW = EEW)* | Clasificado en `tryDecodeMemoryOp` como `VpuOffload` (`MemoryDirection::Store`). Extrae EEW de `rv_inst->machInst.width` (8, 16, 32, 64 bits) y registro fuente. | `MemoryCommand` con `direction = Store`, `dataReg`, `base` (Addr), `addressing = UnitStrideAddress`, `elementWidthBits = EEW`. | Admite EEW ∈ {8, 16, 32, 64}. **Exige estrictamente `EEW == SEW`** (`elementWidthBits == sew_bits`). | Rechazo con `UnsupportedConfiguration` si `EEW != SEW`; MinorCPU eleva `IllegalInstFault`. |
-| **Slides de un elemento** (`vslide1up.vx`, `vslide1down.vx`) | **8, 16, 32, 64** | Clasificado en `tryDecodeSlideOp` como `VpuOffload` (`Slide1Up`, `Slide1Down`) sin descomponer la macro-op. Extrae `vd`, `vs2` y referencia a `rs1`. | `SlideCommand` con `operation`, `destination`, `vectorSource = vs2` y `scalar` normalizado con `ElementCodec::normalizeScalar`. | Admite SEW ∈ {8, 16, 32, 64} y LMUL ∈ {mf8..m8}. Solapamiento `vd == vs2` en up y formas con máscara (`vm=0`) rechazadas en admisión. | Solapamiento en up o máscara rechazados en admisión y traducidos por MinorCPU a `IllegalInstFault`. |
-| **Mínimo entero con signo** (`vmin.vv`, Pathfinder) | **8, 16, 32, 64** (Pathfinder usa 32) | Clasificado en `tryDecodeArithmeticOp` como `VpuOffload` (`ArithmeticOperation::Minimum`). Orden: `vd = min(vs2, vs1)`. | `ArithmeticCommand` con `operation = Minimum`, `signedness = Signed`, `destination`, `vectorSource = vs2` y `secondOperand = vs1`. | Implementado en ALU ([entrega VPU de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md>)): forma `.vv`, `Signed` y `Unsigned`, SEW 8/16/32/64 en backend y admisión. Minor no restringe el SEW, así que `vmin.vv` es alcanzable en los cuatro anchos; `vminu.vv` no se decodifica. Sin evidencia de ejecución. | `.vx` o `NotApplicable` se rechazan en admisión; `vm=0` como el resto de operaciones. |
-| **Memoria strided / indexada** (`vlse`, `luxEI`, etc.) | *Ninguno* | No reconocidas por `VleMacroInst`/`VseMacroInst` unit-stride. Clasificadas como `UnsupportedVector`. | `MemoryAddressing` dispone de variantes `StridedAddress` e `IndexedAddress`. | `VectorSupport::supportsMemory` comprueba y exige exclusivamente `UnitStrideAddress`. | CPU lanza `IllegalInstFault` en Decode. |
-| **Otras ops aritméticas y vectoriales** (`vsub`, lógicas, `.vi`, etc.) | *Ninguno* | No reconocidas en Decode. Clasificadas como `UnsupportedVector`. | Variantes existentes en el modelo (`Sub`, `And`, etc.). | Pendientes de fases posteriores o hitos futuros. | MinorCPU eleva `IllegalInstFault` en fase de Decode sin llegar a la VPU. |
+**Perfil habilitado.** El backend admite SEW 8/16/32/64 y los LMUL del
+perfil de la fase 2 (m1--m8 y mf2--mf8 según SEW y ELEN). El ejemplo
+`configs/example/riscv_vpu.py` sólo habilita **SEW 16/32 y LMUL m1** por
+defecto; otros valores se habilitan con
+`--vpu-set supported_sews=8,16,32,64` y `--vpu-set supported_lmuls=...`
+(exponentes de dos, -3 para mf8 y 3 para m8).
 
----
+**Reglas comunes.** Ninguna operación admite máscara: `vm=0` se rechaza
+antes de producir efectos. `vsetvli` se ejecuta en CPU. Las formas `.vv`
+usan `vd = vs2 op vs1` y las `.vx`, `vd = vs2 op rs1` con el escalar
+normalizado por CPU. Un rechazo de admisión llega al programa como
+`IllegalInstFault` al retirar.
+
+| Operación y forma | Decode Minor | Admisión VPU (SEW) | Unidad | Ejecutado desde programa | Falta |
+| --- | --- | --- | --- | --- | --- |
+| `vadd.vv` | Sí | 8/16/32/64 | ALU | SEW 32, m1: Pathfinder, concurrencia, baseline del hito 1 | Otros SEW y LMUL |
+| `vadd.vx` | Sí | 8/16/32/64 | ALU | SEW 32, m1: baseline del hito 1 (21 casos) | Otros SEW y LMUL |
+| `vmul.vv` | Sí | 8/16/32/64 | ALU | SEW 32, m1: concurrencia `integer` | Otros SEW y LMUL |
+| `vmul.vx` | Sí | 8/16/32/64 | ALU | No | Todo |
+| `vdiv.vv/.vx`, `vdivu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | No | Todo, incluidos divisor cero y desbordamiento |
+| `vrem.vv/.vx`, `vremu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | No | Todo, incluidos divisor cero y desbordamiento |
+| `vmin.vv` | Sí (con signo) | 8/16/32/64 | ALU | SEW 32, m1: Pathfinder, concurrencia | Otros SEW y LMUL |
+| `vminu.vv` | No | 8/16/32/64 | ALU | No (inalcanzable desde programa) | Decode en Minor |
+| `vfadd.vv` | Sí | 32 (FP32); binary16 sólo interno | FPU | FP32, m1: concurrencia `mixed`, sin flags IEEE | Flags, modos de redondeo, valores especiales |
+| `vfmul.vv` | Sí | 32 (FP32) | FPU | FP32, m1: concurrencia `mixed`, sin flags IEEE | Flags, modos de redondeo, valores especiales |
+| `vfdiv.vv` | Sí | 32 (FP32) | FPU (divisor no segmentado) | No | Todo |
+| `vle32.v`, `vse32.v` | Sí | EEW = SEW = 32 | VLSU | m1: Pathfinder, concurrencia, baseline | Faults, `vstart` ≠ 0 |
+| `vle8/16/64.v`, `vse8/16/64.v` | Sí | EEW = SEW | VLSU | No | Todo |
+| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes) | Otros SEW y LMUL, `vstart` ≠ 0 |
+| Memoria strided e indexada | No | No (`supportsMemory` exige unit-stride) | — | — | Hitos 4 y 5 |
+| Otras operaciones (`vsub`, lógicas, `.vi`, reducciones, máscaras...) | No | No (no existen en `ArithmeticOperation`) | — | — | Según el plan de evolución |
+
+Cargas usadas como evidencia, todas en la configuración por defecto,
+código `67c03af94b` (sólo cambia documentación hasta `c02a2da837`):
+
+| Carga | Ejecución | Registro |
+| --- | --- | --- |
+| [Pathfinder][pathfinder] `tiny` y `small` | Offload y native, huella idéntica, verificación completa | [Entrega de la fase 8][fase8] |
+| [Concurrencia][concurrency] `integer` y `mixed`, 1 024 elementos | Offload y native, huella idéntica, verificación escalar completa | [Análisis de observabilidad][observabilidad] |
+| [Baseline del hito 1][baseline]: `baseline` (21 casos) y `baseline-simple` | Offload y native, `PASS`, ejecutado de nuevo el 11 de noviembre de 2026 | Resultados locales de `benchmarks/baseline/` |
 
 ## 2. Distinción normativa RVV 1.0 vs. Limitación del Modelo
 
@@ -104,3 +135,28 @@ En el modelo actual de la VPU Ara-like:
 |    - Emite RejectionReason ante combinaciones fuera de perfil    |
 +-------------------------------------------------------------------+
 ```
+
+## 4. Huecos de evidencia
+
+Lo implementado que ningún programa ha ejecutado todavía. Sirve de entrada
+al cierre del hito (P7), que decidirá qué es requisito:
+
+1. **Anchos 8, 16 y 64 bits** en todas las operaciones enteras, memoria y
+   slides. Requieren habilitar SEW en la configuración.
+2. **LMUL distinto de m1** (grupos enteros y fraccionales) en todas las
+   operaciones.
+3. **Formas `.vx`** salvo `vadd.vx`: `vmul.vx`, `vdiv/vrem(u).vx`.
+4. **División y resto enteros**, incluidos divisor cero y el caso de
+   desbordamiento con signo.
+5. **`vfdiv.vv` y la ruta de flags FP**: ningún programa ha producido
+   flags IEEE ni ha usado un modo de redondeo distinto de RNE.
+6. **`vstart` distinto de 0** y faults de memoria a mitad de instrucción.
+7. **Rechazos** (`vm=0`, EEW ≠ SEW, `vd = vs2` en `vslide1up`): sin
+   ejecución registrada del camino de rechazo hasta el fault.
+
+[plan-f8]: <Plan de cierre de la fase 8.md>
+[fase8]: <Fase 8 - Mínimo entero para Pathfinder.md#evidencia-de-ejecución-de-pathfinder>
+[observabilidad]: <Observabilidad - análisis con Pathfinder.md>
+[pathfinder]: <../../benchmarks/pathfinder/README.md>
+[concurrency]: <../../benchmarks/concurrency/README.md>
+[baseline]: <../../benchmarks/baseline/README.md>

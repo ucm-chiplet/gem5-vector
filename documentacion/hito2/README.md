@@ -70,7 +70,10 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
 - [Plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
   Pathfinder, consolidación, criterios de cierre y entrega al hito 3.
 - [Matriz de decode, representación y soporte](<Matriz de decode, representacion y soporte.md>):
-  qué decodifica Minor, qué representa el contrato y qué admite la VPU.
+  matriz vigente: qué decodifica Minor, qué admite la VPU y qué se ha
+  ejecutado desde programas.
+- [Plantilla de ficha de operación](<Plantilla de ficha de operación.md>):
+  apartados para proponer la siguiente instrucción, con un ejemplo.
 - [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): estado de
   la parte CPU de las fases 2.1--2.8 y evidencia pendiente.
 - [Diseño de concurrencia de Minor](<Diseno de concurrencia MinorCPU - Fase 2.5.md>):
@@ -135,7 +138,7 @@ una [explicación con ejemplo][predicacion].
 | Operación | Forma prevista | 8 bits | 16 bits | 32 bits | 64 bits |
 | --- | --- | --- | --- | --- | --- |
 | Suma entera `vadd` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
-| Mínimo entero con signo `vmin`, para Pathfinder | `.vv`, sin predicación | — | — | Objetivo | — |
+| Mínimo entero `vmin` (con signo), para Pathfinder | `.vv`, sin predicación | Ampliación | Ampliación | Objetivo | Ampliación |
 | Multiplicación entera `vmul` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
 | División entera `vdiv`, `vdivu` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
 | Resto entero `vrem`, `vremu` | `.vv`, `.vx` | Objetivo | Objetivo | Objetivo | Objetivo |
@@ -144,6 +147,11 @@ una [explicación con ejemplo][predicacion].
 | Multiplicación FP `vfmul` | `.vv` | — | — | Objetivo FP32 | — |
 | División FP `vfdiv` | `.vv` | — | — | Objetivo FP32 | — |
 | Desplazamiento de un elemento `vslide1up`, `vslide1down` | `.vx`, sin predicación | Objetivo | Objetivo | Objetivo | Objetivo |
+
+En `vmin`, **Ampliación** son los anchos que se aprobaron el 10 de noviembre
+de 2026 además del objetivo de Pathfinder; la VPU admite también `vminu`
+sin decode en Minor. El estado real de cada combinación, con su evidencia,
+está en la [matriz vigente](<Matriz de decode, representacion y soporte.md>).
 
 `vsetvli` permanece en CPU y configura `vl` y `vtype` para las combinaciones
 legales y soportadas. Las columnas describen el ancho del elemento, no VLEN

@@ -65,6 +65,10 @@ VRF, `future/` ni `build/`.
 
 ## Operaciones y matriz de soporte
 
+Tabla en el estado de esta entrega (con la columna de decode actualizada
+el 11 de noviembre de 2026). El estado vigente, con la evidencia de
+ejecución, está en la [matriz de soporte](<Matriz de decode, representacion y soporte.md>).
+
 `VectorSupport` sigue siendo la autoridad. **Backend** indica que la VPU
 calcula y temporiza la combinación; **admisión CPU** que `checkCommand` la
 acepta en un comando; **decode Minor** que un programa puede generarla.
