@@ -13,7 +13,7 @@ binarios ni resultados.
 | --- | --- | --- |
 | VPU, fases 1--7 | Entregadas en backend; compiladas | Entregas de cada fase |
 | VPU, `vmin`/`vminu` `.vv` | Implementado en ALU, 8/16/32/64 bits; compilado, sin ejecución | [Entrega VPU de fase 8][entrega-f8] |
-| Minor, fases 2.1--2.7 | Declarado resuelto por su autor; evidencia de ejecución por confirmar | [Pendientes de Minor][pendientes-minor], [matriz][matriz] |
+| Minor, fases 2.1--2.7 | Implementado y verificado leyendo el código (P1); sin evidencia de ejecución | [Pendientes de Minor][pendientes-minor], [matriz][matriz] |
 | Minor, decode de `vmin.vv` | Implementado (`963e6a9550`) | [Matriz][matriz] |
 | Pathfinder | Sin fuentes en el repositorio, sin binario ni ejecución | [Plan de benchmarks][benchmarks] |
 
@@ -55,7 +55,7 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 
 | # | Paquete | Trabajo | Entregable | Criterios 15.3 |
 | --- | --- | --- | --- | --- |
-| P1 | Reconciliar la documentación tras el merge | Actualizar las entregas de fases 5--7, el índice del hito y los pendientes de Minor, que aún describen a Minor sin `963e6a9550`. Distinguir lo declarado de lo que tiene evidencia. | Documentación coherente con el código actual | 9 |
+| P1 | Reconciliar la documentación tras el merge | Actualizar las entregas de fases 5--7, el índice del hito y los pendientes de Minor, que aún describen a Minor sin `963e6a9550`. Distinguir lo declarado de lo que tiene evidencia. | Documentación coherente con el código actual. **Hecho el 11 de noviembre de 2026**; queda para P5 el límite de la ventana de Minor, que cuenta posiciones (incluidas entradas `Completed`) y no comandos activos | 9 |
 | P2 | Pathfinder: fuente y compilación | `benchmarks/pathfinder/` con el patrón del baseline: fuente adaptada de RiVEC, Makefile con Clang, README. Kernel RVV explícito; copia inicial, inicialización y verificación escalares. Desensamblado y script que compruebe que sólo aparecen los 7 tipos RVV del kernel. | Binario reproducible con revisión, toolchain, opciones y desensamblado registrados | 16 (toolchain y perfil) |
 | P3 | Pathfinder: ejecución y contraste | Runner como `baseline/run.py`, modos offload y nativo, verificación escalar y comparación de salidas. Opciones de perfil SEW/LMUL en `riscv_vpu.py` si el kernel las necesita. | Ejecución funcional registrada y estadísticas de ALU, slide, red, VLSU y VRF | 16; en parte 6, 7 y 11 |
 | P4 | Observabilidad (punto 4 de 13.8) | Revisar que las estadísticas explican dependencias, unidades, VRF, memoria y red con unidades claras y sin doble recuento, incluidas las esperas nuevas de Minor frente a las de la VPU. Usar Pathfinder como carga real. | Informe y correcciones mínimas, si hacen falta | 7, 12 |

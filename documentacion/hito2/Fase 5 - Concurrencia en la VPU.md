@@ -29,6 +29,26 @@ fase conjunta (Minor despacha más de una instrucción, sección 13.5 del
 [diseño][diseno]) y las acciones CPU de la fase 2.5 de la [guía de
 responsabilidades][responsabilidades] quedan pendientes.
 
+**Estado posterior (11 de noviembre de 2026).** La rama de Minor,
+integrada en `feature/vpu` por fast-forward hasta `963e6a9550`, añade la
+parte CPU de 2.5 según su [diseño de concurrencia][concurrencia-minor]
+(`3686e7e151`, `4c48d2de3b`, `91dac1586f`, `88bec9237b`). Verificado en
+código, sin ejecución registrada:
+
+- `advanceVectorDispatch()` despacha fuera de la cabeza de retirada,
+  dentro de una ventana de `maxActiveVectorOffloads` entradas (2 por
+  defecto) y hasta `vectorDispatchWidth` comandos por ciclo (1 por
+  defecto).
+- `accepted()` y `completed()` localizan la entrada por `CommandKey`.
+- Descarte y drain inspeccionan todas las entradas de `vpuOffloadStates`.
+- Estadísticas de espera y ocupación en `MinorStats`.
+
+Las dos ventanas son distintas: Minor admite 2 instrucciones en vuelo y la
+VPU 4 comandos activos por defecto. Su coherencia de extremo a extremo se
+revisa en el paquete P5 del [plan de cierre de la fase 8](
+<Plan de cierre de la fase 8.md>). El estado detallado de la parte CPU
+está en los [pendientes de Minor][pendientes-minor].
+
 No hay chaining, renombramiento, ROB, solapamiento con memoria, varias
 instrucciones de memoria ni predicación. Compilar esta entrega no acredita
 ejecución funcional ni validación temporal del solapamiento.
@@ -215,9 +235,15 @@ sumas como barrera; `vstart` no nulo aislado; rango vacío entre activos;
 Quedan pendientes: acciones CPU de 2.5 (cursor de despacho, callbacks por
 clave, retirada ordenada de varias entradas, drain e interrupciones en
 Minor), y con ellas la evidencia de solapamiento desde un programa.
+Actualización del 11 de noviembre de 2026: las acciones CPU están
+implementadas (ver el estado posterior de la frontera con Minor); sigue
+pendiente la evidencia de solapamiento desde un programa (criterio 1 de
+la sección 15.3 del [diseño][diseno]).
 Quedan fuera: chaining, memoria concurrente, FPU FP32, Mul/Div/resto y
 varias ALUs de 2.6, red y slides de 2.7.
 
 [diseno]: <Hito 2 - Concurrencia, FPU, anchos e interconexión.md>
 [responsabilidades]: <Responsabilidades CPU y VPU.md>
+[pendientes-minor]: <Pendientes de Minor - Fases 1 a 5.md>
+[concurrencia-minor]: <Diseno de concurrencia MinorCPU - Fase 2.5.md>
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html

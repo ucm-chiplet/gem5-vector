@@ -10,6 +10,16 @@ No es una
 propuesta de código ni modifica el alcance de ninguna fase: cada cambio
 seguirá requiriendo su propuesta y aprobación.
 
+**Revisiones posteriores.** El 8 de noviembre de 2026 el autor de la rama
+de Minor marcó como resueltas las acciones que implementó (commits
+`7b3456c198` a `963e6a9550`). El 11 de noviembre de 2026, tras integrar
+esa rama en `feature/vpu` por fast-forward, se contrastaron esas
+acciones con el código en `dad5ab6f5f` y se actualizaron el resumen, el
+recorrido actual y la evidencia común. "Resuelto" significa implementado
+y verificado leyendo el código; ninguna acción tiene todavía evidencia de
+ejecución desde un programa. El trabajo restante se organiza en el
+[plan de cierre de la fase 8][plan-f8].
+
 La parte CPU forma parte del cierre conjunto de cada fase. Su ausencia
 limita O2 (recursos finitos observables desde cargas reales) y O6
 (capacidades y evidencia trazables): sin ella, las capacidades backend de
@@ -43,46 +53,60 @@ informe es revisión de fuentes: no se ha compilado ni ejecutado nada.
 | --- | --- | --- | --- |
 | 2.1 Contratos | Integrada | Integrada; resueltos rechazos (rejectionReason), estados terminales y matriz de soporte. | Sin cambios respecto al hito 1. |
 | 2.2 Anchos y grupos | Backend 8/16/32/64, m1--m8, mf2--mf8 | Decode implementado para memoria en todos los EEW (8/16/32/64) y suma entera | Memoria y suma funcional en todos los anchos; la configuración de ejemplo tiene SEW 16/32 y m1 por defecto. |
-| 2.3 Recursos | Recursos temporizados | Protocolo serie presente; sin métricas ni preparación de 2.5 | Esperas más largas sin causa observable en Minor. |
-| 2.4 Bloques | Bloques unit-stride | Barreras y faults del hito 1; sin revisión con bloques | Igual que el baseline; sin evidencia de faults por bloque. |
+| 2.3 Recursos | Recursos temporizados | Métricas de espera (`vectorWaitGrantCycles`, `vectorWaitCompletionCycles`) y diseño de 2.5; sin evidencia de esperas variables ni de drain con obligaciones | Las esperas tienen causa observable en Minor. |
+| 2.4 Bloques | Bloques unit-stride | Barrera antes de memoria vectorial revisada; faults por bloque sin evidencia | Igual que el baseline; sin evidencia de faults por bloque. |
 | 2.5 Concurrencia | Varios comandos activos | Ventana de despacho desacoplada de hasta 2 comandos en vuelo activa | Dos comandos aritméticos independientes pueden solaparse en la VPU. |
+| 2.6 Enteras y FP32 | Mul/Div/resto, FP32, varias ALUs | Decode `.vv/.vx` y FP32 `.vv`, `mstatus.FS/VS`, `Dirty` al retirar | Las operaciones son alcanzables desde un programa. |
+| 2.7 Slides | Crossbar y `SlideUnit` | Decode, `SlideCommand` y normalización del escalar | Las slides y la red son alcanzables desde un programa. |
+| 2.8 Pathfinder | `vmin`/`vminu` `.vv` en ALU | Decode de `vmin.vv` (con signo, cualquier SEW); `vminu.vv` sin decode | Los 7 tipos RVV de Pathfinder son alcanzables; Pathfinder sin ejecutar. |
 
-La consecuencia principal es que ningún criterio de cierre de la
-[sección 15.3][cierre] que dependa de un programa puede acreditarse todavía:
-ni el 1 (dos instrucciones del programa simultáneas) ni el 3 (suma y
-memoria en los cuatro anchos y en el perfil LMUL).
+La consecuencia principal es que los criterios de cierre de la
+[sección 15.3][cierre] que dependen de un programa ya tienen camino
+CPU--VPU implementado, pero ninguno puede acreditarse todavía: no hay
+ejecución registrada tras estos cambios. Esa evidencia se organiza en el
+[plan de cierre de la fase 8][plan-f8].
 
 ## Lo que Minor ya hace
 
-Para delimitar los pendientes, éste es el recorrido actual:
+Recorrido en `dad5ab6f5f`. Las referencias se dan por función, porque
+las líneas cambian con cada revisión:
 
-1. **Decode** (`decode.cc:58-133`) clasifica cada instrucción en
-   `CpuScalar`, `CpuVectorConfig`, `VpuOffload`, `NativeVector` o
-   `UnsupportedVector`. Las no soportadas reciben `IllegalInstFault` en
-   decode (`decode.cc:251-262`). Las `VpuOffload` no se descomponen en
+1. **Decode** (`decode.cc`) clasifica cada instrucción en `CpuScalar`,
+   `CpuVectorConfig`, `VpuOffload`, `NativeVector` o `UnsupportedVector`.
+   `tryDecodeMemoryOp` reconoce `vle/vse` unit-stride con EEW 8/16/32/64;
+   `tryDecodeArithmeticOp` reconoce `vadd`, `vmul`, `vdiv(u)` y `vrem(u)`
+   `.vv/.vx`, `vfadd/vfmul/vfdiv.vv` y `vmin.vv`; `classifyVectorSlideOp`
+   reconoce `vslide1up/down.vx`. Las no soportadas reciben
+   `IllegalInstFault` en decode. Las `VpuOffload` no se descomponen en
    microoperaciones.
-2. **Issue** (`execute.cc:825-862`) comprueba sólo las fuentes escalares en
-   el scoreboard (`scoreboard.cc:282-320`), marca los destinos como
-   impredecibles hasta la retirada y crea un `MinorVectorState` por
-   instrucción en `vpuOffloadStates`.
-3. **Commit** (`execute.cc:1254-1385`) recorre las fases `ReadyToGrant`,
-   `WaitGrant`, `Dispatched`, `Accepted` y `Completed` **sólo para la
-   cabeza de retirada**. Asigna `CommandKey`, captura configuración y
-   operandos una vez, reintenta tras `Stall`, consume el token una vez y
-   despacha. En `Completed` acumula `fflags`, aplica `finalVstart` e
-   invoca el fault si lo hay.
-4. **Callbacks** (`execute.cc:1180-1221`) localizan la entrada mediante
-   `vpuOffloadStates.front()` y fallan con `panic` si la clave no coincide.
-5. **Orden con memoria escalar**: la memoria vectorial espera a
-   `lsq.storeBuffer.isDrained()` (`execute.cc:1286-1288`) y
-   `hasPendingVpuStoreBefore()` retiene los accesos escalares posteriores,
-   también en la emisión anticipada (`execute.cc:1387`, `1671`).
-6. **Descarte y drain**: una entrada con reserva u obligaciones no se
-   descarta (`execute.cc:1732-1744`); `isDrained()` exige
-   `vpuOffloadStates` vacío (`execute.cc:2429-2445`).
+2. **Issue** comprueba sólo las fuentes escalares en el scoreboard de
+   Minor, marca los destinos como impredecibles hasta la retirada y crea
+   un `MinorVectorState` por instrucción en `vpuOffloadStates`.
+3. **Despacho** (`advanceVectorDispatch`) recorre las primeras
+   `maxActiveVectorOffloads` entradas (2 por defecto), con hasta
+   `vectorDispatchWidth` envíos por ciclo (1 por defecto). Comprueba
+   `misa`/`mstatus.VS` y, en FP, `mstatus.FS` antes de reservar; aplica
+   las barreras de su [diseño de concurrencia][concurrencia-minor]
+   (consecutividad, memoria sólo en cabeza, sin rechazo previo); asigna
+   `CommandKey`, captura configuración y operandos una vez, reintenta tras
+   `Stall` y guarda `rejectionReason` ante `Rejected`.
+4. **Callbacks** `accepted()` y `completed()` localizan la entrada por
+   `CommandKey` en toda la ventana.
+5. **Retirada** (`commitInst`) procesa sólo la cabeza y en orden: traduce
+   el motivo de rechazo en `IllegalInstFault`, aplica `fflags`,
+   `finalVstart` y el fault de memoria, marca `mstatus.VS` (y `FS`) como
+   `Dirty`. `IllegalInstruction` se convierte en `IllegalInstFault`,
+   `Cancelled` retira sin efectos e `InternalError` termina en `panic`.
+6. **Orden con memoria escalar**: la memoria vectorial espera a
+   `lsq.storeBuffer.isDrained()` y `hasPendingVpuStoreBefore()` retiene
+   los accesos escalares posteriores, también en la emisión anticipada.
+7. **Descarte y drain**: `mustCompleteVpuOffload()` e `isDrained()`
+   inspeccionan todas las entradas de `vpuOffloadStates`.
+8. **Estadísticas** de espera, ocupación de la ventana y causas de bloqueo
+   en `MinorStats`.
 
-Este recorrido cumple el protocolo de una instrucción activa. Los
-pendientes siguientes son lo que falta respecto a la guía de cada fase.
+Las tablas siguientes conservan, por fase, el estado de cada acción de la
+guía.
 
 ## Fase 2.1: contratos y capacidades
 
@@ -214,6 +238,14 @@ Puntos de diseño que la propuesta CPU de 2.5 deberá cerrar:
   interrupción con varias entradas despachadas (en SE no hay controlador
   de interrupciones, pero el camino FS sigue presente en el código).
 
+Estado el 11 de noviembre de 2026: el [diseño de
+concurrencia][concurrencia-minor] trata el rechazo de una instrucción
+joven (no se despacha nada tras un rechazo) y menciona el squash. No
+documenta expresamente la seguridad de delegar dependencias vectoriales
+en el scoreboard VPU con ventana, la liberación anticipada ni la toma de
+interrupciones con varias entradas despachadas. Su revisión es parte del
+paquete P5 del [plan de cierre de la fase 8][plan-f8].
+
 Sin estos puntos no puede cerrarse el criterio de la
 [sección 13.5][fase5-diseno] («Minor debe despachar más de una
 instrucción») ni el criterio 1 de la [sección 15.3][cierre].
@@ -232,7 +264,7 @@ La [entrega VPU de fase 6][fase6] admite en backend `vmul`, `vdiv`,
 | 3. Comprobación de `mstatus.FS` y `VS` | Resuelto | Se comprueba en `advanceVectorDispatch` (`execute.cc`) antes de emitir reserva: si `!misa.rvv` o `status.vs == Off`, se genera excepción ilegal `"RVV is disabled or VPU is off"`; si la operación requiere FPU (`requiresFpContext`) y `status.fs == Off`, se genera `"FPU is off"`. Se añade `cpuFaultMessage` a `MinorVectorState` y el contador `vectorRejectedCommands` en `MinorStats`. |
 | 4. Estado `Dirty` al retirar | Resuelto | En `commitInst` ante `CompletionStatus::Success`, se invocan las funciones nativas de gem5 `RiscvISA::updateVPUStatus` (con `set_dirty=true`) para marcar `mstatus.vs = Dirty` y `RiscvISA::updateFPUStatus` para marcar `mstatus.fs = Dirty` si la instrucción produjo flags de coma flotante o es de tipo FP. |
 | 5. Captura del redondeo | Presente, sin evidencia | `buildVectorCommand()` captura `frm` para toda ficha con `requiresFpContext` y conserva `Invalid` si `frm` es 5--7; admisión lo rechaza y Minor lo convierte en instrucción ilegal. No consta ejecución. |
-| 6. Flags al retirar | Presente para el despacho serie | Se acumulan una vez al retirar la cabeza. Con la ventana de 2.5 deberán retenerse en la entrada joven hasta su retirada. |
+| 6. Flags al retirar | Resuelto, sin evidencia | Cada entrada conserva sus `fpFlags` en su propia `completion` y se acumulan en `fflags` cuando esa entrada retira como cabeza, también con la ventana de 2.5 (revisión del 11 de noviembre de 2026). |
 | 7. CSRs FP como límite de ventana | Resuelto | Garantizado por la barrera de consecutividad estricta en `advanceVectorDispatch` (`execSeqNum == prev + 1`). Cualquier acceso escalar a `frm`, `fflags` o `fcsr` entre instrucciones vectoriales rompe la consecutividad e interrumpe de inmediato el despacho concurrente hasta que las instrucciones previas completen y se retiren en orden. |
 
 Sin los puntos 1--3 no puede acreditarse el criterio 4 (recorrido
@@ -262,20 +294,22 @@ programa, con la red en los casos que cruzan lanes) de la
 [sección 15.3][cierre]. El criterio 14 depende sólo de la VPU, pero su
 tráfico no se observa en un programa hasta resolver esos puntos.
 
-## Evidencia pendiente común a las fases 1--5
+## Evidencia pendiente común a las fases 1--8
 
-- **Ejecución de programas.** Las entregas 2--5 registran sólo compilación
-  dirigida; la fase 5 además enlazó `gem5.opt` y ejecutó `--help`. No hay
-  registro de ejecución de una carga con Minor tras los cambios de esas
-  fases, ni siquiera del baseline del hito 1 con los nuevos valores por
-  defecto (cuatro entradas de cola, cuatro activos y cuatro contextos por
-  lane).
-- **Compilación de Minor.** Minor no ha cambiado desde la fase 1, cuya
-  entrega compiló `minor/cpu.o` y `minor/execute.o`. No se ha comprobado
-  que ese código siga compilando con las cabeceras modificadas en 2--5.
-- **Matriz CPU--VPU.** No existe la relación por operación, forma, ancho y
-  LMUL entre decode, construcción, admisión y retirada que pide la
-  fase 2.8 y que cada fase debería actualizar ([sección 13][fases]).
+Estado el 11 de noviembre de 2026:
+
+- **Ejecución de programas.** Pendiente. Las entregas VPU 2--8 registran
+  compilación y, algunas, `--help`. No hay registro de ejecución de una
+  carga con Minor tras esos cambios ni tras la integración de la rama de
+  Minor, ni siquiera del baseline del hito 1 con los valores por defecto
+  actuales (cuatro entradas de cola, cuatro activos, cuatro contextos por
+  lane y ventana de Minor de 2).
+- **Compilación de Minor.** Resuelto: `build/RISCV/gem5.opt` compila y
+  enlaza en `dad5ab6f5f`, con Minor y todas las cabeceras VPU actuales.
+- **Matriz CPU--VPU.** Existe la [matriz de decode, representación y
+  soporte][matriz]. Su consolidación con la tabla de la fase 6 y la
+  distinción entre implementado y comprobado es el paquete P6 del
+  [plan de cierre de la fase 8][plan-f8].
 
 ## Fuera del alcance de este informe
 
@@ -285,16 +319,21 @@ código:
 - Destinos escalares (`vector_types.hh`, comentario en
   `DecodedArithmeticOp::destination`): hito 3.
 - Operandos inmediatos (`.vi`): no forman parte de la matriz del hito 2.
-- Offload FP32, Mul/Div/resto y varias ALUs: fase 2.6, con sus
-  pendientes CPU en la sección correspondiente de este informe.
-- `vslide1up.vx` y `vslide1down.vx`: fase 2.7, con sus pendientes CPU en
-  la sección correspondiente de este informe.
-- `vmin.vv` y cierre de Pathfinder: fase 2.8.
+- Cierre de Pathfinder: fase 2.8, en el [plan de cierre][plan-f8].
+- Decode de `vminu.vv`: no lo exige Pathfinder; la VPU ya lo admite.
 - Predicación (`vm=0`), chaining y memoria concurrente: hito 3.
+
+Las fases 2.6 y 2.7, antes listadas aquí, tienen ya sus secciones y su
+parte CPU implementada.
 
 ## Orden sugerido
 
-Es una sugerencia para preparar propuestas, no un plan aprobado:
+Superado el 11 de noviembre de 2026: la rama de Minor implementa los
+pasos 1--3 y revisa la barrera del 4; los faults por bloque siguen sin
+evidencia. Se conserva como registro; el trabajo restante sigue
+el [plan de cierre de la fase 8][plan-f8].
+
+Era una sugerencia para preparar propuestas, no un plan aprobado:
 
 1. **2.2 CPU**: decode de `vle8/16/64.v` y `vse8/16/64.v` con EEW desde la
    codificación, perfil expuesto en `riscv_vpu.py` y matriz de soporte.
@@ -326,4 +365,7 @@ independientes con `sequencer.overlappedStarts > 0`.
 [fase5]: <Fase 5 - Concurrencia en la VPU.md>
 [fase6]: <Fase 6 - FPU, operaciones enteras y varias ALUs.md>
 [fase7]: <Fase 7 - Interconexión y slides.md>
+[plan-f8]: <Plan de cierre de la fase 8.md>
+[matriz]: <Matriz de decode, representacion y soporte.md>
+[concurrencia-minor]: <Diseno de concurrencia MinorCPU - Fase 2.5.md>
 [rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html

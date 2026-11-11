@@ -41,6 +41,15 @@ casos que cruzan lanes) queda pendiente de esa parte. El criterio 14
 (interfaz independiente de topología, crossbar detrás y métricas comunes)
 está implementado, pero sin evidencia de ejecución.
 
+**Estado posterior (11 de noviembre de 2026).** La rama de Minor,
+integrada en `feature/vpu` hasta `963e6a9550`, decodifica
+`vslide1up.vx` y `vslide1down.vx` sin descomponerlas, construye
+`SlideCommand` con `vd`, `vs2` y el escalar `rs1` capturado una vez, y
+convierte en `IllegalInstFault` los rechazos de admisión (`vd == vs2` en
+up, `vm=0`) (`afa2191d8c`). Verificado en código, sin ejecución
+registrada: el criterio 6 sigue pendiente de evidencia desde programa y la
+red aún no ha transportado tráfico de una carga.
+
 Compilar esta entrega no acredita ejecución funcional ni validación
 temporal. No se han ejecutado cargas ni se han creado pruebas.
 
@@ -314,7 +323,8 @@ la VPU hasta que exista la parte de Minor:
 Quedan pendientes:
 
 - la parte CPU de 2.7 ([pendientes de Minor][pendientes-minor]) y, con
-  ella, la evidencia desde un programa;
+  ella, la evidencia desde un programa (actualización del 11 de noviembre
+  de 2026: la parte CPU está implementada; falta la evidencia);
 - varias slides activas;
 - envío de una pieza antes de que su lectura completa termine (no hay
   chaining).

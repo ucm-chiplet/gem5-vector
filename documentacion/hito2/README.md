@@ -16,18 +16,24 @@ instrucción en curso. La [entrega VPU de fase 4](
 <Fase 4 - Memoria unit-stride por bloques.md>) sirve la memoria unit-stride
 por bloques con un bloque activo y accesos al VRF por palabra. La [entrega
 VPU de fase 5](<Fase 5 - Concurrencia en la VPU.md>) admite varios comandos
-aritméticos independientes activos, con scoreboard conservador; Minor aún
-despacha uno cada vez, de modo que su parte CPU queda pendiente. La
+aritméticos independientes activos, con scoreboard conservador. La
 [entrega VPU de fase 6](<Fase 6 - FPU, operaciones enteras y varias ALUs.md>)
-añade en backend Mul/Div/resto enteros, FP32 y varias ALUs por lane; Minor
-todavía no decodifica esas operaciones. La [entrega VPU de fase 7](
-<Fase 7 - Interconexión y slides.md>) construye el crossbar detrás de la
-interfaz común de red y ejecuta en backend `vslide1up.vx` y
-`vslide1down.vx`; Minor tampoco las decodifica todavía. La [entrega VPU
-de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md>) añade
-`vmin`/`vminu` `.vv` en la ALU para Pathfinder. Estas
-entregas mantienen las responsabilidades CPU y no acreditan por sí solas
-ejecución funcional de toda la matriz ni cierre de integración CPU--VPU.
+añade en backend Mul/Div/resto enteros, FP32 y varias ALUs por lane. La
+[entrega VPU de fase 7](<Fase 7 - Interconexión y slides.md>) construye el
+crossbar detrás de la interfaz común de red y ejecuta en backend
+`vslide1up.vx` y `vslide1down.vx`. La [entrega VPU de fase 8](
+<Fase 8 - Mínimo entero para Pathfinder.md>) añade `vmin`/`vminu` `.vv`
+en la ALU para Pathfinder.
+
+La parte CPU de las fases 2.1--2.8 llega con la rama de Minor, integrada
+en `feature/vpu` el 11 de noviembre de 2026: ventana de hasta 2
+instrucciones en vuelo, decode de las operaciones anteriores (salvo
+`vminu.vv`), motivos de rechazo, estados terminales y `mstatus`. Su
+estado detallado está en los [pendientes de Minor](
+<Pendientes de Minor - Fases 1 a 5.md>). Estas entregas están
+implementadas y compiladas, pero no acreditan por sí solas ejecución
+funcional de toda la matriz ni cierre de integración CPU--VPU: no hay
+todavía ejecución registrada de programas tras ellas.
 El resto del diseño conserva su estado de propuesta.
 El baseline del hito 1 ya está comprobado y cerrado; no se incluye una fase
 para repetirlo. El diseño y el diagrama describen la organización objetivo;
@@ -61,8 +67,10 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   Pathfinder, consolidación, criterios de cierre y entrega al hito 3.
 - [Matriz de decode, representación y soporte](<Matriz de decode, representacion y soporte.md>):
   qué decodifica Minor, qué representa el contrato y qué admite la VPU.
-- [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): parte CPU
-  que falta en las fases 2.1--2.7.
+- [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): estado de
+  la parte CPU de las fases 2.1--2.8 y evidencia pendiente.
+- [Diseño de concurrencia de Minor](<Diseno de concurrencia MinorCPU - Fase 2.5.md>):
+  ventana de despacho, barreras y retirada en orden de la parte CPU de 2.5.
 - [Fases de trabajo](<Hito 2 - Concurrencia, FPU, anchos e interconexión.md#13-fases-de-trabajo-y-dependencias>):
   orden, tareas, interfaces, resultados y criterios de cierre por fase.
 - [Plan de evolución: hitos 2 a 5](<../Plan de evolución - Hitos 2 a 5.md>):
@@ -240,7 +248,8 @@ exigirá al terminar el hito; no enumera código que falta hoy:
 Estado: la [entrega VPU de fase 7](<Fase 7 - Interconexión y slides.md>)
 cubre en backend las filas de esta tabla salvo las máscaras, que se rechazan
 antes de producir efectos. La normalización del escalar desde XLEN y el
-decode son parte de Minor y siguen [pendientes][pendientes-minor-27].
+decode son parte de Minor; están implementados desde `afa2191d8c`, sin
+evidencia de ejecución ([pendientes de Minor][pendientes-minor-27]).
 
 Por tanto, para ampliar estas dos instrucciones a sus variantes con
 predicación quedará pendiente leer `v0`, decidir qué destinos se escriben y

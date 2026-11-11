@@ -29,6 +29,16 @@ la [sección 2.6 de los pendientes de Minor][pendientes-minor]. El
 criterio 4 de la [sección 15.3][cierre] (recorrido CPU--FPU--VRF--CPU) y
 el 13 (Mul/Div/resto mediante la ALU) quedan pendientes de esa parte.
 
+**Estado posterior (11 de noviembre de 2026).** La rama de Minor,
+integrada en `feature/vpu` hasta `963e6a9550`, decodifica `vmul`,
+`vdiv`, `vdivu`, `vrem` y `vremu` en `.vv` y `.vx`, y `vfadd.vv`,
+`vfmul.vv` y `vfdiv.vv` (`e27304868a`). Antes de reservar comprueba
+`misa.V` y `mstatus.VS`, y `mstatus.FS` en las operaciones FP; al retirar
+con éxito marca `VS` (y `FS` si procede) como `Dirty`. Verificado en
+código, sin ejecución registrada: los criterios 4 y 13 siguen pendientes
+de evidencia desde programa. La columna "Decode Minor" de la tabla
+siguiente refleja este estado.
+
 Compilar esta entrega no acredita ejecución funcional ni validación
 temporal. No se han ejecutado cargas ni se han creado pruebas.
 
@@ -62,12 +72,12 @@ acepta en un comando; **decode Minor** que un programa puede generarla.
 | Operación | Formas | Anchos backend | Admisión CPU | Unidad | Decode Minor |
 | --- | --- | --- | --- | --- | --- |
 | `vadd` (`Add`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | Sí |
-| `vmul` (`Multiply`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | No |
-| `vdiv`, `vdivu` (`Divide`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | No |
-| `vrem`, `vremu` (`Remainder`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | No |
-| `vfadd.vv` (`FloatAdd`) | `.vv` | 16 interno, 32 | 32 | FPU | No |
-| `vfmul.vv` (`FloatMultiply`) | `.vv` | 32 | 32 | FPU | No |
-| `vfdiv.vv` (`FloatDivide`) | `.vv` | 32 | 32 | FPU | No |
+| `vmul` (`Multiply`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | Sí (`e27304868a`) |
+| `vdiv`, `vdivu` (`Divide`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | Sí (`e27304868a`) |
+| `vrem`, `vremu` (`Remainder`) | `.vv`, `.vx` | 8/16/32/64 | 8/16/32/64 | ALU | Sí (`e27304868a`) |
+| `vfadd.vv` (`FloatAdd`) | `.vv` | 16 interno, 32 | 32 | FPU | Sí (`e27304868a`) |
+| `vfmul.vv` (`FloatMultiply`) | `.vv` | 32 | 32 | FPU | Sí (`e27304868a`) |
+| `vfdiv.vv` (`FloatDivide`) | `.vv` | 32 | 32 | FPU | Sí (`e27304868a`) |
 
 Todas las combinaciones siguen sujetas al perfil SEW/LMUL habilitado
 (`supported_sews`, `supported_lmuls`), a la legalidad de grupos y a
@@ -282,7 +292,9 @@ resultados, ciclos y `busyTicks` por instancia.
 Quedan pendientes: la parte CPU de 2.6 ([pendientes de
 Minor][pendientes-minor]) y, con ella, la evidencia desde un programa;
 también la de 2.5 para observar ALU y FPU con instrucciones distintas
-solapadas. Quedan fuera: FP64, FP16 desde CPU, FMA, formas `.vf` y `.vi`,
+solapadas. Actualización del 11 de noviembre de 2026: las partes CPU de
+2.5 y 2.6 están implementadas (ver el estado posterior de la frontera con
+Minor); sigue pendiente la evidencia desde un programa. Quedan fuera: FP64, FP16 desde CPU, FMA, formas `.vf` y `.vi`,
 conversiones, raíz cuadrada, `vmulh*`, widening/narrowing, máscaras,
 latencia dependiente de datos, ancho SIMD distinto de la palabra, unidades
 enteras dedicadas, límite de contextos por clase, y la red y las slides de
