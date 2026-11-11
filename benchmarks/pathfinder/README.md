@@ -116,6 +116,24 @@ Los resultados quedan en `results/<fecha>/`, ignorado por Git:
 kernel; último: programa completo), `roi-statistics.csv` y la
 configuración instanciada.
 
+## Barrido de configuraciones
+
+`sweep.py` ejecuta el modo offload con varias configuraciones de la VPU y
+compara tiempo, métricas clave y huella con la primera (`base`):
+
+```bash
+python3 benchmarks/pathfinder/sweep.py                 # tiny, lista por defecto
+python3 benchmarks/pathfinder/sweep.py --input small --only lanes4
+python3 benchmarks/pathfinder/sweep.py --configs mis-configs.json
+```
+
+La lista por defecto varía un eje cada vez (ALUs, bancos, puertos,
+lanes, red, bloque de memoria, ventana de Minor y comandos activos) con
+`--vpu-set RUTA=VALOR` y `--minor-vector-window` de `riscv_vpu.py`. El
+resultado queda en `results/sweep-<fecha>/summary.md`. El análisis de
+estos datos está en
+[Observabilidad - análisis con Pathfinder](<../../documentacion/hito2/Observabilidad - análisis con Pathfinder.md>).
+
 ## Salida esperada
 
 El programa devuelve 0 y escribe, por ejemplo:

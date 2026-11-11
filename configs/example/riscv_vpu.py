@@ -31,6 +31,7 @@ It models functional ordering; its timing is not calibrated to Ara hardware.
 """
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -174,12 +175,95 @@ parser.add_argument(
     default=SlideConfiguration.assembly_buffers_per_lane,
     help="Slide destination word buffers per lane; at least two",
 )
+# Estudios de recursos: cualquier campo de VpuConfiguration por su ruta y
+# la ventana vectorial de Minor. Se aplican después de las opciones --vpu-*
+# anteriores, así que prevalecen sobre ellas.
+parser.add_argument(
+    "--vpu-set",
+    action="append",
+    default=[],
+    metavar="PATH=VALUE",
+    help="Override a VpuConfiguration field by its dotted path, e.g. "
+    "vrf.banks_per_lane=4 or lane.alu.minimum_latency=2; tuples take "
+    "comma-separated values (repeatable)",
+)
+parser.add_argument(
+    "--minor-vector-window",
+    type=int,
+    help="MinorCPU maxActiveVectorOffloads (default: CPU parameter)",
+)
+parser.add_argument(
+    "--minor-vector-dispatch-width",
+    type=int,
+    help="MinorCPU vectorDispatchWidth (default: CPU parameter)",
+)
 parser.add_argument("binary", type=Path, help="RV64 SE executable")
 parser.add_argument("arguments", nargs=argparse.REMAINDER)
 args = parser.parse_args()
 binary = args.binary.expanduser().resolve()
 if not binary.is_file():
     parser.error(f"Executable does not exist: {binary}")
+for name in ("minor_vector_window", "minor_vector_dispatch_width"):
+    value = getattr(args, name)
+    if value is not None and value < 1:
+        parser.error(f"--{name.replace('_', '-')} must be at least 1")
+
+
+def convert_override(current, text, path):
+    """Convierte text al tipo del valor actual del campo.
+
+    Sólo se admiten los tipos que usan las configuraciones: int, str, bool y
+    tuplas de int. Un error de formato se informa con la ruta completa.
+    """
+    try:
+        if isinstance(current, bool):
+            if text.lower() not in ("true", "false", "1", "0"):
+                raise ValueError(text)
+            return text.lower() in ("true", "1")
+        if isinstance(current, int):
+            return int(text, 0)
+        if isinstance(current, str):
+            return text
+        if isinstance(current, tuple):
+            return tuple(int(item, 0) for item in text.split(",") if item)
+    except ValueError:
+        parser.error(f"--vpu-set {path}: invalid value '{text}'")
+    parser.error(f"--vpu-set {path}: unsupported field type")
+
+
+def apply_override(config, path, text, full_path=None):
+    """Devuelve una copia de config con el campo de path sustituido.
+
+    Las configuraciones son dataclasses congeladas: se reconstruye con
+    dataclasses.replace cada nivel de la ruta, de dentro hacia fuera.
+    full_path conserva la ruta original para los mensajes de error.
+    """
+    if full_path is None:
+        full_path = path
+    head, _, rest = path.partition(".")
+    if not dataclasses.is_dataclass(config) or head not in {
+        item.name for item in dataclasses.fields(config)
+    }:
+        parser.error(f"--vpu-set {full_path}: unknown field '{head}'")
+    current = getattr(config, head)
+    if rest:
+        value = apply_override(current, rest, text, full_path)
+    elif dataclasses.is_dataclass(current):
+        parser.error(f"--vpu-set {full_path}: names a group, not a field")
+    else:
+        value = convert_override(current, text, full_path)
+    return dataclasses.replace(config, **{head: value})
+
+
+def apply_overrides(config, overrides):
+    """Aplica las sustituciones PATH=VALUE en el orden recibido."""
+    for override in overrides:
+        path, separator, text = override.partition("=")
+        if not separator or not path:
+            parser.error(f"--vpu-set expects PATH=VALUE, got '{override}'")
+        config = apply_override(config, path, text)
+    return config
+
 
 system = System()
 system.clk_domain = SrcClockDomain(
@@ -191,6 +275,10 @@ system.cpu = RiscvMinorCPU(
     isa=[RiscvISA(riscv_type="RV64", vlen=256, elen=64, enable_rvv=True)]
 )
 system.cpu.vectorOffloadEnabled = not args.no_offload
+if args.minor_vector_window is not None:
+    system.cpu.maxActiveVectorOffloads = args.minor_vector_window
+if args.minor_vector_dispatch_width is not None:
+    system.cpu.vectorDispatchWidth = args.minor_vector_dispatch_width
 system.membus = SystemXBar()
 system.cpu.icache_port = system.membus.cpu_side_ports
 system.cpu.dcache_port = system.membus.cpu_side_ports
@@ -199,43 +287,43 @@ system.memory = SimpleMemory(range=system.mem_ranges[0])
 system.memory.port = system.membus.mem_side_ports
 
 if not args.no_offload:
-    system.cpu.vectorEngine = VectorEngine.from_configuration(
-        VpuConfiguration(
-            vrf=VrfConfiguration(vlen_bytes=32),
-            lane=LaneConfiguration(
-                task_entries=args.vpu_lane_task_entries,
-                alus_per_lane=args.vpu_alus_per_lane,
-                alu=AluConfiguration(
-                    operand_entries_per_source=args.vpu_alu_operand_entries,
-                    result_entries=args.vpu_alu_result_entries,
-                    multiply_latency=args.vpu_alu_multiply_latency,
-                    divide_latencies=tuple(args.vpu_alu_divide_latencies),
-                ),
-                fpu=FpuConfiguration(
-                    operand_entries_per_source=args.vpu_fpu_operand_entries,
-                    result_entries=args.vpu_fpu_result_entries,
-                    add_multiply_latency=args.vpu_fpu_add_multiply_latency,
-                    divide_latency=args.vpu_fpu_divide_latency,
-                ),
+    vpu_config = VpuConfiguration(
+        vrf=VrfConfiguration(vlen_bytes=32),
+        lane=LaneConfiguration(
+            task_entries=args.vpu_lane_task_entries,
+            alus_per_lane=args.vpu_alus_per_lane,
+            alu=AluConfiguration(
+                operand_entries_per_source=args.vpu_alu_operand_entries,
+                result_entries=args.vpu_alu_result_entries,
+                multiply_latency=args.vpu_alu_multiply_latency,
+                divide_latencies=tuple(args.vpu_alu_divide_latencies),
             ),
-            interconnect=InterconnectConfiguration(
-                packets_per_destination=(
-                    args.vpu_interconnect_packets_per_destination
-                ),
-                source_bytes_per_cycle=args.vpu_interconnect_bytes_per_cycle,
-                destination_bytes_per_cycle=(
-                    args.vpu_interconnect_bytes_per_cycle
-                ),
-                transit_latency=args.vpu_interconnect_transit_latency,
+            fpu=FpuConfiguration(
+                operand_entries_per_source=args.vpu_fpu_operand_entries,
+                result_entries=args.vpu_fpu_result_entries,
+                add_multiply_latency=args.vpu_fpu_add_multiply_latency,
+                divide_latency=args.vpu_fpu_divide_latency,
             ),
-            slide=SlideConfiguration(
-                source_buffers_per_lane=args.vpu_slide_source_buffers,
-                assembly_buffers_per_lane=args.vpu_slide_assembly_buffers,
+        ),
+        interconnect=InterconnectConfiguration(
+            packets_per_destination=(
+                args.vpu_interconnect_packets_per_destination
             ),
-            command_queue_entries=args.vpu_command_queue_entries,
-            max_active_commands=args.vpu_max_active_commands,
-        )
+            source_bytes_per_cycle=args.vpu_interconnect_bytes_per_cycle,
+            destination_bytes_per_cycle=(
+                args.vpu_interconnect_bytes_per_cycle
+            ),
+            transit_latency=args.vpu_interconnect_transit_latency,
+        ),
+        slide=SlideConfiguration(
+            source_buffers_per_lane=args.vpu_slide_source_buffers,
+            assembly_buffers_per_lane=args.vpu_slide_assembly_buffers,
+        ),
+        command_queue_entries=args.vpu_command_queue_entries,
+        max_active_commands=args.vpu_max_active_commands,
     )
+    vpu_config = apply_overrides(vpu_config, args.vpu_set)
+    system.cpu.vectorEngine = VectorEngine.from_configuration(vpu_config)
     system.cpu.vectorEngine.mem_side = system.membus.cpu_side_ports
 
 system.workload = SEWorkload.init_compatible(str(binary))

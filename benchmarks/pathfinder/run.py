@@ -71,8 +71,15 @@ SUMMARY_METRICS = (
     ("Ciclos CPU", CPU + "numCycles"),
     ("Comandos despachados (Minor)", CPU + "vectorOffloadCommands"),
     ("Comandos completados (VPU)", ENGINE + "commands.completed"),
-    ("Máx. comandos activos (VPU)", ENGINE + "commands.peakOutstanding"),
-    ("Ciclos con >1 comando activo", CPU + "vectorMultiActiveCycles"),
+    # Despachados y sin terminar: incluye los que esperan en la cola VPU.
+    ("Máx. comandos en la VPU", ENGINE + "commands.peakOutstanding"),
+    (
+        "Ciclos con >1 comando en la VPU (Minor)",
+        CPU + "vectorMultiActiveCycles",
+    ),
+    # Ejecución simultánea real: comandos iniciados por el secuenciador.
+    ("Máx. comandos ejecutándose", ENGINE + "sequencer.peakOutstanding"),
+    ("Inicios solapados", ENGINE + "sequencer.overlappedStarts"),
     ("Ciclos esperando reserva", CPU + "vectorWaitGrantCycles"),
     ("Ciclos esperando finalización", CPU + "vectorWaitCompletionCycles"),
     ("Elementos de mínimo (ALU)", ENGINE + "lane*.alu*.minimumElements"),
@@ -339,6 +346,12 @@ def main():
         help="Extra riscv_vpu.py option for offload, e.g. "
         "--config-arg=--vpu-alus-per-lane=2 (repeatable)",
     )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        help="Empty or new directory for this run; default: "
+        "results/<UTC date>",
+    )
     args = parser.parse_args()
     args.gem5 = args.gem5.expanduser().resolve()
     if not args.gem5.is_file():
@@ -346,9 +359,14 @@ def main():
     if args.timeout <= 0 or args.runs <= 0:
         parser.error("--timeout y --runs deben ser positivos")
 
-    run_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    run_dir = BENCHMARK / "results" / run_name
-    run_dir.mkdir(parents=True)
+    if args.results_dir:
+        run_dir = args.results_dir.expanduser().resolve()
+        if run_dir.exists() and any(run_dir.iterdir()):
+            parser.error(f"--results-dir no está vacío: {run_dir}")
+    else:
+        run_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        run_dir = BENCHMARK / "results" / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Resultados locales: {run_dir}", flush=True)
 
     build_command = [
