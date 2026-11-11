@@ -122,7 +122,8 @@ puertos hace falta una carga con concurrencia aritmética.
 
 ## Correcciones propuestas
 
-Pendientes de aprobación; ninguna se aplica en este paquete:
+Propuestas en P4 y aplicadas después con aprobación (ver la sección
+siguiente):
 
 1. **Minor:** describir `vectorMultiActiveCycles` y
    `vectorActiveCommandsDistribution` como comandos "en la VPU" (despachados
@@ -139,6 +140,52 @@ Pendientes de aprobación; ninguna se aplica en este paquete:
 
 Para el criterio 1 y para observar ALUs y puertos hace falta una carga con
 instrucciones aritméticas independientes; Pathfinder no la tiene.
+
+
+## Correcciones aplicadas
+
+Aprobadas y aplicadas el 11 de noviembre de 2026 (commit
+«cpu: Count Minor vector waits by intervals»):
+
+| # | Cambio | Comprobación con Pathfinder |
+| --- | --- | --- |
+| 1 | Descripciones de Minor: `vectorMultiActiveCycles` y la distribución hablan de comandos "en la VPU", incluidos los de la cola; `vectorBlocked*` cuentan evaluaciones de Execute. | — |
+| 2 | Minor cuenta sus esperas vectoriales por intervalos (`Execute::sampleVectorWaits`): cada evaluación atribuye los ciclos transcurridos al estado anterior, incluidos los ciclos en que la pipeline duerme. | La distribución suma `numCycles` exactamente (`tiny`: 52 083; `small`: 5 995 385). `vectorWaitCompletionCycles` pasa de 25 968 a 37 583 en `tiny`, coherente con `commands.busyTicks` (38 327 ciclos). |
+| 3 | Secuenciador: `hazardWaitTicks` cuenta una vez cada espera por dependencias; `raw/war/wawWaitTicks` avisan de que se solapan. | `hazardWaitTicks` = 1 860 000 en `tiny`, no el triple. |
+| 4 | Tabla de grupos, en la sección siguiente. | — |
+| 5 | Con offload, las métricas vectoriales de Minor se escriben aunque valgan 0; sin offload siguen ocultas mientras valgan 0, para no añadir líneas a otras simulaciones de Minor. | `vectorWaitGrantCycles 0` aparece en offload; en native no hay líneas vectoriales. |
+
+La temporización no cambia: los ticks de `tiny` y `small` en ambos modos
+son idénticos a los de P3. El matiz 4 de la [revisión de extremo a
+extremo](<Revisión de extremo a extremo - Minor y VPU.md>) (intervalos
+abiertos del secuenciador al volcar) sigue pendiente.
+
+## Qué intervalo mide cada grupo
+
+Los cuatro grupos siguen el mismo comando en puntos distintos. En
+Pathfinder dan los mismos valores porque la reserva y el despacho ocurren
+en el mismo ciclo y la finalización llega a la CPU en el mismo tick; en
+otras cargas pueden diferir.
+
+| Grupo | Abre | Cierra | Incluye |
+| --- | --- | --- | --- |
+| `vectorInterface` | `CpuVectorInterface::dispatch` (la CPU entrega el comando) | Entrega de la finalización a la CPU | Cola, ejecución y aviso a la CPU |
+| `queue` | Reserva concedida (`CommandQueue::requestGrant`) | `CommandQueue::release`, al terminar | Tiempo entre reserva y despacho, cola y ejecución |
+| `commands` | `VectorEngine::dispatch` | `VectorEngine::completed` | Cola y ejecución |
+| `sequencer` | Inicio del comando (`AraSequencer::start`) | Finalización | Sólo ejecución; no incluye la espera en cola |
+
+Reglas para leerlos:
+
+- La ejecución simultánea se mide con `sequencer.peakOutstanding`,
+  `sequencer.overlappedStarts` y `sequencer.multiActiveTicks`. Los
+  máximos de `commands`, `queue` y `vectorInterface`, y las métricas
+  "en la VPU" de Minor, incluyen comandos en cola.
+- `sequencer.capacityWaitTicks`, `memoryBarrierWaitTicks`,
+  `isolationWaitTicks` y `hazardWaitTicks` pueden solaparse entre sí;
+  `raw/war/wawWaitTicks` se solapan con `hazardWaitTicks` y entre sí.
+- `lrf*.waitCycles`, `capacityWaitCycles` y `portWaitCycles` se solapan.
+- Los `busyTicks` de recursos distintos se solapan y no suman el tiempo
+  total; `workTicks` suma la ocupación de cada elemento en curso.
 
 [plan-f8]: <Plan de cierre de la fase 8.md>
 [benchmark]: <../../benchmarks/pathfinder/README.md>
