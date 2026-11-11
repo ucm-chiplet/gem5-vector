@@ -63,6 +63,8 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   métricas comunes de red, `SlideUnit`, solapamiento en down y parámetros.
 - [Entrega VPU de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md>):
   `vmin`/`vminu` `.vv` en ALU, 8/16/32/64 bits, parámetro y estadística.
+- [Observabilidad con Pathfinder](<Observabilidad - análisis con Pathfinder.md>):
+  reparto del tiempo, efecto de los recursos y revisión de métricas.
 - [Plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
   Pathfinder, consolidación, criterios de cierre y entrega al hito 3.
 - [Matriz de decode, representación y soporte](<Matriz de decode, representacion y soporte.md>):

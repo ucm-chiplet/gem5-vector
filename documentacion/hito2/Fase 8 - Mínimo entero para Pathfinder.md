@@ -149,8 +149,8 @@ Región del kernel en offload (entre `m5_reset_stats` y `m5_dump_stats`):
 | Tareas `vslide1up` / `vslide1down` | 124 / 124 | 16 256 / 16 256 |
 | Paquetes de red remotos / locales | 744 / 0 | 97 536 / 0 |
 | Comandos de load / store | 248 / 124 | 32 512 / 16 256 |
-| Máximo de comandos activos en la VPU | 2 | 2 |
-| Ciclos con más de un comando activo (Minor) | 1 736 | 227 584 |
+| Máximo de comandos en la VPU, en cola o ejecutándose | 2 | 2 |
+| Máximo de comandos ejecutándose (`sequencer.peakOutstanding`) | 1 | 1 |
 | Máximo de peticiones de memoria en curso | 1 | 1 |
 
 Los recuentos coinciden con el kernel: cada tira de 8 elementos genera
@@ -161,17 +161,24 @@ Qué acredita y qué no:
 
 - **Criterio 16, parte funcional:** Pathfinder ejecuta sus 7 tipos RVV con
   copia inicial escalar, resultado contrastado y recursos finitos, y se
-  registran toolchain, opciones y desensamblado. Falta el análisis de
-  tráfico y comportamiento temporal (paquete P4).
+  registran toolchain, opciones y desensamblado. El reparto del tiempo y
+  del tráfico está en el [análisis de observabilidad](
+  <Observabilidad - análisis con Pathfinder.md>) (P4).
 - **Observaciones parciales de otros criterios,** con SEW=32, m1 y la
-  configuración por defecto: dos instrucciones del programa activas a la
-  vez en la VPU (criterio 1), slides desde programa cruzando lanes por la
+  configuración por defecto: slides desde programa cruzando lanes por la
   red (criterio 6) y un único paquete de memoria en vuelo (criterio 11).
   No cubren otros anchos, `vstart` distinto de 0 ni otras
   configuraciones.
+- **Corrección del 11 de noviembre de 2026 (P4):** la primera versión de
+  esta evidencia atribuía a Pathfinder el criterio 1 (dos instrucciones
+  ejecutándose a la vez). Es incorrecto: los "2 comandos activos" contaban
+  comandos despachados en la cola de la VPU, y la VPU nunca ejecuta dos a
+  la vez (`sequencer.overlappedStarts=0`), porque el kernel es una cadena
+  de dependencias. Ver el [análisis de observabilidad](
+  <Observabilidad - análisis con Pathfinder.md>).
 - Los ticks son del modelo, no una medida calibrada de Ara. La diferencia
-  entre offload y native no es todavía una conclusión: su análisis
-  corresponde a P4.
+  entre offload y native no permite conclusiones: el RVV nativo de Minor
+  no modela VPU ni red.
 
 ## Referencia normativa
 
@@ -197,8 +204,9 @@ Comprobaciones realizadas:
 Pendientes fuera de esta entrega, organizados en el
 [plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
 
-- Análisis de tráfico y comportamiento temporal de Pathfinder (P4); la
-  ejecución funcional está registrada arriba.
+- Correcciones de métricas propuestas en el [análisis de
+  observabilidad](<Observabilidad - análisis con Pathfinder.md>), y una
+  carga con concurrencia aritmética para el criterio 1.
 - Decode de `vminu.vv` en Minor, si se quiere alcanzar desde programa.
 - Formas `.vx`, `vmax`/`vmaxu` y formas con máscara.
 - Resto de la consolidación de la fase 8 (sección 13.8, puntos 1--7).
