@@ -51,12 +51,13 @@ Minor 2; 4 comandos activos en la VPU) salvo los barridos indicados.
 | 12 | Estadísticas explican la reducción de peticiones y accesos al VRF | Acreditado | [Análisis de observabilidad][observabilidad]: reparto del tiempo, bloques por comando, tabla de intervalos por grupo y correcciones `2ef0927059` | Comparación con otros anchos (depende del criterio 10) |
 | 13 | Mul/Div/resto `.vv` y `.vx` en la ALU en 8/16/32/64, con temporización propia | Implementado sin evidencia | `vmul.vv` SEW 32 en el micro-kernel; perfiles temporales propios y divisor no segmentado en la [fase 6][f6] | `vmul.vx`, `vdiv(u)`, `vrem(u)` en ambas formas; otros SEW; divisor cero y desbordamiento |
 | 14 | Interconexión independiente de topología, crossbar detrás, métricas comunes | Acreditado | Diseño y código de la [fase 7][f7]: `VectorInterconnect`, crossbar detrás y métricas comunes separadas de las propias del modelo; usado por Pathfinder | No hay un segundo modelo con el que comparar las métricas (no exigido) |
-| 15 | Contratos consolidados y entrega al hito 3 | Parcial | [Revisión P5][revision]: `VectorSupport` como autoridad única, identidad y propiedad revisadas | Entrega al hito 3 (paquete P8) |
+| 15 | Contratos consolidados y entrega al hito 3 | Acreditado (revisión) | [Revisión P5][revision]: `VectorSupport` como autoridad única, identidad y propiedad revisadas; [entrega al hito 3][entrega-h3] (P8) con el mapa de contratos activos, preparados y ausentes | — |
 | 16 | Pathfinder con sus 7 tipos RVV, resultado contrastado y toolchain registrado | Acreditado | `tiny` y `small`, offload y native con huella idéntica; RiVEC `32a14ddfb9`, Clang 20.1.8, perfil de 7 tipos comprobado ([fase 8][f8-evidencia]) | — |
 
-Resumen: 6 acreditados (1, 9, 12 y 16 por ejecución; 7 y 14 por
-revisión), 9 parciales (2, 3, 4, 5, 6, 8, 10, 11 y 15) y uno implementado
-sin evidencia (13). Ninguno queda pendiente de implementación en la VPU.
+Resumen: 7 acreditados (1, 9, 12 y 16 por ejecución; 7, 14 y 15 por
+revisión), 8 parciales (2, 3, 4, 5, 6, 8, 10 y 11) y uno implementado
+sin evidencia (13).
+El criterio 15 pasó a acreditado con P8. Ninguno queda pendiente de implementación en la VPU.
 
 ## Pendientes por dependencia
 
@@ -87,6 +88,7 @@ offload y native, verificación escalar completa) y su propia propuesta.
 | Memoria con retry y faults | 8, 11 | Puerto de memoria que rechace peticiones; acceso a página no mapeada a mitad de instrucción y `vstart` resultante |
 
 [campana]: #campaña-de-validación-sugerida
+[entrega-h3]: <Entrega al hito 3 - Contratos y campaña.md>
 [plan-f8]: <Plan de cierre de la fase 8.md>
 [cierre]: <Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>
 [matriz]: <Matriz de decode, representacion y soporte.md>

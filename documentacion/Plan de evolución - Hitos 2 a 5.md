@@ -416,6 +416,10 @@ por sí solo que el modelo haya solapado instrucciones.
 
 ## Hito 3: Solapamiento escalar-vectorial, chaining y memoria concurrente
 
+El punto de partida del código al cerrar el hito 2 (contratos activos,
+preparados y ausentes, y campaña de micro-kernels propuesta) está en la
+[entrega al hito 3](<hito2/Entrega al hito 3 - Contratos y campaña.md>).
+
 ### Objetivo y resultado
 
 Permitir que la CPU escalar, los accesos a memoria y el cálculo vectorial

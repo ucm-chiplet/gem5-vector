@@ -76,6 +76,8 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   apartados para proponer la siguiente instrucción, con un ejemplo.
 - [Cierre del hito 2](<Cierre del hito 2 - Estado de los criterios.md>):
   estado de los 16 criterios, pendientes y campaña de validación sugerida.
+- [Entrega al hito 3](<Entrega al hito 3 - Contratos y campaña.md>):
+  contratos activos, preparados y ausentes, y campaña de micro-kernels.
 - [Pendientes de Minor](<Pendientes de Minor - Fases 1 a 5.md>): estado de
   la parte CPU de las fases 2.1--2.8 y evidencia pendiente.
 - [Diseño de concurrencia de Minor](<Diseno de concurrencia MinorCPU - Fase 2.5.md>):
