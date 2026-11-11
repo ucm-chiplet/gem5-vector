@@ -27,7 +27,7 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 
 | Decisión | Valor | Consecuencia |
 | --- | --- | --- |
-| Procedencia de Pathfinder | [RiVEC (RISC-V Vectorized Benchmark Suite)][rivec] | P2 fija la revisión exacta, la licencia y la adaptación necesaria. |
+| Procedencia de Pathfinder | [RiVEC (RISC-V Vectorized Benchmark Suite)][rivec] | Revisión `32a14ddfb9acaeb677800e8d2e18a45d9421d4cc`; licencias BSD de Rodinia y BSC; adaptación sin libc descrita en el [README del benchmark](../../benchmarks/pathfinder/README.md). |
 | Compilador | Clang | Las opciones acordadas, `-O2 -fno-vectorize -fno-slp-vectorize`, son de Clang y se usan literalmente. Localmente hay Clang 20.1.8; P2 registra la versión usada. |
 | Validación de P3 | Verificación escalar dentro del programa y comparación de los modos offload (VPU) y nativo (RVV de gem5) | El equipo puede ampliar casos o tamaños; no es requisito previo de P3. |
 
@@ -35,17 +35,17 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 
 1. **libc.** El [baseline del hito 1](../../benchmarks/baseline/README.md)
    no enlaza libc (`-nostdlib`, `_start` propio) para que no aparezcan
-   instrucciones RVV ajenas al kernel. Una libc compilada con V podría
-   introducir otros tipos RVV y romper el perfil de 7. Pathfinder seguirá
-   el mismo patrón salvo que el desensamblado demuestre que no hace falta.
+   instrucciones RVV ajenas al kernel. Confirmado en P2: la glibc de
+   `/opt/riscv` está compilada con V y el Pathfinder original enlazado con
+   ella contiene unos 45 tipos RVV. La adaptación no usa libc.
 2. **Adaptación de la fuente.** Si la revisión de RiVEC elegida usa
    intrinsics anteriores a RVV 1.0 o servicios de libc (E/S, tiempos,
    reserva dinámica), P2 propondrá la adaptación mínima y la registrará.
    La semántica del kernel no cambia.
 3. **Perfil habilitado en el ejemplo.** `configs/example/riscv_vpu.py`
    usa los valores por defecto de `VpuConfiguration`: SEW 16/32 y sólo
-   LMUL m1, sin opciones para cambiarlos. Si el kernel usa otro LMUL, P3
-   añadirá esas opciones.
+   LMUL m1, sin opciones para cambiarlos. El kernel usa `e32, m1, ta, ma`,
+   dentro de ese perfil, así que P3 no necesita cambiarlo.
 4. **Dos ventanas de concurrencia.** Minor admite 2 instrucciones
    vectoriales en vuelo y la VPU 4 comandos activos por defecto. No es un
    error, pero P5 debe revisar que capacidad, contrapresión y drain son
@@ -56,7 +56,7 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 | # | Paquete | Trabajo | Entregable | Criterios 15.3 |
 | --- | --- | --- | --- | --- |
 | P1 | Reconciliar la documentación tras el merge | Actualizar las entregas de fases 5--7, el índice del hito y los pendientes de Minor, que aún describen a Minor sin `963e6a9550`. Distinguir lo declarado de lo que tiene evidencia. | Documentación coherente con el código actual. **Hecho el 11 de noviembre de 2026**; queda para P5 el límite de la ventana de Minor, que cuenta posiciones (incluidas entradas `Completed`) y no comandos activos | 9 |
-| P2 | Pathfinder: fuente y compilación | `benchmarks/pathfinder/` con el patrón del baseline: fuente adaptada de RiVEC, Makefile con Clang, README. Kernel RVV explícito; copia inicial, inicialización y verificación escalares. Desensamblado y script que compruebe que sólo aparecen los 7 tipos RVV del kernel. | Binario reproducible con revisión, toolchain, opciones y desensamblado registrados | 16 (toolchain y perfil) |
+| P2 | Pathfinder: fuente y compilación | `benchmarks/pathfinder/` con el patrón del baseline: fuente adaptada de RiVEC, Makefile con Clang, README. Kernel RVV explícito; copia inicial, inicialización y verificación escalares. Desensamblado y script que compruebe que sólo aparecen los 7 tipos RVV del kernel. | Binario reproducible con revisión, toolchain, opciones y desensamblado registrados **Hecho el 11 de noviembre de 2026** en [`benchmarks/pathfinder/`](../../benchmarks/pathfinder/README.md): RiVEC `32a14ddfb9`, Clang 20.1.8, sin libc; perfil de 7 tipos comprobado con `tiny` y `small` | 16 (toolchain y perfil) |
 | P3 | Pathfinder: ejecución y contraste | Runner como `baseline/run.py`, modos offload y nativo, verificación escalar y comparación de salidas. Opciones de perfil SEW/LMUL en `riscv_vpu.py` si el kernel las necesita. | Ejecución funcional registrada y estadísticas de ALU, slide, red, VLSU y VRF | 16; en parte 6, 7 y 11 |
 | P4 | Observabilidad (punto 4 de 13.8) | Revisar que las estadísticas explican dependencias, unidades, VRF, memoria y red con unidades claras y sin doble recuento, incluidas las esperas nuevas de Minor frente a las de la VPU. Usar Pathfinder como carga real. | Informe y correcciones mínimas, si hacen falta | 7, 12 |
 | P5 | Repaso de extremo a extremo (punto 6) | Propiedad de buffers, identidad (`CommandKey`, `TaskKey`, `VrfAccessKey`, `requestId`), reservas, liberación y drain con las dos ventanas. Comprobar que `VectorSupport` es la única autoridad de soporte. | Informe; los cambios, en propuestas aparte | 2, 8, 15 |

@@ -255,8 +255,12 @@ dependencias portables del repositorio.
 Los dumps se comunicaron bajo
 `/home/dani/riscv-vectorized-benchmark-suite/`. El 11 de noviembre de 2026
 se confirma que Pathfinder procede de [RiVEC][rivec] y que se compilará con
-Clang; su revisión exacta y su adaptación se fijan en el
-[plan de cierre de la fase 8](<hito2/Plan de cierre de la fase 8.md>). El equipo sitúa el kernel
+Clang. Su ficha está en [`benchmarks/pathfinder/`](
+../benchmarks/pathfinder/README.md): revisión `32a14ddfb9`, Clang 20.1.8,
+adaptación sin libc (la glibc disponible contiene RVV) y comprobación
+automática de que el binario sólo contiene los 7 tipos del kernel. Su
+ejecución se registra en el [plan de cierre de la fase 8](
+<hito2/Plan de cierre de la fase 8.md>). El equipo sitúa el kernel
 de AXPY en `axpy_vector` y el de MatMul en `matrixmul_intrinsics`.
 MatMul no se identifica automáticamente con un kernel de BLIS por realizar
 multiplicación matricial.

@@ -10,6 +10,13 @@ python3 benchmarks/baseline/run.py --program baseline-simple
 python3 benchmarks/baseline/run.py
 ```
 
+[Pathfinder](pathfinder/README.md): carga del cierre del hito 2, adaptada
+de RiVEC sin libc. Compila con Clang y comprueba que el binario sólo
+contiene los 7 tipos RVV del kernel.
+
+```bash
+make -C benchmarks/pathfinder check
+```
+
 Las fuentes y los scripts se suben a Git. Los binarios y los resultados
-permanecen en carpetas locales ignoradas: `baseline/build/` y
-`baseline/results/`. Cada ejecución genera su propia guía `summary.md`.
+permanecen en carpetas locales ignoradas: `*/build/` y `*/results/`. Cada ejecución genera su propia guía `summary.md`.
