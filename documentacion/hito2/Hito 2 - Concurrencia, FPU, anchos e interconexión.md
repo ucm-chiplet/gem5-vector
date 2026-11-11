@@ -1762,6 +1762,8 @@ Las combinaciones no soportadas deben rechazarse antes de efectos.
 
 El baseline del hito 1 está cerrado y no se incluye como comprobación
 pendiente. Los criterios siguientes se refieren a las ampliaciones del hito 2.
+El estado de cada criterio al cerrar el hito está en
+[Cierre del hito 2](<Cierre del hito 2 - Estado de los criterios.md>).
 
 1. Dos instrucciones independientes del programa progresan simultáneamente.
 2. Un consumidor nunca comienza con resultados parciales del productor.

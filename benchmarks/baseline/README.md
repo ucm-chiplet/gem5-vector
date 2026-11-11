@@ -68,7 +68,6 @@ benchmarks/baseline/
 │   ├── baseline-simple    Ejecutable del ejemplo simple
 │   └── baseline-simple.disasm  Desensamblado opcional del ejemplo
 └── results/               Resultados locales; ignorados por Git
-    ├── history/           Resultados anteriores conservados localmente
     └── <fecha-UTC>/       Una carpeta nueva por ejecución
         ├── summary.md     Primer archivo que debes leer: PASS/FAIL y guía
         ├── results.json   Comandos, códigos y estadísticas de ambos modos
