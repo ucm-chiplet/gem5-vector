@@ -175,7 +175,8 @@ Qué acredita y qué no:
   comandos despachados en la cola de la VPU, y la VPU nunca ejecuta dos a
   la vez (`sequencer.overlappedStarts=0`), porque el kernel es una cadena
   de dependencias. Ver el [análisis de observabilidad](
-  <Observabilidad - análisis con Pathfinder.md>).
+  <Observabilidad - análisis con Pathfinder.md>). El criterio 1 se observa
+  con el micro-kernel de concurrencia, descrito en ese análisis.
 - Los ticks son del modelo, no una medida calibrada de Ara. La diferencia
   entre offload y native no permite conclusiones: el RVV nativo de Minor
   no modela VPU ni red.
@@ -204,9 +205,9 @@ Comprobaciones realizadas:
 Pendientes fuera de esta entrega, organizados en el
 [plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
 
-- Correcciones de métricas propuestas en el [análisis de
-  observabilidad](<Observabilidad - análisis con Pathfinder.md>), y una
-  carga con concurrencia aritmética para el criterio 1.
+- Matiz 4 de la [revisión de extremo a extremo](
+  <Revisión de extremo a extremo - Minor y VPU.md>): intervalos abiertos
+  del secuenciador al volcar estadísticas.
 - Decode de `vminu.vv` en Minor, si se quiere alcanzar desde programa.
 - Formas `.vx`, `vmax`/`vmaxu` y formas con máscara.
 - Resto de la consolidación de la fase 8 (sección 13.8, puntos 1--7).

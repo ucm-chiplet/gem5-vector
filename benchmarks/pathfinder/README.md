@@ -103,6 +103,10 @@ python3 benchmarks/pathfinder/run.py --mode offload \
     --config-arg=--vpu-alus-per-lane=2
 ```
 
+`run.py` y `sweep.py` usan el runner común de
+[`benchmarks/common/vpu_bench.py`](../common/vpu_bench.py); el perfil RVV
+lo comprueba [`benchmarks/common/check_profile.py`](../common/check_profile.py).
+
 El runner ejecuta `make check` y no simula si el perfil RVV falla. Después
 ejecuta `offload` (VPU) y `native` (`--no-offload`). Un modo pasa si el
 programa devuelve 0 y escribe `PASS`; en offload, además, la VPU debe

@@ -105,8 +105,56 @@ Los recursos que Pathfinder usa (bancos, lanes, red) tienen efecto
 observable y conservan el resultado. Los que no tienen efecto lo explica
 la estructura serie del kernel, no un fallo de configuración:
 `config.ini` confirma que cada valor llega a la VPU o a Minor. El
-criterio 5 queda acreditado para bancos, lanes y red; para ALUs y
-puertos hace falta una carga con concurrencia aritmética.
+criterio 5 queda acreditado para bancos, lanes y red con Pathfinder; ALUs
+y puertos se acreditan con el micro-kernel de la sección siguiente.
+
+## Concurrencia aritmética con el micro-kernel
+
+Para los criterios 1 y 5 (ALUs y puertos) se añade el
+[micro-kernel de concurrencia][concurrency]: cuatro instrucciones
+aritméticas independientes por tira, con registros fijos para que no haya
+WAR por reutilización. 1 024 elementos, 128 tiras, código `67c03af94b`,
+configuración base de `riscv_vpu.py`. Las variantes `integer` y `mixed`
+pasan en offload y native con la misma huella, y todas las
+configuraciones de los barridos conservan el resultado.
+
+**Criterio 1: comandos ejecutándose a la vez.** En la base, 384 de los 512
+comandos aritméticos se inician con otro activo (en cada tira, los tres
+últimos), con hasta 2 ejecutándose y 3,7 M ticks con más de uno (`integer`).
+Con la ventana de Minor en 4 se alcanzan 4 a la vez. Al limitar la VPU a un
+comando activo, el solapamiento desaparece y el kernel tarda más:
+
+| Configuración | `integer` | `mixed` | Inicios solapados | Máx. ejecutándose |
+| --- | --- | --- | --- | --- |
+| Base | 62 565 000 ticks | 69 850 000 ticks | 384 | 2 |
+| `max_active_commands=1` | +5,1 % | +5,7 % | 0 | 1 |
+| `--minor-vector-window=4` | 0 | −1,3 % | 384 | 4 |
+| `vrf.banks_per_lane=4` | −0,8 % | −0,5 % | 384 | 2 |
+
+En `mixed` las operaciones alternan ALU y FPU (`vadd`, `vfadd`, `vmin`,
+`vfmul`). Con la ventana de Minor en 2, cada inicio solapado coincide con
+la operación inmediatamente anterior, así que los 384 solapamientos son
+pares ALU--FPU: las dos clases progresan a la vez (`fpu.busyTicks`
+4 096 000, `alu*.busyTicks` 1 024 000). Aporta en parte al criterio 4.
+
+**Criterio 5: ALUs y puertos.** Cambiar sólo `alus_per_lane` o sólo
+`read_write_ports` no tiene efecto; el barrido adicional muestra por qué
+(`integer`):
+
+| Configuración | Δ ticks | Lectura |
+| --- | --- | --- |
+| `bank.access_entries=2` | 0 | Más entradas sin más puertos no sirven |
+| `access_entries=2` + `read_write_ports=2` | −0,8 % | Los puertos sólo cuentan si el banco admite más de un acceso en curso |
+| ... + `alus_per_lane=2` | −0,8 % | La segunda ALU sigue sin recibir trabajo |
+| `--vpu-alu-operand-entries=2 --vpu-alu-result-entries=2` | −1,2 % | Los buffers de la clase ALU, compartidos por sus instancias, eran el límite |
+| ... + `alus_per_lane=2` | −1,4 % | Con buffers suficientes, la segunda ALU sí se usa |
+| Todo lo anterior + ventana de Minor 4 | −3,3 % | Efectos acumulados |
+
+ALUs y puertos tienen efecto observable y conservan el resultado, pero
+sólo cuando los recursos de los que dependen (buffers de clase y entradas
+por banco) dejan de ser el límite. El margen es pequeño porque la VLSU
+ocupa el 83 % del kernel: la memoria, con un bloque y un paquete en vuelo,
+sigue dominando.
 
 ## Revisión de las métricas
 
@@ -138,8 +186,8 @@ siguiente):
    métricas se solapan.
 5. **Minor:** quitar `prereq` de las métricas vectoriales o documentarlo.
 
-Para el criterio 1 y para observar ALUs y puertos hace falta una carga con
-instrucciones aritméticas independientes; Pathfinder no la tiene.
+El criterio 1 y el efecto de ALUs y puertos se observan con el
+micro-kernel de concurrencia (sección anterior).
 
 
 ## Correcciones aplicadas
@@ -190,3 +238,4 @@ Reglas para leerlos:
 [plan-f8]: <Plan de cierre de la fase 8.md>
 [benchmark]: <../../benchmarks/pathfinder/README.md>
 [cierre]: <Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>
+[concurrency]: <../../benchmarks/concurrency/README.md>

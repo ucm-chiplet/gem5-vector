@@ -64,6 +64,17 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 | P7 | Cierre frente a 15.3 (punto 5) | Estado de los 16 criterios: evidencia registrada, implementado sin evidencia o pendiente, con enlaces a las entregas. | Documento de cierre del hito 2 | Todos |
 | P8 | Entrega al hito 3 (puntos 3 y 7) | Contratos que deben ampliarse (disponibilidad por rangos, predicación, resultados escalares, colectivos, memoria concurrente, clústeres) y campaña de micro-kernels propuesta con su ROI, sin implementarla. | Sección de traspaso y ficha de campaña | 15 |
 
+Trabajo adicional aprobado el 11 de noviembre de 2026, derivado de P4:
+
+- **Correcciones de métricas** (`2ef0927059`): esperas de Minor por
+  intervalos, `hazardWaitTicks`, descripciones y ceros visibles con
+  offload. Ver las correcciones aplicadas del [análisis de
+  observabilidad](<Observabilidad - análisis con Pathfinder.md>).
+- **Micro-kernel de concurrencia** (`67c03af94b`,
+  [`benchmarks/concurrency/`](../../benchmarks/concurrency/README.md)):
+  evidencia del criterio 1 y del efecto de ALUs y puertos (criterio 5),
+  con un runner común para los benchmarks.
+
 Orden: P1 → P2 → P3 → (P4 y P5 en paralelo) → P6 → P7 → P8. P1 es barato
 y deja una base fiable; P4 y P5 aprovechan las trazas de P3; P7 depende
 de los anteriores. Cada paquete termina en su propio commit.
