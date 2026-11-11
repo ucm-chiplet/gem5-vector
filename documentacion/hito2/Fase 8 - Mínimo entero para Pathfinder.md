@@ -49,6 +49,10 @@ temporal. No se han ejecutado cargas ni se han creado pruebas. Pathfinder
 no se ha compilado ni ejecutado; el criterio 16 de la
 [sección 15.3][cierre] sigue pendiente.
 
+**Actualización del 11 de noviembre de 2026.** Pathfinder ya se ha
+compilado y ejecutado con `vmin.vv` en la VPU: ver la
+[evidencia de ejecución](#evidencia-de-ejecución-de-pathfinder).
+
 ## Archivos
 
 Bajo `src/cpu/vector_engine/`:
@@ -113,6 +117,62 @@ en `configs/example/riscv_vpu.py`, igual que para la suma.
 | --- | --- |
 | `lane*.alu*` | `minimumElements`: elementos admitidos de mínimos enteros. También cuentan en `elements8/16/32/64`. |
 
+## Evidencia de ejecución de Pathfinder
+
+Registrada el 11 de noviembre de 2026 en los paquetes P2 y P3 del
+[plan de cierre][plan-f8]:
+
+| Dato | Valor |
+| --- | --- |
+| Código | `4c08b72fce` (`feature/vpu`); `build/RISCV/gem5.opt` compilado desde `dad5ab6f5f`, sin cambios posteriores en `src/` |
+| Benchmark | [`benchmarks/pathfinder/`](../../benchmarks/pathfinder/README.md), RiVEC `32a14ddfb9`, adaptado sin libc |
+| Toolchain | Clang 20.1.8, `llvm-objdump` 20.1.8, GNU ld 2.46 |
+| Opciones | `-O2 -fno-vectorize -fno-slp-vectorize -march=rv64gcv`, sin libc; perfil RVV comprobado: sólo los 7 tipos del kernel, todos en `runVector` |
+| Configuración | `configs/example/riscv_vpu.py` por defecto: VLEN 256, 2 lanes, crossbar, `e32m1` |
+| Comando | `python3 benchmarks/pathfinder/run.py --input {tiny,small}` |
+
+Los dos modos, `offload` (VPU) y `native` (RVV de MinorCPU), terminan con
+código 0, coinciden con la referencia de la entrada y con la versión
+escalar del programa, y dan la misma huella:
+
+| Entrada | Huella | Ticks del kernel, offload | Ticks del kernel, native |
+| --- | --- | --- | --- |
+| `tiny` (32×32) | `sum=1731 xor=29` | 52 083 000 | 36 419 000 |
+| `small` (128×1024) | `sum=188600 xor=46` | 5 995 385 000 | 3 545 065 000 |
+
+Región del kernel en offload (entre `m5_reset_stats` y `m5_dump_stats`):
+
+| Métrica | `tiny` | `small` |
+| --- | --- | --- |
+| Comandos despachados por Minor y completados por la VPU | 992 | 130 048 |
+| Elementos de mínimo / suma en ALU | 1 984 / 992 | 260 096 / 130 048 |
+| Tareas `vslide1up` / `vslide1down` | 124 / 124 | 16 256 / 16 256 |
+| Paquetes de red remotos / locales | 744 / 0 | 97 536 / 0 |
+| Comandos de load / store | 248 / 124 | 32 512 / 16 256 |
+| Máximo de comandos activos en la VPU | 2 | 2 |
+| Ciclos con más de un comando activo (Minor) | 1 736 | 227 584 |
+| Máximo de peticiones de memoria en curso | 1 | 1 |
+
+Los recuentos coinciden con el kernel: cada tira de 8 elementos genera
+2 loads, 2 slides, 2 mínimos, 1 suma y 1 store (124 tiras en `tiny` y
+16 256 en `small`); `vsetvli` se ejecuta en CPU.
+
+Qué acredita y qué no:
+
+- **Criterio 16, parte funcional:** Pathfinder ejecuta sus 7 tipos RVV con
+  copia inicial escalar, resultado contrastado y recursos finitos, y se
+  registran toolchain, opciones y desensamblado. Falta el análisis de
+  tráfico y comportamiento temporal (paquete P4).
+- **Observaciones parciales de otros criterios,** con SEW=32, m1 y la
+  configuración por defecto: dos instrucciones del programa activas a la
+  vez en la VPU (criterio 1), slides desde programa cruzando lanes por la
+  red (criterio 6) y un único paquete de memoria en vuelo (criterio 11).
+  No cubren otros anchos, `vstart` distinto de 0 ni otras
+  configuraciones.
+- Los ticks son del modelo, no una medida calibrada de Ara. La diferencia
+  entre offload y native no es todavía una conclusión: su análisis
+  corresponde a P4.
+
 ## Referencia normativa
 
 RVV 1.0, manual oficial edición 20240411, [capítulo vectorial][rvv],
@@ -137,8 +197,8 @@ Comprobaciones realizadas:
 Pendientes fuera de esta entrega, organizados en el
 [plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
 
-- Compilar y ejecutar Pathfinder: copia escalar inicial, toolchain,
-  opciones, desensamblado y resultado contrastado (criterio 16).
+- Análisis de tráfico y comportamiento temporal de Pathfinder (P4); la
+  ejecución funcional está registrada arriba.
 - Decode de `vminu.vv` en Minor, si se quiere alcanzar desde programa.
 - Formas `.vx`, `vmax`/`vmaxu` y formas con máscara.
 - Resto de la consolidación de la fase 8 (sección 13.8, puntos 1--7).
