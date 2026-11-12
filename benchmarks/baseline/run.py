@@ -1,12 +1,22 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Build and run a functional baseline program; keep artifacts local."""
+"""Baseline del hito 1: compila y ejecuta un programa en gem5.
+
+Compila con make (GCC de la toolchain RISC-V), simula offload (MinorCPU
+con VPU) y native (RVV de MinorCPU) y exige en cada modo código 0 y el
+mensaje PASS del programa. Las estadísticas abarcan todo el programa.
+Resultados en results/<fecha UTC>/ (o en --results-dir), ignorado por Git.
+
+Uso:
+  python3 benchmarks/baseline/run.py                       # 21 casos
+  python3 benchmarks/baseline/run.py --program baseline-simple
+  python3 benchmarks/baseline/run.py --mode offload -v     # salida detallada
+"""
 
 import argparse
 import csv
 import json
 import re
-import subprocess
 import sys
 from datetime import (
     datetime,
@@ -16,6 +26,11 @@ from pathlib import Path
 
 BENCHMARK = Path(__file__).resolve().parent
 REPOSITORY = BENCHMARK.parents[1]
+sys.path.insert(0, str(BENCHMARK.parent / "common"))
+
+# run_logged guarda la salida en el registro y, con --verbose, la muestra.
+from vpu_bench import run_logged  # noqa: E402
+
 PROGRAMS = {
     "baseline": {
         "pass_message": "[SUITE baseline] PASS: 21 baseline cases",
@@ -48,7 +63,10 @@ def read_stats(path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--program",
         choices=tuple(PROGRAMS),
@@ -56,17 +74,36 @@ def main():
         help="Program to build and run",
     )
     parser.add_argument(
-        "--gem5", type=Path, default=REPOSITORY / "build/RISCV/gem5.opt"
+        "--gem5",
+        type=Path,
+        default=REPOSITORY / "build/RISCV/gem5.opt",
+        help="gem5 binary (default: build/RISCV/gem5.opt)",
     )
     parser.add_argument("--cc", help="Override the RISC-V C compiler")
     parser.add_argument(
-        "--mode", choices=("both", "offload", "native"), default="both"
+        "--mode",
+        choices=("both", "offload", "native"),
+        default="both",
+        help="offload: MinorCPU + VPU; native: MinorCPU RVV only; "
+        "both (default)",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=120,
-        help="Maximum wall-clock seconds per simulation",
+        help="Maximum wall-clock seconds per simulation (default: 120)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Also print make, gem5 and program output while running",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        help="Empty or new directory for this run; default: "
+        "results/<UTC date>",
     )
     args = parser.parse_args()
     program = PROGRAMS[args.program]
@@ -77,9 +114,14 @@ def main():
     if args.timeout <= 0:
         parser.error("--timeout debe ser positivo")
 
-    run_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    run_dir = BENCHMARK / "results" / run_name
-    run_dir.mkdir(parents=True)
+    if args.results_dir:
+        run_dir = args.results_dir.expanduser().resolve()
+        if run_dir.exists() and any(run_dir.iterdir()):
+            parser.error(f"--results-dir no está vacío: {run_dir}")
+    else:
+        run_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        run_dir = BENCHMARK / "results" / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
     print(f"Resultados locales: {run_dir}", flush=True)
     build_command = [
         "make",
@@ -90,10 +132,11 @@ def main():
     ]
     if args.cc:
         build_command.append(f"CC={args.cc}")
-    with (run_dir / "build.log").open("w") as log:
-        build_status = subprocess.run(
-            build_command, stdout=log, stderr=subprocess.STDOUT
-        ).returncode
+    if args.verbose:
+        print(f"\n=== {args.program}: compilación ===", flush=True)
+    build_status, _ = run_logged(
+        build_command, run_dir / "build.log", verbose=args.verbose
+    )
     report = {
         "benchmark": args.program,
         "pass_message": program["pass_message"],
@@ -115,19 +158,16 @@ def main():
             if mode == "native":
                 command.append("--no-offload")
             command.append(str(binary))
-            timed_out = False
-            with (mode_dir / "simulation.log").open("w") as log:
-                try:
-                    status = subprocess.run(
-                        command,
-                        cwd=REPOSITORY,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        timeout=args.timeout,
-                    ).returncode
-                except subprocess.TimeoutExpired:
-                    status = None
-                    timed_out = True
+            if args.verbose:
+                print(f"\n=== {args.program}: modo {mode} ===", flush=True)
+                print(" ".join(command), flush=True)
+            status, timed_out = run_logged(
+                command,
+                mode_dir / "simulation.log",
+                verbose=args.verbose,
+                timeout=args.timeout,
+                cwd=REPOSITORY,
+            )
             log_text = (mode_dir / "simulation.log").read_text()
             passed = status == 0 and program["pass_message"] in log_text
             stats = read_stats(mode_dir / "stats.txt")
@@ -192,6 +232,7 @@ def main():
         ]
     )
     (run_dir / "summary.md").write_text("\n".join(summary))
+    print(f"Resultado: {'PASS' if passed else 'FAIL'}")
     print(f"Resumen: {run_dir / 'summary.md'}")
     return 0 if passed else 1
 

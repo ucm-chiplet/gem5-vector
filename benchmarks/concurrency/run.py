@@ -31,6 +31,13 @@ Usa el runner común de ``benchmarks/common/vpu_bench.py``: compila con
 ``offload`` (VPU) y ``native`` (RVV de MinorCPU) y contrasta sus huellas.
 El primer volcado de ``stats.txt`` cubre sólo ``runKernel()``. Los
 resultados se guardan en ``results/<fecha>/``, ignorado por Git.
+
+Uso:
+  python3 benchmarks/concurrency/run.py                  # integer, ambos modos
+  python3 benchmarks/concurrency/run.py --variant mixed --mode offload
+  python3 benchmarks/concurrency/run.py -v               # salida detallada
+  python3 benchmarks/concurrency/run.py --mode offload \\
+      --config-arg=--minor-vector-window=4
 """
 
 import sys

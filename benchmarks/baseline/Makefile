@@ -1,3 +1,16 @@
+# Baseline funcional del hito 1 (GCC de la toolchain RISC-V). Ver README.md.
+#
+# Uso:
+#   make help                # esta ayuda
+#   make                     # compila baseline y baseline-simple
+#   make disasm              # desensamblado de baseline
+#   make disasm-simple       # desensamblado de baseline-simple
+#   make run                 # run.py: baseline en offload y native
+#   make run-simple          # run.py --program baseline-simple
+#   make clean
+#
+# Opciones del runner: python3 benchmarks/baseline/run.py --help
+
 ifneq ($(wildcard /opt/riscv/bin/riscv64-unknown-linux-gnu-gcc),)
 CROSS_COMPILE ?= /opt/riscv/bin/riscv64-unknown-linux-gnu-
 else
@@ -15,7 +28,7 @@ BASELINE_FLAGS = -std=c11 -O2 -Wall -Wextra -Werror \
 PROGRAMS = baseline baseline-simple
 BINARIES = $(addprefix build/,$(PROGRAMS))
 
-.PHONY: all disasm disasm-simple run run-simple clean
+.PHONY: all help disasm disasm-simple run run-simple clean
 
 all: $(BINARIES)
 
@@ -37,6 +50,9 @@ run-simple:
 
 run:
 	python3 run.py
+
+help:
+	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
 clean:
 	rm -f $(BINARIES) $(addsuffix .disasm,$(BINARIES))

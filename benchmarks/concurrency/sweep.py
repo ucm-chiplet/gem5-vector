@@ -30,6 +30,11 @@ Usa el barrido común de ``benchmarks/common/vpu_bench.py``. La lista por
 defecto varía un eje cada vez respecto a ``base``; ``--configs`` acepta un
 JSON con una lista de objetos ``{"label": ..., "args": [...]}``, donde
 ``args`` son opciones de ``configs/example/riscv_vpu.py``.
+
+Uso:
+  python3 benchmarks/concurrency/sweep.py                    # lista por defecto
+  python3 benchmarks/concurrency/sweep.py --only alus2 -v    # base y alus2
+  python3 benchmarks/concurrency/sweep.py --configs mis-configs.json
 """
 
 import sys

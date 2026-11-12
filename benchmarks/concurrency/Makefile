@@ -1,9 +1,14 @@
 # Micro-kernel de concurrencia aritmética para la VPU. Ver README.md.
 #
 # Uso:
+#   make help                    # esta ayuda
 #   make                         # VARIANT=integer, ELEMENTS=1024
 #   make VARIANT=mixed ELEMENTS=256
 #   make check                   # desensamblado y perfil RVV
+#   make clean
+#
+# Para compilar y simular en gem5 (offload y native), usa run.py:
+#   python3 benchmarks/concurrency/run.py --help
 
 VARIANT ?= integer
 ELEMENTS ?= 1024
@@ -40,7 +45,7 @@ BUILD = build/$(VARIANT)-n$(ELEMENTS)
 BINARY = $(BUILD)/concurrency
 DISASM = $(BINARY).disasm
 
-.PHONY: all disasm check clean
+.PHONY: all help disasm check clean
 
 all: $(BINARY)
 
@@ -58,6 +63,9 @@ disasm: $(DISASM)
 check: $(DISASM) ../common/check_profile.py
 	$(PYTHON) ../common/check_profile.py --kernel runKernel \
 	    --types $(KERNEL_TYPES) $<
+
+help:
+	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
 clean:
 	rm -rf build

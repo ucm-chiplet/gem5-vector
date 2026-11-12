@@ -1,7 +1,8 @@
 # Matriz de decode, representación y soporte (hito 2)
 
-**Matriz vigente** del hito 2, actualizada el 11 de noviembre de 2026
-sobre `c02a2da837` (paquete P6 del [plan de cierre de la fase 8][plan-f8]).
+**Matriz vigente** del hito 2, creada el 11 de noviembre de 2026 en el
+paquete P6 del [plan de cierre de la fase 8][plan-f8] y actualizada el 12
+con la [regresión automatizada][regresion].
 Sustituye a las tablas de las entregas de fase, que describen el estado en
 su fecha. Separa, como pide la Fase 2.1 (punto 3) y la sección 2.2
 (acción 6) del diseño:
@@ -40,31 +41,37 @@ normalizado por CPU. Un rechazo de admisión llega al programa como
 
 | Operación y forma | Decode Minor | Admisión VPU (SEW) | Unidad | Ejecutado desde programa | Falta |
 | --- | --- | --- | --- | --- | --- |
-| `vadd.vv` | Sí | 8/16/32/64 | ALU | SEW 32, m1: Pathfinder, concurrencia, baseline del hito 1 | Otros SEW y LMUL |
-| `vadd.vx` | Sí | 8/16/32/64 | ALU | SEW 32, m1: baseline del hito 1 (21 casos) | Otros SEW y LMUL |
-| `vmul.vv` | Sí | 8/16/32/64 | ALU | SEW 32, m1: concurrencia `integer` | Otros SEW y LMUL |
-| `vmul.vx` | Sí | 8/16/32/64 | ALU | No | Todo |
-| `vdiv.vv/.vx`, `vdivu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | No | Todo, incluidos divisor cero y desbordamiento |
-| `vrem.vv/.vx`, `vremu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | No | Todo, incluidos divisor cero y desbordamiento |
+| `vadd.vv` | Sí | 8/16/32/64 | ALU | Los 4 SEW con todos los LMUL del perfil: `widths`; además SEW 32, m1 en Pathfinder, concurrencia y baseline | — |
+| `vadd.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW con todos los LMUL del perfil: `widths`; SEW 32, m1: baseline | Escalar `x0`: defecto de Minor (gem5 aborta) |
+| `vmul.vv` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1: `muldiv`; SEW 32, m1: concurrencia `integer` | LMUL ≠ m1 |
+| `vmul.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1, escalares 0, −1 y −3: `muldiv` | LMUL ≠ m1; escalar `x0` |
+| `vdiv.vv/.vx`, `vdivu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` |
+| `vrem.vv/.vx`, `vremu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` |
 | `vmin.vv` | Sí (con signo) | 8/16/32/64 | ALU | SEW 32, m1: Pathfinder, concurrencia | Otros SEW y LMUL |
 | `vminu.vv` | No | 8/16/32/64 | ALU | No (inalcanzable desde programa) | Decode en Minor |
-| `vfadd.vv` | Sí | 32 (FP32); binary16 sólo interno | FPU | FP32, m1: concurrencia `mixed`, sin flags IEEE | Flags, modos de redondeo, valores especiales |
-| `vfmul.vv` | Sí | 32 (FP32) | FPU | FP32, m1: concurrencia `mixed`, sin flags IEEE | Flags, modos de redondeo, valores especiales |
+| `vfadd.vv` | Sí | 32 (FP32); binary16 sólo interno | FPU | FP32, m1, RNE con redondeo: ejemplo al cierre `fp32`, concurrencia `mixed`; sin flags IEEE | Flags, otros modos de redondeo, valores especiales |
+| `vfmul.vv` | Sí | 32 (FP32) | FPU | FP32, m1, RNE con redondeo: ejemplo al cierre `fp32`, concurrencia `mixed`; sin flags IEEE | Flags, otros modos de redondeo, valores especiales |
 | `vfdiv.vv` | Sí | 32 (FP32) | FPU (divisor no segmentado) | No | Todo |
-| `vle32.v`, `vse32.v` | Sí | EEW = SEW = 32 | VLSU | m1: Pathfinder, concurrencia, baseline | Faults, `vstart` ≠ 0 |
-| `vle8/16/64.v`, `vse8/16/64.v` | Sí | EEW = SEW | VLSU | No | Todo |
-| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes) | Otros SEW y LMUL, `vstart` ≠ 0 |
+| `vle32.v`, `vse32.v` | Sí | EEW = SEW = 32 | VLSU | m1--m8 y mf2, cruzando línea y página: `widths`; m1: Pathfinder, concurrencia, baseline | Faults, `vstart` ≠ 0, elementos desalineados |
+| `vle8/16/64.v`, `vse8/16/64.v` | Sí | EEW = SEW | VLSU | Todos los LMUL del perfil, cruzando línea y página: `widths`; m1: `muldiv` | Faults, `vstart` ≠ 0, elementos desalineados |
+| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes) | **Escalar `x0`: defecto de Minor** (ejemplo al cierre `int16`); otros SEW y LMUL, `vstart` ≠ 0 |
 | Memoria strided e indexada | No | No (`supportsMemory` exige unit-stride) | — | — | Hitos 4 y 5 |
 | Otras operaciones (`vsub`, lógicas, `.vi`, reducciones, máscaras...) | No | No (no existen en `ArithmeticOperation`) | — | — | Según el plan de evolución |
 
-Cargas usadas como evidencia, todas en la configuración por defecto,
-código `67c03af94b` (sólo cambia documentación hasta `c02a2da837`):
+Cargas usadas como evidencia, en la configuración por defecto salvo las
+opciones `--vpu-set` que declaran `widths` y `muldiv` para habilitar SEW
+8/16/32/64 y todos los LMUL. Todas forman parte de la
+[regresión automatizada][regresion] (`benchmarks/run_hito2.py`):
 
 | Carga | Ejecución | Registro |
 | --- | --- | --- |
 | [Pathfinder][pathfinder] `tiny` y `small` | Offload y native, huella idéntica, verificación completa | [Entrega de la fase 8][fase8] |
 | [Concurrencia][concurrency] `integer` y `mixed`, 1 024 elementos | Offload y native, huella idéntica, verificación escalar completa | [Análisis de observabilidad][observabilidad] |
 | [Baseline del hito 1][baseline]: `baseline` (21 casos) y `baseline-simple` | Offload y native, `PASS`, ejecutado de nuevo el 11 de noviembre de 2026 | Resultados locales de `benchmarks/baseline/` |
+| [Ejemplos al cierre][examples]: `fp32` | Offload y native, huella idéntica, valores del documento y caso aleatorio | [Cierre del hito 2][cierre-h2] |
+| [Ejemplos al cierre][examples]: `int16` | **Falla en offload** por el defecto de Minor con `x0`; pasa en native | [Cierre del hito 2][cierre-h2] |
+| [Anchos y grupos][widths]: 22 combinaciones SEW/LMUL | Offload y native, huella idéntica, guardas intactas | [Cierre del hito 2][cierre-h2] |
+| [Mul/Div/resto][muldiv]: 4 SEW, `.vv` y `.vx` | Offload y native, huella idéntica, casos límite de RVV 1.0 | [Cierre del hito 2][cierre-h2] |
 
 ## 2. Distinción normativa RVV 1.0 vs. Limitación del Modelo
 
@@ -141,13 +148,16 @@ En el modelo actual de la VPU Ara-like:
 Lo implementado que ningún programa ha ejecutado todavía. Sirve de entrada
 al cierre del hito (P7), que decidirá qué es requisito:
 
-1. **Anchos 8, 16 y 64 bits** en todas las operaciones enteras, memoria y
-   slides. Requieren habilitar SEW en la configuración.
-2. **LMUL distinto de m1** (grupos enteros y fraccionales) en todas las
-   operaciones.
-3. **Formas `.vx`** salvo `vadd.vx`: `vmul.vx`, `vdiv/vrem(u).vx`.
-4. **División y resto enteros**, incluidos divisor cero y el caso de
-   desbordamiento con signo.
+Actualizado el 12 de noviembre de 2026: la regresión cubre ya suma y
+memoria en todos los SEW y LMUL, y Mul/Div/resto en los cuatro SEW.
+
+1. **Escalar `x0`** en formas `.vx` y slides: defecto de Minor, gem5
+   aborta ([cierre del hito 2][cierre-h2]).
+2. **Slides con SEW 8, 16 y 64**: el caso SEW 16 del ejemplo al cierre
+   queda bloqueado por el punto anterior.
+3. **LMUL distinto de m1** fuera de suma y memoria (Mul/Div/resto, FP32,
+   slides).
+4. **Recorrido por elemento** en memoria (elementos desalineados).
 5. **`vfdiv.vv` y la ruta de flags FP**: ningún programa ha producido
    flags IEEE ni ha usado un modo de redondeo distinto de RNE.
 6. **`vstart` distinto de 0** y faults de memoria a mitad de instrucción.
@@ -155,6 +165,11 @@ al cierre del hito (P7), que decidirá qué es requisito:
    ejecución registrada del camino de rechazo hasta el fault.
 
 [plan-f8]: <Plan de cierre de la fase 8.md>
+[regresion]: <../../benchmarks/README.md>
+[cierre-h2]: <Cierre del hito 2 - Estado de los criterios.md#regresión-automatizada>
+[examples]: <../../benchmarks/examples/README.md>
+[widths]: <../../benchmarks/widths/README.md>
+[muldiv]: <../../benchmarks/muldiv/README.md>
 [fase8]: <Fase 8 - Mínimo entero para Pathfinder.md#evidencia-de-ejecución-de-pathfinder>
 [observabilidad]: <Observabilidad - análisis con Pathfinder.md>
 [pathfinder]: <../../benchmarks/pathfinder/README.md>

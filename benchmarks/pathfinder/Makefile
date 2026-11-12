@@ -1,9 +1,14 @@
 # Pathfinder (RiVEC) para la VPU. Ver README.md.
 #
 # Uso:
+#   make help                # esta ayuda
 #   make                     # INPUT=tiny, NUM_RUNS=1
 #   make INPUT=small NUM_RUNS=4
 #   make check               # desensamblado y perfil RVV
+#   make clean
+#
+# Para compilar y simular en gem5 (offload y native), usa run.py:
+#   python3 benchmarks/pathfinder/run.py --help
 
 INPUT ?= tiny
 NUM_RUNS ?= 1
@@ -31,7 +36,7 @@ BINARY = $(BUILD)/pathfinder
 HEADER = $(BUILD)/pathfinder_input.h
 DISASM = $(BINARY).disasm
 
-.PHONY: all disasm check clean
+.PHONY: all help disasm check clean
 
 all: $(BINARY)
 
@@ -54,6 +59,9 @@ KERNEL_TYPES = vsetvli,vle32.v,vse32.v,vslide1up.vx,vslide1down.vx,vmin.vv,vadd.
 check: $(DISASM) ../common/check_profile.py
 	$(PYTHON) ../common/check_profile.py --kernel runVector \
 	    --types $(KERNEL_TYPES) $<
+
+help:
+	@sed -n '1,/^$$/p' Makefile | sed 's/^# \{0,1\}//'
 
 clean:
 	rm -rf build

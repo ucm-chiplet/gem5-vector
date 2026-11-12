@@ -31,6 +31,13 @@ Usa el runner común de ``benchmarks/common/vpu_bench.py``: compila con
 ``offload`` (VPU) y ``native`` (RVV de MinorCPU) y contrasta sus huellas.
 El primer volcado de ``stats.txt`` cubre sólo ``runVector()``. Los
 resultados se guardan en ``results/<fecha>/``, ignorado por Git.
+
+Uso:
+  python3 benchmarks/pathfinder/run.py                   # tiny, ambos modos
+  python3 benchmarks/pathfinder/run.py --input small --mode offload
+  python3 benchmarks/pathfinder/run.py -v                # salida detallada
+  python3 benchmarks/pathfinder/run.py --mode offload \\
+      --config-arg=--vpu-set=vrf.num_lanes=4
 """
 
 import sys

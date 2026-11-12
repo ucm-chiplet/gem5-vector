@@ -369,6 +369,10 @@ no acredita chaining.
 Se aplican las [convenciones comunes][convenciones-ejemplos].
 Estos fragmentos amplían el repertorio del hito 1; no son simulaciones
 ni pruebas nuevas.
+Desde el 12 de noviembre de 2026 hay un programa que ejecuta ambos, con
+estos valores y un caso de varias tiras, en
+[`benchmarks/examples/`](../benchmarks/examples/README.md), dentro de la
+regresión de cierre del hito 2.
 
 **Enteros de 16 bits y comunicación entre lanes.** `a0=N>0`;
 `a1=A`, `a2=B`, `a3=S`, `a4=P` y `a5=D` apuntan a arrays

@@ -50,6 +50,11 @@ binario y comprueba su perfil RVV.
 ``sweep_main`` ejecuta ``run.py --mode=offload`` para una lista de
 configuraciones y compara cada una con la primera.
 
+Con ``--verbose`` (``-v``) la salida de ``make``, de gem5 y del programa
+se muestra también en el terminal mientras se ejecuta, y al final se
+imprimen las métricas de la región del kernel. Sin ella sólo se imprime el
+resultado de cada modo; los registros completos se guardan siempre.
+
 Los resultados quedan en ``<benchmark>/results/``, ignorado por Git.
 """
 
@@ -59,6 +64,7 @@ import json
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import (
     dataclass,
     field,
@@ -157,6 +163,10 @@ class Benchmark:
     summary_notes: Tuple[str, ...] = ()
     # Comprobaciones adicionales de offload: devuelven errores.
     offload_checks: Tuple[Callable, ...] = field(default_factory=tuple)
+    # Opciones de riscv_vpu.py que el benchmark necesita siempre en offload,
+    # por ejemplo para habilitar SEW o LMUL fuera del perfil por defecto.
+    # Van antes de las de --config-arg, que pueden sustituirlas.
+    config_args: Tuple[str, ...] = ()
 
     @property
     def pass_prefix(self):
@@ -167,6 +177,49 @@ class Benchmark:
         return re.compile(
             r"^\[" + re.escape(self.name) + r"\] checksum: (.*)$", re.M
         )
+
+
+def run_logged(
+    command, log_path, verbose=False, timeout=None, cwd=None, prefix=""
+):
+    """Ejecuta command guardando su salida en log_path.
+
+    stdout y stderr se mezclan en el registro. Con verbose, cada línea se
+    imprime además en el terminal en cuanto llega, precedida de prefix.
+    Devuelve (código de salida, timeout): el código es None si se superó
+    timeout segundos, en cuyo caso el proceso se termina.
+    """
+    with log_path.open("w") as log:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            bufsize=1,
+        )
+
+        # Un hilo copia la salida para que wait() pueda aplicar el timeout
+        # aunque el proceso no escriba nada durante un rato.
+        def copy_output():
+            for line in process.stdout:
+                log.write(line)
+                if verbose:
+                    print(prefix + line, end="", flush=True)
+
+        reader = threading.Thread(target=copy_output)
+        reader.start()
+        try:
+            status = process.wait(timeout=timeout)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            status = None
+            timed_out = True
+        reader.join()
+    return status, timed_out
 
 
 def read_dumps(path):
@@ -249,6 +302,26 @@ def common_offload_checks(stats):
     return errors
 
 
+def require_nonzero(*patterns):
+    """Comprobación de offload: cada estadística debe existir y no ser 0.
+
+    Sirve para exigir que la VPU haya ejecutado de verdad el trabajo del
+    benchmark en la unidad esperada (ALU, FPU, SlideUnit, VLSU...).
+    """
+
+    def check(stats):
+        errors = []
+        for pattern in patterns:
+            value = metric(stats, ENGINE + pattern)
+            if not value:
+                errors.append(
+                    f"{pattern} vale {value}: la VPU no hizo ese " "trabajo"
+                )
+        return errors
+
+    return check
+
+
 def git_commit():
     """Commit actual del repositorio, con -dirty si hay cambios."""
     result = subprocess.run(
@@ -304,22 +377,20 @@ def run_mode(bench, args, mode, binary, run_dir):
     if mode == "native":
         command.append("--no-offload")
     else:
+        command.extend(bench.config_args)
         command.extend(args.config_arg)
     command.append(str(binary))
 
-    timed_out = False
-    with (mode_dir / "simulation.log").open("w") as log:
-        try:
-            status = subprocess.run(
-                command,
-                cwd=REPOSITORY,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=args.timeout,
-            ).returncode
-        except subprocess.TimeoutExpired:
-            status = None
-            timed_out = True
+    if args.verbose:
+        print(f"\n=== {bench.name}: modo {mode} ===", flush=True)
+        print(" ".join(command), flush=True)
+    status, timed_out = run_logged(
+        command,
+        mode_dir / "simulation.log",
+        verbose=args.verbose,
+        timeout=args.timeout,
+        cwd=REPOSITORY,
+    )
 
     log_text = (mode_dir / "simulation.log").read_text()
     checksum = bench.checksum_regex.search(log_text)
@@ -375,10 +446,9 @@ def write_run_summary(bench, report, run_dir):
         "",
         f"{format_options(report['build'])}, commit `{report['commit']}`.",
     ]
-    if report["config_args"]:
-        lines.append(
-            "Opciones de la VPU: `" + " ".join(report["config_args"]) + "`."
-        )
+    config_args = report["fixed_config_args"] + report["config_args"]
+    if config_args:
+        lines.append("Opciones de la VPU: `" + " ".join(config_args) + "`.")
     lines.extend(
         [
             "",
@@ -438,20 +508,64 @@ def write_run_summary(bench, report, run_dir):
     (run_dir / "summary.md").write_text("\n".join(lines))
 
 
-def run_main(bench, description):
-    """Punto de entrada de ``run.py`` de un benchmark."""
-    parser = argparse.ArgumentParser(description=description)
-    add_build_options(parser, bench)
+def print_report(bench, report):
+    """Imprime en el terminal errores y métricas de la región del kernel."""
+    runs = report["runs"]
+    if not runs:
+        return
+    print(f"\n=== {bench.name}: región del kernel ===")
+    labels = [label for label, _ in COMMON_SUMMARY_METRICS]
+    labels += [label for label, _ in bench.summary_metrics]
+    width = max(len(label) for label in labels)
+    print(f"{'':{width}}  " + "  ".join(f"{mode:>14}" for mode in runs))
+    for label in labels:
+        values = []
+        for run in runs.values():
+            value = run["roi_summary"][label]
+            values.append(f"{'-' if value is None else value:>14}")
+        print(f"{label:{width}}  " + "  ".join(values))
+    for mode, run in runs.items():
+        print(f"{mode}: huella {run['checksum']}")
+
+
+def add_common_arguments(parser):
+    """Opciones de ejecución comunes a run.py y sweep.py."""
     parser.add_argument(
-        "--mode", choices=("both", "offload", "native"), default="both"
+        "--gem5",
+        type=Path,
+        default=DEFAULT_GEM5,
+        help="gem5 binary (default: build/RISCV/gem5.opt)",
     )
-    parser.add_argument("--gem5", type=Path, default=DEFAULT_GEM5)
     parser.add_argument(
         "--timeout",
         type=int,
         default=600,
-        help="Maximum wall-clock seconds per simulation",
+        help="Maximum wall-clock seconds per simulation (default: 600)",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Also print make, gem5 and program output while running, "
+        "and the kernel metrics at the end",
+    )
+
+
+def run_main(bench, description):
+    """Punto de entrada de ``run.py`` de un benchmark."""
+    parser = argparse.ArgumentParser(
+        description=description,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    add_build_options(parser, bench)
+    parser.add_argument(
+        "--mode",
+        choices=("both", "offload", "native"),
+        default="both",
+        help="offload: MinorCPU + VPU; native: MinorCPU RVV only; "
+        "both (default): run both and compare their checksums",
+    )
+    add_common_arguments(parser)
     parser.add_argument(
         "--config-arg",
         action="append",
@@ -488,16 +602,19 @@ def run_main(bench, description):
         f"{option.make_var}={build[option.name]}" for option in bench.options
     )
     build_command.append("check")
-    with (run_dir / "build.log").open("w") as log:
-        build_status = subprocess.run(
-            build_command, stdout=log, stderr=subprocess.STDOUT
-        ).returncode
+    if args.verbose:
+        print(f"\n=== {bench.name}: compilación ===", flush=True)
+        print(" ".join(build_command), flush=True)
+    build_status, _ = run_logged(
+        build_command, run_dir / "build.log", verbose=args.verbose
+    )
     binary = bench.directory / bench.build_dir(args) / bench.binary_name
 
     report = {
         "benchmark": bench.name,
         "build": build,
         "commit": git_commit(),
+        "fixed_config_args": list(bench.config_args),
         "config_args": args.config_arg,
         "build_command": build_command,
         "build_returncode": build_status,
@@ -510,6 +627,8 @@ def run_main(bench, description):
             run = run_mode(bench, args, mode, binary, run_dir)
             report["runs"][mode] = run
             print(f"{mode}: {'PASS' if run['passed'] else 'FAIL'}", flush=True)
+            for error in run["errors"]:
+                print(f"  {error}", flush=True)
     else:
         print("Compilación o perfil RVV fallidos: ver build.log", flush=True)
 
@@ -527,6 +646,11 @@ def run_main(bench, description):
         json.dumps(report, indent=2, ensure_ascii=False) + "\n"
     )
     write_run_summary(bench, report, run_dir)
+    if args.verbose:
+        print_report(bench, report)
+    if report["checksum_error"]:
+        print(report["checksum_error"])
+    print(f"Resultado: {'PASS' if report['passed'] else 'FAIL'}")
     print(f"Resumen: {run_dir / 'summary.md'}")
     return 0 if report["passed"] else 1
 
@@ -542,13 +666,20 @@ def run_sweep_config(bench, args, config, sweep_dir):
         f"--gem5={args.gem5}",
         f"--results-dir={out_dir}",
     ]
+    if args.verbose:
+        command.append("--verbose")
     for option in bench.options:
         flag = option.name.replace("_", "-")
         command.append(f"--{flag}={getattr(args, option.name)}")
     command.extend(f"--config-arg={item}" for item in config["args"])
-    status = subprocess.run(
-        command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT
-    ).returncode
+    # run.py guarda sus registros en out_dir; aquí sólo se muestra su salida
+    # en el terminal si se pidió --verbose.
+    if args.verbose:
+        status = subprocess.run(command).returncode
+    else:
+        status = subprocess.run(
+            command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT
+        ).returncode
 
     result = {
         "label": config["label"],
@@ -645,12 +776,17 @@ def write_sweep_summary(bench, sweep, sweep_dir):
 
 def sweep_main(bench, description):
     """Punto de entrada de ``sweep.py`` de un benchmark."""
-    parser = argparse.ArgumentParser(description=description)
+    parser = argparse.ArgumentParser(
+        description=description,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     add_build_options(parser, bench)
-    parser.add_argument("--gem5", type=Path, default=DEFAULT_GEM5)
-    parser.add_argument("--timeout", type=int, default=600)
+    add_common_arguments(parser)
     parser.add_argument(
-        "--configs", type=Path, help="JSON list of {label, args}"
+        "--configs",
+        type=Path,
+        help='JSON list of {"label": ..., "args": [riscv_vpu.py options]}; '
+        "the first one is the reference",
     )
     parser.add_argument(
         "--only",

@@ -75,6 +75,15 @@ Trabajo adicional aprobado el 11 de noviembre de 2026, derivado de P4:
   evidencia del criterio 1 y del efecto de ALUs y puertos (criterio 5),
   con un runner común para los benchmarks.
 
+Aprobado el 12 de noviembre de 2026, después de P8:
+
+- **Regresión de cierre** ([`benchmarks/run_hito2.py`](
+  ../../benchmarks/README.md)): ejemplos al cierre del plan de evolución,
+  micro-kernels de anchos y grupos (criterios 3 y 10) y de Mul/Div/resto
+  (criterio 13) y todas las cargas anteriores en un solo comando, con
+  salida detallada opcional. Resultado en el
+  [cierre del hito 2](<Cierre del hito 2 - Estado de los criterios.md#regresión-automatizada>).
+
 Orden: P1 → P2 → P3 → (P4 y P5 en paralelo) → P6 → P7 → P8. P1 es barato
 y deja una base fiable; P4 y P5 aprovechan las trazas de P3; P7 depende
 de los anteriores. Cada paquete termina en su propio commit.
