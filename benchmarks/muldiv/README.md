@@ -46,7 +46,7 @@ make -C benchmarks/muldiv help
 porque la configuración por defecto sólo habilita SEW 16 y 32. En offload
 exige productos, divisiones y restos en la ALU.
 
-El escalar 0 va en un registro normal y no en `x0`: Minor no captura hoy
-`x0` como escalar (ver el [ejemplo al cierre](../examples/README.md)).
+El escalar 0 va en un registro normal. El caso `x0` lo ejercita la slide
+del [ejemplo al cierre](../examples/README.md).
 
 [cierre]: <../../documentacion/hito2/Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>

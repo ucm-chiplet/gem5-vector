@@ -42,11 +42,11 @@ normalizado por CPU. Un rechazo de admisión llega al programa como
 | Operación y forma | Decode Minor | Admisión VPU (SEW) | Unidad | Ejecutado desde programa | Falta |
 | --- | --- | --- | --- | --- | --- |
 | `vadd.vv` | Sí | 8/16/32/64 | ALU | Los 4 SEW con todos los LMUL del perfil: `widths`; además SEW 32, m1 en Pathfinder, concurrencia y baseline | — |
-| `vadd.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW con todos los LMUL del perfil: `widths`; SEW 32, m1: baseline | Escalar `x0`: defecto de Minor (gem5 aborta) |
-| `vmul.vv` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1: `muldiv`; SEW 32, m1: concurrencia `integer` | LMUL ≠ m1 |
-| `vmul.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1, escalares 0, −1 y −3: `muldiv` | LMUL ≠ m1; escalar `x0` |
-| `vdiv.vv/.vx`, `vdivu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` |
-| `vrem.vv/.vx`, `vremu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` |
+| `vadd.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW con todos los LMUL del perfil: `widths`; SEW 32, m1: baseline | Escalar `x0` (corregido en Minor, sin ejecución registrada) |
+| `vmul.vv` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1: `muldiv`; SEW 16, m1: ejemplo al cierre `int16`; SEW 32, m1: concurrencia `integer` | LMUL ≠ m1 |
+| `vmul.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1, escalares 0, −1 y −3: `muldiv` | LMUL ≠ m1; escalar `x0` sin ejecución registrada |
+| `vdiv.vv/.vx`, `vdivu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` sin ejecución registrada |
+| `vrem.vv/.vx`, `vremu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` sin ejecución registrada |
 | `vmin.vv` | Sí (con signo) | 8/16/32/64 | ALU | SEW 32, m1: Pathfinder, concurrencia | Otros SEW y LMUL |
 | `vminu.vv` | No | 8/16/32/64 | ALU | No (inalcanzable desde programa) | Decode en Minor |
 | `vfadd.vv` | Sí | 32 (FP32); binary16 sólo interno | FPU | FP32, m1, RNE con redondeo: ejemplo al cierre `fp32`, concurrencia `mixed`; sin flags IEEE | Flags, otros modos de redondeo, valores especiales |
@@ -54,7 +54,7 @@ normalizado por CPU. Un rechazo de admisión llega al programa como
 | `vfdiv.vv` | Sí | 32 (FP32) | FPU (divisor no segmentado) | No | Todo |
 | `vle32.v`, `vse32.v` | Sí | EEW = SEW = 32 | VLSU | m1--m8 y mf2, cruzando línea y página: `widths`; m1: Pathfinder, concurrencia, baseline | Faults, `vstart` ≠ 0, elementos desalineados |
 | `vle8/16/64.v`, `vse8/16/64.v` | Sí | EEW = SEW | VLSU | Todos los LMUL del perfil, cruzando línea y página: `widths`; m1: `muldiv` | Faults, `vstart` ≠ 0, elementos desalineados |
-| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes) | **Escalar `x0`: defecto de Minor** (ejemplo al cierre `int16`); otros SEW y LMUL, `vstart` ≠ 0 |
+| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes); `vslide1down` SEW 16, m1, con escalar `x0`: ejemplo al cierre `int16` | SEW 8/64, LMUL ≠ m1, `vstart` ≠ 0 |
 | Memoria strided e indexada | No | No (`supportsMemory` exige unit-stride) | — | — | Hitos 4 y 5 |
 | Otras operaciones (`vsub`, lógicas, `.vi`, reducciones, máscaras...) | No | No (no existen en `ArithmeticOperation`) | — | — | Según el plan de evolución |
 
@@ -69,7 +69,7 @@ opciones `--vpu-set` que declaran `widths` y `muldiv` para habilitar SEW
 | [Concurrencia][concurrency] `integer` y `mixed`, 1 024 elementos | Offload y native, huella idéntica, verificación escalar completa | [Análisis de observabilidad][observabilidad] |
 | [Baseline del hito 1][baseline]: `baseline` (21 casos) y `baseline-simple` | Offload y native, `PASS`, ejecutado de nuevo el 11 de noviembre de 2026 | Resultados locales de `benchmarks/baseline/` |
 | [Ejemplos al cierre][examples]: `fp32` | Offload y native, huella idéntica, valores del documento y caso aleatorio | [Cierre del hito 2][cierre-h2] |
-| [Ejemplos al cierre][examples]: `int16` | **Falla en offload** por el defecto de Minor con `x0`; pasa en native | [Cierre del hito 2][cierre-h2] |
+| [Ejemplos al cierre][examples]: `int16` | Offload y native, huella idéntica, valores del documento y caso aleatorio (tras corregir `x0` en Minor) | [Cierre del hito 2][cierre-h2] |
 | [Anchos y grupos][widths]: 22 combinaciones SEW/LMUL | Offload y native, huella idéntica, guardas intactas | [Cierre del hito 2][cierre-h2] |
 | [Mul/Div/resto][muldiv]: 4 SEW, `.vv` y `.vx` | Offload y native, huella idéntica, casos límite de RVV 1.0 | [Cierre del hito 2][cierre-h2] |
 
@@ -151,10 +151,9 @@ al cierre del hito (P7), que decidirá qué es requisito:
 Actualizado el 12 de noviembre de 2026: la regresión cubre ya suma y
 memoria en todos los SEW y LMUL, y Mul/Div/resto en los cuatro SEW.
 
-1. **Escalar `x0`** en formas `.vx` y slides: defecto de Minor, gem5
-   aborta ([cierre del hito 2][cierre-h2]).
-2. **Slides con SEW 8, 16 y 64**: el caso SEW 16 del ejemplo al cierre
-   queda bloqueado por el punto anterior.
+1. **Escalar `x0` en formas `.vx` aritméticas**: el defecto de Minor está
+   corregido, pero sólo las slides lo ejecutan ([cierre][cierre-h2]).
+2. **Slides con SEW 8 y 64**.
 3. **LMUL distinto de m1** fuera de suma y memoria (Mul/Div/resto, FP32,
    slides).
 4. **Recorrido por elemento** en memoria (elementos desalineados).

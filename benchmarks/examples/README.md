@@ -44,12 +44,10 @@ SlideUnit, o la FPU, hayan hecho trabajo.
 
 ## Estado
 
-`fp32` pasa en offload y native. `int16` aborta gem5 en offload: Minor
-lee el escalar `x0` de `vslide1down.vx` como un registro inválido
-(`RegId()` en gem5) y salta una aserción del banco de registros. Con el 0
-en un registro normal el mismo programa pasa, así que el defecto está en
-la captura del escalar en Minor, no en la VPU. Se documenta en el
-[cierre del hito 2][cierre].
+Ambas variantes pasan en offload y native. `int16` destapó un defecto de
+Minor: leía el escalar `x0` de `vslide1down.vx` como un registro inválido
+(`RegId()` en gem5) y gem5 abortaba. Se corrigió el 12 de noviembre de
+2026; ver el [cierre del hito 2][cierre].
 
 [ejemplos]: <../../documentacion/Plan de evolución - Hitos 2 a 5.md#ejemplos-al-cierre-enteros-de-16-bits-y-fp32>
 [cierre]: <../../documentacion/hito2/Cierre del hito 2 - Estado de los criterios.md>
