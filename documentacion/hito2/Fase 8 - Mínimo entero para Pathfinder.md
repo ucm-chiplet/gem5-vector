@@ -124,7 +124,7 @@ Registrada el 11 de noviembre de 2026 en los paquetes P2 y P3 del
 
 | Dato | Valor |
 | --- | --- |
-| Código | `4c08b72fce` (`feature/vpu`); `build/RISCV/gem5.opt` compilado desde `dad5ab6f5f`, sin cambios posteriores en `src/` |
+| Código | `136d9b7d41` (`feature/vpu`); `build/RISCV/gem5.opt` compilado desde `2c3b45792f`, sin cambios posteriores en `src/` |
 | Benchmark | [`benchmarks/pathfinder/`](../../benchmarks/pathfinder/README.md), RiVEC `32a14ddfb9`, adaptado sin libc |
 | Toolchain | Clang 20.1.8, `llvm-objdump` 20.1.8, GNU ld 2.46 |
 | Opciones | `-O2 -fno-vectorize -fno-slp-vectorize -march=rv64gcv`, sin libc; perfil RVV comprobado: sólo los 7 tipos del kernel, todos en `runVector` |

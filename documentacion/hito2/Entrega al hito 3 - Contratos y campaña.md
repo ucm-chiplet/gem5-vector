@@ -1,7 +1,7 @@
 # Entrega al hito 3: contratos y campaña de micro-kernels
 
 Paquete P8 del [plan de cierre de la fase 8][plan-f8] (puntos 3 y 7 de la
-sección 13.8 del diseño), 11 de noviembre de 2026, sobre `92946e5c61`.
+sección 13.8 del diseño), 11 de noviembre de 2026, sobre `c2f5e9b557`.
 Sirve de punto de partida para las propuestas del
 [hito 3 del plan de evolución][hito3]. No implementa nada: describe qué
 existe hoy, qué está sólo preparado y qué tendrá que ampliar cada fase.

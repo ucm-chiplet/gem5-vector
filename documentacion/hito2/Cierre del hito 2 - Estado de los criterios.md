@@ -1,7 +1,7 @@
 # Cierre del hito 2: estado de los criterios
 
 Paquete P7 del [plan de cierre de la fase 8][plan-f8], 11 de noviembre de
-2026, sobre `aefe8eb621`. Recorre los 16 criterios de la
+2026, sobre `9d0a55c128`. Recorre los 16 criterios de la
 [sección 15.3 del diseño][cierre] y dice, para cada uno, qué evidencia
 existe y qué falta. Es un documento de estado: no añade código, pruebas ni
 ejecuciones nuevas.
@@ -57,7 +57,7 @@ todos los LMUL en el de anchos) con `--vpu-set`.
 | 9 | Matriz actualizada y procedimiento para la siguiente instrucción | Acreditado | [Matriz vigente][matriz] y [plantilla de ficha][plantilla] (P6) | — |
 | 10 | Agrupación unit-stride en los cuatro anchos, con fronteras y recorrido por elemento | Parcial | Bloques recortados por línea en Pathfinder ([observabilidad][obs-tiempo]); [`widths`][widths]: los cuatro anchos con arrays que cruzan página y línea y bytes de guarda intactos (3 632 bloques para 2 364 comandos) | Recorrido por elemento: bloques de un elemento partido (`splitElementBlocks` = 0), que requiere elementos desalineados |
 | 11 | Cada bloque completa antes del siguiente; datos sobreviven a retry; un paquete en vuelo | Parcial | Máximo de una petición de memoria en curso en Pathfinder ([fase 8][f8-evidencia]) | Ningún retry de memoria forzado |
-| 12 | Estadísticas explican la reducción de peticiones y accesos al VRF | Acreditado | [Análisis de observabilidad][observabilidad]: reparto del tiempo, bloques por comando, tabla de intervalos por grupo y correcciones `2ef0927059` | Comparación con otros anchos (depende del criterio 10) |
+| 12 | Estadísticas explican la reducción de peticiones y accesos al VRF | Acreditado | [Análisis de observabilidad][observabilidad]: reparto del tiempo, bloques por comando, tabla de intervalos por grupo y correcciones `ce481d8b79` | Comparación con otros anchos (depende del criterio 10) |
 | 13 | Mul/Div/resto `.vv` y `.vx` en la ALU en 8/16/32/64, con temporización propia | Acreditado | [`muldiv`][muldiv]: las 10 formas en los cuatro SEW, con divisor cero y desbordamiento según RVV 1.0; perfiles propios y divisor no segmentado ([fase 6][f6]); cambiar `lane.alu.divide_latencies` cambia el tiempo (66,6 M → 51,7 M ticks) sin cambiar el resultado | — |
 | 14 | Interconexión independiente de topología, crossbar detrás, métricas comunes | Acreditado | Diseño y código de la [fase 7][f7]: `VectorInterconnect`, crossbar detrás y métricas comunes separadas de las propias del modelo; usado por Pathfinder | No hay un segundo modelo con el que comparar las métricas (no exigido) |
 | 15 | Contratos consolidados y entrega al hito 3 | Acreditado (revisión) | [Revisión P5][revision]: `VectorSupport` como autoridad única, identidad y propiedad revisadas; [entrega al hito 3][entrega-h3] (P8) con el mapa de contratos activos, preparados y ausentes | — |

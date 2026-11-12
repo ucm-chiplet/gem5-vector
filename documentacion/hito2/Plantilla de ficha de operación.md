@@ -125,7 +125,7 @@ ALU. Estadística `minimumElements`.
 **7. Validación.** Microprograma `vle`/`vmin`/`vse` en los cuatro SEW
 con valores extremos, LMUL m1 y m2, `vl < VLMAX` y rechazo de `vm=0`.
 
-**8. Estado.** Implementado (`dad5ab6f5f`). Ejecutado `vmin.vv` a SEW 32,
+**8. Estado.** Implementado (`2c3b45792f`). Ejecutado `vmin.vv` a SEW 32,
 m1, en Pathfinder y en el micro-kernel de concurrencia; resto de anchos y
 `vminu` sin evidencia ([matriz][matriz]).
 

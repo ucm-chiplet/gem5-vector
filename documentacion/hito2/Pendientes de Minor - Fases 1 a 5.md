@@ -14,7 +14,7 @@ seguirá requiriendo su propuesta y aprobación.
 de Minor marcó como resueltas las acciones que implementó (commits
 `7b3456c198` a `963e6a9550`). El 11 de noviembre de 2026, tras integrar
 esa rama en `feature/vpu` por fast-forward, se contrastaron esas
-acciones con el código en `dad5ab6f5f` y se actualizaron el resumen, el
+acciones con el código en `2c3b45792f` y se actualizaron el resumen, el
 recorrido actual y la evidencia común. "Resuelto" significa implementado
 y verificado leyendo el código; ninguna acción tiene todavía evidencia de
 ejecución desde un programa. El trabajo restante se organiza en el
@@ -68,7 +68,7 @@ ejecución registrada tras estos cambios. Esa evidencia se organiza en el
 
 ## Lo que Minor ya hace
 
-Recorrido en `dad5ab6f5f`. Las referencias se dan por función, porque
+Recorrido en `2c3b45792f`. Las referencias se dan por función, porque
 las líneas cambian con cada revisión:
 
 1. **Decode** (`decode.cc`) clasifica cada instrucción en `CpuScalar`,
@@ -305,7 +305,7 @@ Estado el 11 de noviembre de 2026:
   actuales (cuatro entradas de cola, cuatro activos, cuatro contextos por
   lane y ventana de Minor de 2).
 - **Compilación de Minor.** Resuelto: `build/RISCV/gem5.opt` compila y
-  enlaza en `dad5ab6f5f`, con Minor y todas las cabeceras VPU actuales.
+  enlaza en `2c3b45792f`, con Minor y todas las cabeceras VPU actuales.
 - **Matriz CPU--VPU.** Existe la [matriz de decode, representación y
   soporte][matriz]. Su consolidación con la tabla de la fase 6 y la
   distinción entre implementado y comprobado es el paquete P6 del

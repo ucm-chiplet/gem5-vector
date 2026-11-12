@@ -16,7 +16,7 @@ falta quedan propuestas al final y requieren su propia aprobación.
 
 | Dato | Valor |
 | --- | --- |
-| Código | Commit de esta entrega sobre `10b3a199ed`; `gem5.opt` compilado desde `dad5ab6f5f`, sin cambios posteriores en `src/` |
+| Código | Commit de esta entrega sobre `f220ccdc95`; `gem5.opt` compilado desde `2c3b45792f`, sin cambios posteriores en `src/` |
 | Carga | Pathfinder `tiny` (32×32) y `small` (128×1024), `NUM_RUNS=1`, modo offload |
 | Configuración base | `configs/example/riscv_vpu.py`: VLEN 256, 2 lanes, 2 bancos por lane, 1 ALU por lane, crossbar, `SimpleMemory` sin cachés, CPU a 1 GHz |
 | Región medida | Entre `m5_reset_stats` y `m5_dump_stats`, sólo `runVector()` |
@@ -113,7 +113,7 @@ y puertos se acreditan con el micro-kernel de la sección siguiente.
 Para los criterios 1 y 5 (ALUs y puertos) se añade el
 [micro-kernel de concurrencia][concurrency]: cuatro instrucciones
 aritméticas independientes por tira, con registros fijos para que no haya
-WAR por reutilización. 1 024 elementos, 128 tiras, código `67c03af94b`,
+WAR por reutilización. 1 024 elementos, 128 tiras, código `b8fe91f8e3`,
 configuración base de `riscv_vpu.py`. Las variantes `integer` y `mixed`
 pasan en offload y native con la misma huella, y todas las
 configuraciones de los barridos conservan el resultado.

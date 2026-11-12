@@ -1,7 +1,7 @@
 # Hito 2: revisión de extremo a extremo entre Minor y la VPU
 
 Paquete P5 del [plan de cierre de la fase 8][plan-f8], 11 de noviembre de
-2026, sobre `709eda530f`. Es una revisión de fuentes: no modifica código
+2026, sobre `fe25c6b8d8`. Es una revisión de fuentes: no modifica código
 ni ejecuta cargas. Contrasta el despacho concurrente de Minor
 ([diseño de concurrencia][concurrencia-minor]) con el frontend de la VPU,
 siguiendo la sección 7 del [diseño del hito][diseno] y los puntos que los

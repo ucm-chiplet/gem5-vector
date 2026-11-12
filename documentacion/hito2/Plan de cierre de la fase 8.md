@@ -1,6 +1,6 @@
 # Hito 2: plan de implementación para cerrar la fase 8
 
-Plan del 11 de noviembre de 2026 sobre `dad5ab6f5f` (rama `feature/vpu`).
+Plan del 11 de noviembre de 2026 sobre `2c3b45792f` (rama `feature/vpu`).
 Organiza lo que falta de la [sección 13.8 del diseño][diseno-f8] después
 de la [entrega VPU de `vmin`/`vminu`][entrega-f8]. Es un plan de trabajo:
 cada paquete se concretará en una propuesta de código o documentación y
@@ -57,7 +57,7 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 | --- | --- | --- | --- | --- |
 | P1 | Reconciliar la documentación tras el merge | Actualizar las entregas de fases 5--7, el índice del hito y los pendientes de Minor, que aún describen a Minor sin `963e6a9550`. Distinguir lo declarado de lo que tiene evidencia. | Documentación coherente con el código actual. **Hecho el 11 de noviembre de 2026**; queda para P5 el límite de la ventana de Minor, que cuenta posiciones (incluidas entradas `Completed`) y no comandos activos | 9 |
 | P2 | Pathfinder: fuente y compilación | `benchmarks/pathfinder/` con el patrón del baseline: fuente adaptada de RiVEC, Makefile con Clang, README. Kernel RVV explícito; copia inicial, inicialización y verificación escalares. Desensamblado y script que compruebe que sólo aparecen los 7 tipos RVV del kernel. | Binario reproducible con revisión, toolchain, opciones y desensamblado registrados **Hecho el 11 de noviembre de 2026** en [`benchmarks/pathfinder/`](../../benchmarks/pathfinder/README.md): RiVEC `32a14ddfb9`, Clang 20.1.8, sin libc; perfil de 7 tipos comprobado con `tiny` y `small` | 16 (toolchain y perfil) |
-| P3 | Pathfinder: ejecución y contraste | Runner como `baseline/run.py`, modos offload y nativo, verificación escalar y comparación de salidas. Opciones de perfil SEW/LMUL en `riscv_vpu.py` si el kernel las necesita. | Ejecución funcional registrada y estadísticas de ALU, slide, red, VLSU y VRF **Hecho el 11 de noviembre de 2026** (`4c08b72fce`): `tiny` y `small` pasan en offload y native con huella idéntica; evidencia en la [entrega de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md#evidencia-de-ejecución-de-pathfinder>) | 16; en parte 6, 7 y 11 |
+| P3 | Pathfinder: ejecución y contraste | Runner como `baseline/run.py`, modos offload y nativo, verificación escalar y comparación de salidas. Opciones de perfil SEW/LMUL en `riscv_vpu.py` si el kernel las necesita. | Ejecución funcional registrada y estadísticas de ALU, slide, red, VLSU y VRF **Hecho el 11 de noviembre de 2026** (`136d9b7d41`): `tiny` y `small` pasan en offload y native con huella idéntica; evidencia en la [entrega de fase 8](<Fase 8 - Mínimo entero para Pathfinder.md#evidencia-de-ejecución-de-pathfinder>) | 16; en parte 6, 7 y 11 |
 | P4 | Observabilidad (punto 4 de 13.8) | Revisar que las estadísticas explican dependencias, unidades, VRF, memoria y red con unidades claras y sin doble recuento, incluidas las esperas nuevas de Minor frente a las de la VPU. Usar Pathfinder como carga real. | Informe y correcciones mínimas, si hacen falta **Hecho el 11 de noviembre de 2026**: [análisis de observabilidad](<Observabilidad - análisis con Pathfinder.md>), con reparto del tiempo, criterio 5 para bancos, lanes y red, 7 hallazgos y 5 correcciones propuestas. Pathfinder no sirve para el criterio 1: su kernel es serie | 7, 12 |
 | P5 | Repaso de extremo a extremo (punto 6) | Propiedad de buffers, identidad (`CommandKey`, `TaskKey`, `VrfAccessKey`, `requestId`), reservas, liberación y drain con las dos ventanas. Comprobar que `VectorSupport` es la única autoridad de soporte. | Informe; los cambios, en propuestas aparte **Hecho el 11 de noviembre de 2026**: [revisión](<Revisión de extremo a extremo - Minor y VPU.md>) sin defectos de corrección y con cinco matices de semántica | 2, 8, 15 |
 | P6 | Matriz y fichas (puntos 1--2) | Una matriz por operación, forma, ancho y ruta que separe implementado, comprobado, parcial y candidato, unificando la matriz de decode y la tabla de la fase 6. Plantilla de ficha para la siguiente instrucción. | Matriz consolidada y plantilla **Hecho el 11 de noviembre de 2026**: [matriz vigente](<Matriz de decode, representacion y soporte.md>) con niveles de evidencia y huecos, y [plantilla de ficha](<Plantilla de ficha de operación.md>) con `vmin` como ejemplo; baseline del hito 1 ejecutado de nuevo con `PASS` | 9 |
@@ -66,11 +66,11 @@ Acordadas con el usuario el 11 de noviembre de 2026:
 
 Trabajo adicional aprobado el 11 de noviembre de 2026, derivado de P4:
 
-- **Correcciones de métricas** (`2ef0927059`): esperas de Minor por
+- **Correcciones de métricas** (`ce481d8b79`): esperas de Minor por
   intervalos, `hazardWaitTicks`, descripciones y ceros visibles con
   offload. Ver las correcciones aplicadas del [análisis de
   observabilidad](<Observabilidad - análisis con Pathfinder.md>).
-- **Micro-kernel de concurrencia** (`67c03af94b`,
+- **Micro-kernel de concurrencia** (`b8fe91f8e3`,
   [`benchmarks/concurrency/`](../../benchmarks/concurrency/README.md)):
   evidencia del criterio 1 y del efecto de ALUs y puertos (criterio 5),
   con un runner común para los benchmarks.
