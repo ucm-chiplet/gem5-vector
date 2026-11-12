@@ -101,6 +101,29 @@ decodeVlmul(int64_t vlmul_bits)
     }
 }
 
+/**
+ * Lee el valor de un operando escalar entero de la instrucción, en el
+ * momento de construir el comando VPU.
+ *
+ * El ISA de RISC-V de gem5 (src/arch/riscv/isa/operands.isa) representa un
+ * operando fuente x0 con un RegId() inválido, no con el registro entero 0,
+ * y ThreadContext::getReg() no admite ese identificador. La ISA base fija x0
+ * a cero ("register x0 is hardwired with all bits equal to 0") y RVV 1.0
+ * (edición 20240411) toma de x[rs1] el escalar de las formas .vx, de
+ * vslide1up/vslide1down y la base de la memoria unit-stride; por tanto un
+ * operando inválido vale 0. Cualquier otro registro se lee normalmente.
+ */
+RegVal
+readScalarSource(ThreadContext *thread, const StaticInstPtr &static_inst,
+                 int source_index)
+{
+    const RegId &reg = static_inst->srcRegIdx(source_index);
+    if (reg.classValue() == InvalidRegClass) {
+        return 0;
+    }
+    return thread->getReg(reg);
+}
+
 vector_engine::VectorConfig
 Execute::captureVectorConfig(ThreadContext *thread) const
 {
@@ -178,11 +201,9 @@ Execute::buildVectorCommand(MinorVectorState &state,
             arithmetic.secondOperand = make_ref(*reg_idx);
         } else if (auto *scalar = std::get_if<ScalarOperandRef>(
                        &arith_op->secondOperand)) {
-            arithmetic.secondOperand =
-                thread->getReg(state.inst->staticInst->srcRegIdx(
-                    scalar->sourceOperandIndex) // Leemos el valor del registro
-                                                // escalar
-                );
+            // Valor del registro escalar rs1; x0 se lee como 0.
+            arithmetic.secondOperand = readScalarSource(
+                thread, state.inst->staticInst, scalar->sourceOperandIndex);
         }
 
         // Adaptar el escalar una sola vez. Si el envío debe esperar, el
@@ -219,8 +240,8 @@ Execute::buildVectorCommand(MinorVectorState &state,
         vector_engine::MemoryCommand memory;
         memory.direction = mem_op->direction;
         memory.dataReg = make_ref(mem_op->dataReg);
-        memory.base = thread->getReg(state.inst->staticInst->srcRegIdx(
-            mem_op->base.sourceOperandIndex));
+        memory.base = readScalarSource(thread, state.inst->staticInst,
+                                       mem_op->base.sourceOperandIndex);
         // -TODO Por el momento solo aceptamos vle y vse que son por definición
         // unit-stride
         memory.addressing = vector_engine::UnitStrideAddress{};
@@ -234,8 +255,9 @@ Execute::buildVectorCommand(MinorVectorState &state,
         slide.operation = slide_op->operation;
         slide.destination = make_ref(slide_op->destination);
         slide.vectorSource = make_ref(slide_op->vectorSource);
-        slide.scalar = thread->getReg(state.inst->staticInst->srcRegIdx(
-            slide_op->scalar.sourceOperandIndex));
+        // Escalar rs1 que se inserta en el extremo; x0 se lee como 0.
+        slide.scalar = readScalarSource(thread, state.inst->staticInst,
+                                        slide_op->scalar.sourceOperandIndex);
 
         // Adaptar el escalar una sola vez según RVV 1.0 (edición 20240411,
         // sección 16.3) y ElementCodec::normalizeScalar. Si el envío debe
