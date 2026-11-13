@@ -197,6 +197,19 @@ parser.add_argument(
     type=int,
     help="MinorCPU vectorDispatchWidth (default: CPU parameter)",
 )
+# Contraste con Ara RTL: latencia de SimpleMemory, compartida por CPU y VPU.
+parser.add_argument(
+    "--mem-latency",
+    help="SimpleMemory request-to-response latency, e.g. 5ns "
+    "(default: SimpleMemory parameter)",
+)
+# VLEN en bits, igual para la ISA de Minor y el VRF de la VPU.
+parser.add_argument(
+    "--vlen",
+    type=int,
+    default=256,
+    help="VLEN in bits for the ISA and the VPU VRF (default: 256)",
+)
 parser.add_argument("binary", type=Path, help="RV64 SE executable")
 parser.add_argument("arguments", nargs=argparse.REMAINDER)
 args = parser.parse_args()
@@ -272,7 +285,7 @@ system.clk_domain = SrcClockDomain(
 system.mem_mode = "timing"
 system.mem_ranges = [AddrRange("512MiB")]
 system.cpu = RiscvMinorCPU(
-    isa=[RiscvISA(riscv_type="RV64", vlen=256, elen=64, enable_rvv=True)]
+    isa=[RiscvISA(riscv_type="RV64", vlen=args.vlen, elen=64, enable_rvv=True)]
 )
 system.cpu.vectorOffloadEnabled = not args.no_offload
 if args.minor_vector_window is not None:
@@ -284,11 +297,13 @@ system.cpu.icache_port = system.membus.cpu_side_ports
 system.cpu.dcache_port = system.membus.cpu_side_ports
 system.system_port = system.membus.cpu_side_ports
 system.memory = SimpleMemory(range=system.mem_ranges[0])
+if args.mem_latency is not None:
+    system.memory.latency = args.mem_latency
 system.memory.port = system.membus.mem_side_ports
 
 if not args.no_offload:
     vpu_config = VpuConfiguration(
-        vrf=VrfConfiguration(vlen_bytes=32),
+        vrf=VrfConfiguration(vlen_bytes=args.vlen // 8),
         lane=LaneConfiguration(
             task_entries=args.vpu_lane_task_entries,
             alus_per_lane=args.vpu_alus_per_lane,
