@@ -31,7 +31,8 @@ Lanza el run.py de cada caso en modo offload (MinorCPU con VPU) y native
 opciones fijas que cada benchmark declara (por ejemplo, habilitar SEW 8 y
 64). Un caso pasa si su run.py termina con código 0: compilación y perfil
 RVV correctos, PASS en cada modo, huellas iguales y, en offload, trabajo
-real de la VPU en las unidades esperadas.
+real de la VPU en las unidades esperadas. En faults, el resultado esperado
+es el panic de gem5 con el fault y el vstart correctos (ver su README).
 
 Casos (en este orden; --list los muestra):
   baseline          hito 1: 21 casos vadd.vv/vadd.vx SEW 32
@@ -43,6 +44,10 @@ Casos (en este orden; --list los muestra):
   concurrency-int   criterio 1: aritmética entera independiente
   concurrency-mixed criterios 1 y 4: ALU y FPU a la vez
   pathfinder        criterio 16: Pathfinder tiny
+  minimum           vmin.vv y vminu.vv, SEW 8-64, m1 y m4
+  dependencies      criterio 2: cadenas productor-consumidor
+  widths-retry      criterio 11: widths con retries de memoria forzados
+  faults            criterio 8: fault de página a mitad de vle32/vse32
 
 Los resultados quedan en benchmarks/results/hito2-<fecha UTC>/ (ignorado
 por Git): un directorio por caso con los resultados de su run.py, su
@@ -129,6 +134,33 @@ CASES = (
         "pathfinder/run.py",
         ["--input=tiny"],
         "Criterio 16: Pathfinder (RiVEC), entrada tiny",
+    ),
+    (
+        "minimum",
+        "minimum/run.py",
+        [],
+        "vmin.vv y vminu.vv en SEW 8-64, m1 y m4",
+    ),
+    (
+        "dependencies",
+        "dependencies/run.py",
+        [],
+        "Criterio 2: ningún consumidor empieza antes que su productor",
+    ),
+    (
+        "widths-retry",
+        "widths/run.py",
+        [
+            "--config-arg=--mem-bandwidth=200MiB/s",
+            "--require-nonzero=memory.portRetries",
+        ],
+        "Criterio 11: widths con la memoria rechazando peticiones",
+    ),
+    (
+        "faults",
+        "faults/run.py",
+        [],
+        "Criterio 8: fault de página a mitad de vle32/vse32 y vstart",
     ),
 )
 

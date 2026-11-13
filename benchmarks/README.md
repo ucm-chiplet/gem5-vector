@@ -16,7 +16,9 @@ python3 benchmarks/run_hito2.py --only widths --only muldiv
 Un caso pasa si compila con el perfil RVV esperado, cada modo imprime
 `PASS` con su verificación escalar, las huellas de ambos modos coinciden
 y, en offload, la VPU completó todo lo despachado e hizo el trabajo en la
-unidad esperada. El resultado queda en
+unidad esperada. En `faults` el resultado esperado es el `panic` de gem5
+con el fault y el `vstart` correctos, porque en SE no hay manejador de
+traps. El resultado queda en
 `benchmarks/results/hito2-<fecha>/summary.md`.
 
 | Caso | Carga | Qué comprueba |
@@ -27,6 +29,10 @@ unidad esperada. El resultado queda en
 | `muldiv` | [Mul/Div/resto](muldiv/README.md) | Criterio 13: `.vv` y `.vx` en SEW 8--64, con división por cero y desbordamiento |
 | `concurrency-int`, `concurrency-mixed` | [Concurrencia aritmética](concurrency/README.md) | Criterios 1 y 4: comandos a la vez, ALU y FPU juntas |
 | `pathfinder` | [Pathfinder](pathfinder/README.md) | Criterio 16: carga RiVEC con sus 7 tipos RVV |
+| `minimum` | [Mínimo entero](minimum/README.md) | `vmin.vv` y `vminu.vv` en SEW 8--64, m1 y m4 |
+| `dependencies` | [Cadenas productor--consumidor](dependencies/README.md) | Criterio 2: ningún consumidor empieza antes de que termine su productor |
+| `widths-retry` | [Anchos y grupos](widths/README.md) con `--mem-bandwidth=200MiB/s` | Criterio 11: el resultado no cambia con la memoria rechazando peticiones; exige `memory.portRetries` > 0 |
+| `faults` | [Fault de página](faults/README.md) | Criterio 8: fault a mitad de `vle32`/`vse32`, con dirección y `vstart` |
 
 Cada carga se puede ejecutar también por separado con su `run.py`.
 
@@ -37,6 +43,9 @@ opciones con ejemplos, y `-v`/`--verbose`, que muestra mientras se
 ejecuta la salida de `make`, de gem5 y del programa y, al final, las
 métricas de la región del kernel. Sin `-v` sólo se imprime el resultado;
 los registros completos se guardan siempre en `results/`.
+`--require-nonzero=STAT` exige además que una estadística de la VPU en
+la región del kernel no sea 0 en offload, por ejemplo
+`--require-nonzero=memory.portRetries`.
 
 Cada `Makefile` tiene `make help` con sus variables. `make check` compila
 y comprueba con [`check_profile.py`](common/check_profile.py) que el
