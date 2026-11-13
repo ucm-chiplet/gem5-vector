@@ -469,6 +469,20 @@ Se documentarán también los puntos que requeriría un futuro comando IME:
 grupos de A/B/C, fases y propiedad del acumulador. Es una preparación de
 contratos; la semántica y las rutas activas necesitan su propuesta específica.
 
+Desacoplar en la lane la lectura de cada fuente: cada operando tiene su
+propia petición al VRF y su cola finita, y la unidad consume cuando todos
+los que necesita están en cola. Es el esquema de las colas por operando de
+Ara (`AluA`, `AluB`, ...). Hoy las dos fuentes de una tarea se piden a la
+vez y, con la correspondencia de registros a bancos actual, caen en el mismo
+banco en cada palabra; ampliar `operand_entries_per_source` reduce la espera
+pero no la elimina ([conflictos de bancos][conflictos-vrf]: 1.134 ciclos,
+el 8,1 % de Pathfinder 7×512). La lectura del destino que se añade aquí
+sería un tercer operando en el mismo banco, por lo que el desacoplamiento
+debe estar antes de esa ruta y antes del chaining de 3.3. El cierre exige
+que los operandos de una tarea se lean en ciclos distintos sin bloquearse
+entre sí, que el número de entradas por cola sea un parámetro y que cada
+cola respete créditos y contrapresión.
+
 ### Fase 3.2. Predicación y escrituras parciales
 
 **Qué significa predicación.** Es decidir para cada elemento del vector
@@ -529,15 +543,33 @@ todas sus fuentes necesarias estén listas.
 
 Para esta primera fase aritmética, el consumidor leerá el VRF tras recibir
 la confirmación de escritura del rango. El bypass directo entre unidades
-es una optimización posterior. WAR y WAW pueden seguir siendo conservadores
-para evitar renombramiento físico. Una respuesta tardía nunca podrá marcar
-listo un rango de otro comando. La publicación de resultados jóvenes ante
-faults de memoria se resuelve después, en 3.5.
+es una optimización posterior. WAW puede seguir siendo conservador para
+evitar renombramiento físico. WAR se resuelve con el mismo mecanismo de
+rangos: el escritor sólo espera a que el lector haya leído cada rango que va
+a sobrescribir, sin renombrar registros. Mantener WAR conservador limitaría
+el solapamiento en bucles que reutilizan registros, como Pathfinder.
+Una respuesta tardía nunca podrá marcar listo un rango de otro comando.
+La publicación de resultados jóvenes ante faults de memoria se resuelve
+después, en 3.5.
+
+La representación de rangos debe poder expresar también productores y
+consumidores entre lanes (slides), aunque esa ruta se activa en 3.6.
+
+Con chaining aparecen conflictos de bancos entre instrucciones: el
+consumidor lee mientras el productor escribe. El árbitro del VRF debe
+tener una política configurable: round-robin, como hoy, o prioridad fija
+por clase de peticionario. Ara da prioridad a las lecturas y escrituras de
+ALU y MFPU sobre las de máscara, carga, store y slide. La política debe
+mantener las garantías de progreso de 2.3 y no dejar a ninguna clase sin
+acceso indefinidamente.
 
 El cierre exige que un consumidor aritmético empiece antes de terminar todo
 el productor, conserve el resultado funcional y respete puertos, créditos y
-contrapresión. No se confunde chaining con varias unidades trabajando para
-una sola instrucción ni con concurrencia entre instrucciones independientes.
+contrapresión. También exige que un escritor con WAR pendiente avance en
+cuanto el lector ha pasado el rango, y que el coste de los conflictos se
+compare con ambas políticas de arbitraje. No se confunde chaining con varias
+unidades trabajando para una sola instrucción ni con concurrencia entre
+instrucciones independientes.
 
 ### Fase 3.4. Varias instrucciones de memoria en vuelo
 
@@ -587,6 +619,12 @@ cargas y hacia stores, y faults precisos. Los mecanismos de 3.3 y 3.4 pueden
 desarrollarse antes bajo restricciones conservadoras; su integración no se
 declara terminada hasta resolver esta fase. Si los faults obligan a vaciar
 siempre toda la VPU, el objetivo de solapamiento sigue pendiente.
+
+La política de arbitraje del VRF de 3.3 se amplía a los peticionarios de la
+VLSU. Con memoria y cálculo solapados, las escrituras de cargas y las
+lecturas de stores compiten con la ALU en los mismos bancos. En Ara estas
+peticiones tienen prioridad baja: así la ALU, que está en el camino crítico,
+no pierde ciclos.
 
 #### Progreso escalar con comandos vectoriales pendientes
 
@@ -653,6 +691,13 @@ clases, con arbitraje y estadísticas comunes. Establecer las rutas de acceso
 para futuras permutaciones y el retorno de resultados escalares. El cierre
 deja resuelto dónde vive el estado colectivo, quién lo libera y cómo drena;
 las reducciones FP se incorporan en el 4 y el resto del repertorio en el 5.
+
+Activar chaining con slides como productor y como consumidor, con la
+representación de rangos de 3.3. En una slide, el rango que publica una
+lane lo consume otra, por lo que la disponibilidad viaja por la misma
+interconexión. En Pathfinder, la cadena crítica es `vslide1down` → `vmin`,
+y la SLDU marca el ritmo del bucle en Ara. El cierre exige que la operación
+consumidora de una slide empiece antes de que termine la slide.
 
 ### Fase 3.7. Preparación para clusterización
 
@@ -743,6 +788,12 @@ solapamiento productor/consumidor, comandos de memoria en vuelo, bloques,
 peticiones, presión de buffers y espera para publicación arquitectónica.
 Incluir progreso escalar con comandos pendientes y capacidad vectorial sin
 utilizar por bloqueo de despacho en Minor, según la fase 3.5.
+Registrar los conflictos de bancos del VRF separando los que ocurren dentro
+de una instrucción de los que ocurren entre instrucciones, y los ciclos
+perdidos por cada peticionario. El porcentaje de ciclos con conflicto no
+basta para medir su coste: Ara tiene un 20 % que no le cuesta tiempo, y
+gem5 un 8 % que sí. El coste se mide frente a una configuración sin
+conflictos, con dos puertos por banco.
 El cierre incluye funcionamiento con capacidades pequeñas y contrapresión,
 sin asumir que aumentar buffers corrige un bloqueo de protocolo.
 
@@ -760,7 +811,9 @@ y operaciones. `vfmv.v.f` y `vs2r.v` no son requisitos de este adelanto.
   resultado contrastado y evidencia del recorrido CPU--VPU y sus efectos FP.
 - Las instrucciones del hito 2 conservan su semántica y tienen predicación
   en las variantes que la admiten; ambas slide1 incluyen esa ampliación.
-- Un consumidor usa rangos listos antes de completar todo su productor.
+- Un consumidor usa rangos listos antes de completar todo su productor,
+  también cuando el productor es una slide. WAR se resuelve por rangos, y
+  los operandos de una tarea se leen del VRF de forma independiente.
 - Hay varias instrucciones de memoria simultáneas desde el programa, con
   capacidades separadas para comandos, bloques y peticiones físicas.
 - Memoria y aritmética pueden progresar juntas, incluido chaining, con
@@ -1426,6 +1479,7 @@ de modificar código. No se reabre el baseline cerrado como fase preliminar.
 
 [diseno-h2]: <hito2/Hito 2 - Concurrencia, FPU, anchos e interconexión.md>
 [cierre-h2]: <hito2/Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>
+[conflictos-vrf]: <hito2/Pathfinder - conflictos de bancos del VRF.md>
 [manual-rvv]: https://riscv.github.io/riscv-unified-db/manual/html/isa/isa_20240411/chapters/v-st-ext.html
 [rvv]: https://github.com/riscvarchive/riscv-v-spec/blob/v1.0/v-spec.adoc
 [rivec]: https://arxiv.org/abs/2111.01949

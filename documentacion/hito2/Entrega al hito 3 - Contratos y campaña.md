@@ -20,7 +20,7 @@ Las rutas son relativas a `src/cpu/vector_engine/` salvo las de Minor.
 
 | Capacidad (fase del hito 3) | Estado actual | Dónde | Qué hay que ampliar | Responsable |
 | --- | --- | --- | --- | --- |
-| Disponibilidad por rangos y chaining (3.3) | Activo sólo a nivel de registro: el scoreboard reserva el grupo completo (el contenedor en LMUL fraccional) y lo libera al terminar el comando; un consumidor espera a todo su productor | `frontend/vector_scoreboard.hh` (`VectorScoreboard`), `frontend/ara_sequencer.cc` (`blockersFor`, `scoreboard.release`) | Publicar rangos de elementos o bytes válidos ligados a la identidad del productor (`TaskKey`, `VrfAccessKey`) y emitir tareas consumidoras por rango. WAR y WAW pueden seguir siendo conservadores | Frontend y VRF |
+| Disponibilidad por rangos y chaining (3.3) | Activo sólo a nivel de registro: el scoreboard reserva el grupo completo (el contenedor en LMUL fraccional) y lo libera al terminar el comando; un consumidor espera a todo su productor | `frontend/vector_scoreboard.hh` (`VectorScoreboard`), `frontend/ara_sequencer.cc` (`blockersFor`, `scoreboard.release`) | Publicar rangos de elementos o bytes válidos ligados a la identidad del productor (`TaskKey`, `VrfAccessKey`) y emitir tareas consumidoras por rango. WAR por rangos (recomendado, sección 5); WAW puede seguir siendo conservador | Frontend y VRF |
 | Predicación (3.2) | Preparado: `VectorConfig::masked`, `OperandRole::Predicate`, `ElementFormat::Mask`. La admisión rechaza `masked` | `common/vector_types.hh`, `common/operand_types.hh`, `common/vector_support.cc` (`!config.masked`) | Leer `v0` como operando con su propia dependencia, escrituras parciales por elemento, `mu/ma`, y transporte de la máscara a lanes y red | Minor (decode `vm`), soporte, lanes, VRF |
 | Tercer operando y acumulador (3.1; AXPY) | Ausente en los comandos: `ArithmeticCommand` tiene `vectorSource` y `secondOperand`. Preparado en descriptores: `OperandRole::Accumulator`, `OperandAccess::ReadWrite` | `interface/vector_command.hh`, `common/operand_types.hh` | Leer el destino como fuente (`vfmacc`), escalar FP capturado en el comando, FP64 en la FPU, y reservar su lectura en el scoreboard | Minor, contratos, FPU |
 | Resultados escalares (3.1, 3.6) | Preparado: `ScalarResult` en `VectorCompletion` y `ScalarDestination`. `CpuVectorInterface::completed` rechaza (`panic`) una finalización con resultado escalar | `interface/vector_completion.hh`, `common/operand_types.hh`, `interface/cpu_vector_interface.cc` | Productor en la VPU, escritura del registro en Minor al retirar y dependencia escalar para las instrucciones posteriores | Minor, interfaz, unidad productora |
@@ -72,6 +72,19 @@ defecto y SEW 32, m1:
 
 Son ticks del modelo, no una calibración frente a Ara.
 
+Del [estudio de conflictos de bancos][conflictos-vrf], con Pathfinder
+7×512, m4, 4 lanes, VLEN 4096 y 8 bancos (la geometría de Ara):
+
+- Hay 1.152 ciclos con conflicto (8,26 %), todos entre `Lhs` y `Rhs` de la
+  misma instrucción de ALU, en cada palabra. No hay conflictos entre
+  instrucciones, porque no hay chaining y la memoria actúa como barrera.
+- Con dos puertos por banco (sin conflictos) el kernel baja de 13.950 a
+  12.816 ciclos: los conflictos cuestan el 8,1 %. Con 2 entradas por
+  operando baja a 11.952, pero los dos operandos siguen pidiéndose a la vez.
+- Ara tiene más conflictos (20,24 %), sobre todo entre instrucciones, pero
+  no le cuestan tiempo: sus colas por operando y la prioridad de la ALU en
+  el árbitro los esconden en los huecos que deja la SLDU.
+
 ## 4. Ficha de campaña para el hito 3
 
 Propuesta para el equipo; ninguno está implementado ni autorizado. Cada
@@ -86,10 +99,18 @@ micro-kernel seguiría el patrón de [`benchmarks/concurrency/`][concurrency]:
   `runKernel`; Clang con `-fno-vectorize -fno-slp-vectorize`, sin libc.
 - **Comparación:** cada mecanismo se mide activado y desactivado con la
   misma entrada y configuración, para atribuirle la diferencia.
+- **Coste del VRF:** cada micro-kernel se repite con dos puertos por banco
+  (`bank.read_write_ports=2`, `bank.access_entries=2`). La diferencia de
+  ciclos es el coste de los conflictos de bancos; el porcentaje de ciclos
+  con conflicto no lo mide por sí solo.
 
 | Micro-kernel | Pregunta | Instrucciones | Métricas | Comparación | Requiere |
 | --- | --- | --- | --- | --- | --- |
 | Cadena productor--consumidor | ¿Empieza el consumidor antes de terminar el productor? | `vle32`, `vmul.vv` → `vadd.vv` → `vse32`, con `vl` grande y LMUL m4/m8 | Tiempo hasta el primer resultado, solapamiento productor--consumidor, espera por rango frente a `hazardWaitTicks` | Chaining activado/desactivado | 3.3 |
+| Lectura desacoplada de operandos | ¿Se leen los operandos de una tarea sin bloquearse entre sí? | `vadd.vv` con las dos fuentes en el mismo banco; `vfmacc.vv` con lectura del destino | Conflictos dentro de la instrucción, ciclos perdidos por operando | Desacoplado/acoplado; 1 y 2 entradas por cola; dos puertos por banco | 3.1 |
+| WAR por rangos | ¿Avanza el escritor en cuanto el lector ha pasado el rango? | `vadd.vv v8, v4, v12` seguida de `vmul.vv v4, ...` (escribe una fuente de la anterior) | Espera por WAR, solapamiento lector--escritor | WAR por rangos frente a conservador | 3.3 |
+| Prioridad del árbitro | ¿Protege la prioridad el camino crítico ante conflictos entre instrucciones? | Cadena `vmul.vv` → `vadd.vv` con un load independiente en paralelo; Pathfinder 7×512 | Conflictos entre instrucciones por par de peticionarios, ciclos perdidos por clase | Round-robin frente a prioridad fija; dos puertos por banco | 3.3, 3.5 |
+| Chaining desde slides | ¿Empieza la consumidora antes de terminar la slide? | `vslide1down.vx` → `vmin.vv`; Pathfinder 7×512 | Solapamiento slide--consumidora, ciclos por fila frente a Ara | Chaining de slides activado/desactivado | 3.6 |
 | Loads independientes | ¿Hay varias instrucciones de memoria en vuelo? | Varias `vle32` a registros y direcciones distintos | Comandos, bloques y peticiones en vuelo; `vlsu.memoryTicks` | Límites de comandos, bloques y peticiones | 3.4 |
 | Load--cálculo--store | ¿Se solapan memoria y cálculo? | `vle32`, `vadd.vv`, `vse32` en flujo | Ocupación VLSU frente a ALU, ticks con ambos activos | Barrera de memoria activada/desactivada | 3.4, 3.5 |
 | Alias load/store | ¿Se conserva el orden cuando no se prueba independencia? | Store y load a direcciones solapadas y disjuntas | Resultado; esperas por orden | Direcciones solapadas frente a disjuntas | 3.4 |
@@ -108,6 +129,18 @@ que los usa.
 - Granularidad de la disponibilidad: elemento, palabra por lane o
   fragmento de tarea.
 - Si WAR y WAW siguen siendo conservadores o se introduce renombramiento.
+  **Recomendación** (añadida tras el estudio de conflictos de bancos):
+  resolver WAR por rangos en 3.3, con el mismo mecanismo de
+  disponibilidad, y dejar WAW conservador. No requiere renombramiento, y es
+  lo que más influye en cuánto se acerca Pathfinder a Ara: unos 45--65
+  ciclos por strip con WAR por rangos frente a 105--120 con WAR
+  conservador. Son estimaciones, no medidas.
+- Estructura de las colas por operando de 3.1: número de entradas, si la
+  lectura del destino tiene cola propia y cómo se reparten los créditos.
+- Política inicial del árbitro del VRF en 3.3: qué clases tienen
+  prioridad y cómo se evita que una clase se quede sin acceso. La
+  propuesta de partida es la de Ara: ALU y MFPU antes que máscara, VLSU y
+  slides.
 - Política load/store inicial: orden total, por direcciones o por bloque.
 - Dónde vive el estado colectivo y quién lo libera.
 - Si la máscara viaja como operando del VRF o como dato de la red.
@@ -120,5 +153,6 @@ que los usa.
 [hito3]: <../Plan de evolución - Hitos 2 a 5.md#hito-3-solapamiento-escalar-vectorial-chaining-y-memoria-concurrente>
 [revision]: <Revisión de extremo a extremo - Minor y VPU.md>
 [observabilidad]: <Observabilidad - análisis con Pathfinder.md>
+[conflictos-vrf]: <Pathfinder - conflictos de bancos del VRF.md>
 [concurrency]: <../../benchmarks/concurrency/README.md>
 [cierre-campana]: <Cierre del hito 2 - Estado de los criterios.md#campaña-de-validación-sugerida>
