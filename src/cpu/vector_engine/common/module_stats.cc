@@ -95,6 +95,9 @@ void
 ModuleStats::preDumpStats()
 {
     updateTime();
+    if (beforeDump) {
+        beforeDump();
+    }
     statistics::Group::preDumpStats();
 }
 
@@ -105,6 +108,17 @@ ModuleStats::resetStats()
     lastUpdate = curTick();
     outstanding = inFlight;
     peakOutstanding = inFlight;
+    if (afterReset) {
+        afterReset();
+    }
+}
+
+void
+ModuleStats::setIntervalHooks(std::function<void()> before_dump,
+                              std::function<void()> after_reset)
+{
+    beforeDump = std::move(before_dump);
+    afterReset = std::move(after_reset);
 }
 
 } // namespace gem5::vector_engine

@@ -35,8 +35,8 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
                        "Commands started while another command was active"),
       multiActiveTicks(&stats, "multiActiveTicks",
                        statistics::units::Tick::get(),
-                       "Ticks with two or more active commands, closed at "
-                       "each occupancy change"),
+                       "Ticks with two or more active commands; open "
+                       "intervals are split at each dump"),
       capacityWaitTicks(&stats, "capacityWaitTicks",
                         statistics::units::Tick::get(),
                         "Ticks the queue head waited for an active slot"),
@@ -77,6 +77,11 @@ AraSequencer::AraSequencer(ClockedObject &owner, CommandQueue &queue,
     fatal_if(!sendArithmetic || !sendMemory || !sendSlide,
              "AraSequencer requires all task senders");
     active.reserve(maxActiveCommands);
+    // Las esperas de la cabeza y la ocupación son intervalos propios del
+    // secuenciador; sin estos ganchos, un volcado perdería el tramo abierto
+    // y un reset dejaría entrar tiempo previo en la región medida.
+    stats.setIntervalHooks([this] { flushOpenIntervals(); },
+                           [this] { restartOpenIntervals(); });
 }
 
 AraSequencer::~AraSequencer()
@@ -241,34 +246,8 @@ AraSequencer::accountHeadWait(const std::optional<VectorCommand> &head,
                               const StartBlockers &blockers)
 {
     // Cerrar el intervalo anterior con las causas que estaban vigentes.
-    // Las causas no son excluyentes; sumar contadores distintos no da el
-    // tiempo total de espera.
     if (headWait) {
-        const Tick elapsed = curTick() - headWait->since;
-        const auto &previous = headWait->blockers;
-        if (previous.capacity) {
-            capacityWaitTicks += elapsed;
-        }
-        if (previous.memoryBarrier) {
-            memoryBarrierWaitTicks += elapsed;
-        }
-        if (previous.isolation) {
-            isolationWaitTicks += elapsed;
-        }
-        // hazardWaitTicks cuenta el intervalo una vez aunque haya varios
-        // tipos de dependencia; los tres siguientes lo repiten por tipo.
-        if (previous.hazards.any()) {
-            hazardWaitTicks += elapsed;
-        }
-        if (previous.hazards.raw) {
-            rawWaitTicks += elapsed;
-        }
-        if (previous.hazards.war) {
-            warWaitTicks += elapsed;
-        }
-        if (previous.hazards.waw) {
-            wawWaitTicks += elapsed;
-        }
+        closeHeadWaitPart();
         headWait.reset();
     }
 
@@ -279,12 +258,70 @@ AraSequencer::accountHeadWait(const std::optional<VectorCommand> &head,
 }
 
 void
+AraSequencer::closeHeadWaitPart()
+{
+    // Suma a cada causa vigente el tramo [since, curTick()) y lo reinicia
+    // en curTick(). La espera puede seguir abierta: accountHeadWait la
+    // cierra al cambiar de causas y flushOpenIntervals al volcar.
+    // Las causas no son excluyentes; sumar contadores distintos no da el
+    // tiempo total de espera.
+    const Tick elapsed = curTick() - headWait->since;
+    const auto &current = headWait->blockers;
+    if (current.capacity) {
+        capacityWaitTicks += elapsed;
+    }
+    if (current.memoryBarrier) {
+        memoryBarrierWaitTicks += elapsed;
+    }
+    if (current.isolation) {
+        isolationWaitTicks += elapsed;
+    }
+    // hazardWaitTicks cuenta el intervalo una vez aunque haya varios
+    // tipos de dependencia; los tres siguientes lo repiten por tipo.
+    if (current.hazards.any()) {
+        hazardWaitTicks += elapsed;
+    }
+    if (current.hazards.raw) {
+        rawWaitTicks += elapsed;
+    }
+    if (current.hazards.war) {
+        warWaitTicks += elapsed;
+    }
+    if (current.hazards.waw) {
+        wawWaitTicks += elapsed;
+    }
+    headWait->since = curTick();
+}
+
+void
 AraSequencer::noteOccupancyChange()
 {
-    // Se llama antes de cambiar active.size(). El intervalo abierto al
-    // volcar estadísticas se contabiliza en el siguiente cambio.
+    // Se llama antes de cambiar active.size() y antes de cada volcado de
+    // estadísticas: suma el tramo con dos o más comandos activos hasta
+    // curTick() y empieza el siguiente ahí.
     if (active.size() >= 2) {
         multiActiveTicks += curTick() - lastOccupancyChange;
+    }
+    lastOccupancyChange = curTick();
+}
+
+void
+AraSequencer::flushOpenIntervals()
+{
+    // Antes de un volcado: cada periodo cuenta el tramo abierto que le
+    // corresponde y el resto se cuenta en el siguiente.
+    if (headWait) {
+        closeHeadWaitPart();
+    }
+    noteOccupancyChange();
+}
+
+void
+AraSequencer::restartOpenIntervals()
+{
+    // Tras un reset: el tiempo anterior pertenece al periodo descartado.
+    if (headWait) {
+        headWait->since = curTick();
     }
     lastOccupancyChange = curTick();
 }

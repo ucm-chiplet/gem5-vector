@@ -159,7 +159,8 @@ class AraSequencer
 
     /**
      * Espera de la cabeza actual. Se reparte entre las causas vigentes en
-     * cada evaluación; el intervalo se cierra al iniciar o cambiar causas.
+     * cada evaluación; el intervalo se cierra al iniciar o cambiar causas
+     * y se parte en cada volcado de estadísticas.
      */
     struct HeadWait
     {
@@ -209,7 +210,12 @@ class AraSequencer
     StartBlockers blockersFor(const VectorCommand &command) const;
     void accountHeadWait(const std::optional<VectorCommand> &head,
                          const StartBlockers &blockers);
+    // Suma el tramo abierto de la espera de la cabeza y lo reinicia.
+    void closeHeadWaitPart();
     void noteOccupancyChange();
+    // Ganchos de ModuleStats::setIntervalHooks para volcados y resets.
+    void flushOpenIntervals();
+    void restartOpenIntervals();
     void start(const VectorCommand &command);
     bool sendPendingTasks();
     bool finishCompleted();

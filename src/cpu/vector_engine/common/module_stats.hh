@@ -3,6 +3,7 @@
 #ifndef __CPU_VECTOR_ENGINE_COMMON_MODULE_STATS_HH__
 #define __CPU_VECTOR_ENGINE_COMMON_MODULE_STATS_HH__
 
+#include <functional>
 #include <string>
 
 #include "base/statistics.hh"
@@ -44,9 +45,25 @@ struct ModuleStats : public statistics::Group
     void preDumpStats() override;
     void resetStats() override;
 
+    /**
+     * Hooks for module-specific intervals kept outside this group, such
+     * as the sequencer's head waits and multi-command occupancy.
+     *
+     * before_dump runs before the group is dumped and must add the open
+     * part of each interval up to curTick() and restart it there, so a
+     * dump counts the time of its own period. after_reset runs after the
+     * counters are cleared and must only restart open intervals at
+     * curTick(), discarding the time before the reset. Either may be
+     * empty. Both only update statistics.
+     */
+    void setIntervalHooks(std::function<void()> before_dump,
+                          std::function<void()> after_reset);
+
   private:
     uint64_t inFlight = 0;
     Tick lastUpdate = curTick();
+    std::function<void()> beforeDump;
+    std::function<void()> afterReset;
     void updateTime();
 };
 
