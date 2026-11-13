@@ -65,6 +65,12 @@ ampliar el diseño. El diagrama de esta carpeta representa sólo el hito 2.
   `vmin`/`vminu` `.vv` en ALU, 8/16/32/64 bits, parámetro y estadística.
 - [Observabilidad con Pathfinder](<Observabilidad - análisis con Pathfinder.md>):
   reparto del tiempo, efecto de los recursos y revisión de métricas.
+- [Pathfinder - comparación con Ara RTL](<Pathfinder - comparación con Ara RTL.md>):
+  mismo kernel en Ara (Verilator) y en la VPU, comprobaciones de trabajo
+  equivalente y descomposición de la diferencia de ciclos.
+- [Pathfinder - conflictos de bancos del VRF](<Pathfinder - conflictos de bancos del VRF.md>):
+  conflictos de bancos del VRF con el kernel de Ara en la VPU (geometría de
+  Ara), su causa, su coste y la comparación con Ara RTL.
 - [Revisión de extremo a extremo](<Revisión de extremo a extremo - Minor y VPU.md>):
   orden, dependencias, liberación, interrupciones y drain entre Minor y VPU.
 - [Plan de cierre de la fase 8](<Plan de cierre de la fase 8.md>):
