@@ -52,6 +52,23 @@ m1. `run.py` añade siempre en offload `--vpu-set
 supported_sews=8,16,32,64` y `--vpu-set supported_lmuls=-3,-2,-1,0,1,2,3`.
 En offload exige trabajo de suma en la ALU y bloques en la VLSU.
 
+### Retries de memoria (criterio 11)
+
+El caso `widths-retry` de la regresión ejecuta este kernel con la
+memoria limitada a 200 MiB/s, para que `SimpleMemory` rechace peticiones
+mientras está ocupada, y exige que la VPU haya recibido rechazos de su
+puerto:
+
+```bash
+python3 benchmarks/widths/run.py --mode offload \
+    --config-arg=--mem-bandwidth=200MiB/s \
+    --require-nonzero=memory.portRetries
+```
+
+El resultado debe ser el mismo que sin límite (la huella se compara con
+native). El 13 de noviembre de 2026 hubo 5 246 rechazos en la región del
+kernel; sin el límite hay 704, por la ocupación del bus de memoria.
+
 ## Fuera de este kernel
 
 - Elementos desalineados que crucen una línea (recorrido por elemento,

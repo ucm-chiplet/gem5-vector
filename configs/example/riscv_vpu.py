@@ -203,6 +203,13 @@ parser.add_argument(
     help="SimpleMemory request-to-response latency, e.g. 5ns "
     "(default: SimpleMemory parameter)",
 )
+# Ancho de banda de SimpleMemory. Con un valor bajo la memoria rechaza
+# peticiones mientras está ocupada y fuerza retries en los puertos.
+parser.add_argument(
+    "--mem-bandwidth",
+    help="SimpleMemory bandwidth, e.g. 200MiB/s; a low value makes memory "
+    "reject requests while busy (default: SimpleMemory parameter)",
+)
 # VLEN en bits, igual para la ISA de Minor y el VRF de la VPU.
 parser.add_argument(
     "--vlen",
@@ -299,6 +306,8 @@ system.system_port = system.membus.cpu_side_ports
 system.memory = SimpleMemory(range=system.mem_ranges[0])
 if args.mem_latency is not None:
     system.memory.latency = args.mem_latency
+if args.mem_bandwidth is not None:
+    system.memory.bandwidth = args.mem_bandwidth
 system.memory.port = system.membus.mem_side_ports
 
 if not args.no_offload:
