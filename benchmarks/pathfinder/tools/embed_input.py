@@ -29,8 +29,12 @@
 El formato de RiVEC es: una línea con ``ROWS COLS``, ``ROWS * COLS``
 enteros de la matriz de costes por filas y, tras una línea en blanco,
 ``COLS`` enteros con el resultado de referencia. La cabecera define
-``PATHFINDER_ROWS``, ``PATHFINDER_COLS``, ``pathfinderWall`` y
+``PATHFINDER_ROWS`` y ``PATHFINDER_COLS`` y declara ``pathfinderWall`` y
 ``pathfinderReference`` para que el programa no necesite leer ficheros.
+Las definiciones sólo se emiten en la unidad que define
+``PATHFINDER_DEFINE_INPUT`` (``src/data.c``): así un único objeto contiene
+los datos, compartido por el programa de gem5 y el de Ara.
+``PATHFINDER_DATA_ALIGN`` fija, si se define, el alineamiento de ambos.
 """
 
 import argparse
@@ -64,7 +68,7 @@ def parse_input(path):
 
 def format_array(name, values):
     """Formatea un array const int32_t con líneas de longitud acotada."""
-    lines = [f"static const int32_t {name}[] = {{"]
+    lines = [f"const int32_t {name}[] PATHFINDER_ALIGNED = {{"]
     for start in range(0, len(values), VALUES_PER_LINE):
         chunk = values[start : start + VALUES_PER_LINE]
         lines.append("    " + ", ".join(str(value) for value in chunk) + ",")
@@ -95,9 +99,22 @@ def main():
             f"#define PATHFINDER_ROWS {rows}",
             f"#define PATHFINDER_COLS {cols}",
             "",
+            "#ifdef PATHFINDER_DATA_ALIGN",
+            "#define PATHFINDER_ALIGNED "
+            "__attribute__((aligned(PATHFINDER_DATA_ALIGN)))",
+            "#else",
+            "#define PATHFINDER_ALIGNED",
+            "#endif",
+            "",
+            "extern const int32_t pathfinderWall[PATHFINDER_ROWS * "
+            "PATHFINDER_COLS];",
+            "extern const int32_t pathfinderReference[PATHFINDER_COLS];",
+            "",
+            "#ifdef PATHFINDER_DEFINE_INPUT",
             format_array("pathfinderWall", wall),
             "",
             format_array("pathfinderReference", reference),
+            "#endif",
             "",
             "#endif",
             "",

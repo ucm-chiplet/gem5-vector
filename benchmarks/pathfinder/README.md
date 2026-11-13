@@ -13,6 +13,9 @@ Es la carga de referencia del cierre del hito 2 (criterio 16 del
 `make check` compila el binario y comprueba su perfil RVV; `run.py` lo
 ejecuta en gem5 con la VPU y con el RVV nativo de MinorCPU y contrasta
 ambos resultados (paquetes P2 y P3 del [plan de cierre de la fase 8][plan]).
+[`ara/`](ara/README.md) ejecuta el mismo kernel en Ara RTL y
+`compare_ara.py` compara ambos (ver [Pathfinder - comparación con Ara
+RTL][ara-doc]).
 
 ## Procedencia
 
@@ -56,6 +59,18 @@ revisión y colocarse en `input/` para usar `INPUT=medium` o
    huella del resultado (`checksum`) para comparar modos.
 6. **`runVector` es `noinline`**, para que el kernel conserve su símbolo y
    `check_profile.py` pueda exigir que todo el RVV esté en él.
+7. **Fuente dividido** para compartir el kernel con Ara RTL:
+
+   | Archivo | Contenido | Programas |
+   | --- | --- | --- |
+   | `src/kernel.c` | `runVector()` y `vectorResult` | gem5 y Ara |
+   | `src/data.c` | `pathfinderWall` y `pathfinderReference` (cabecera generada) | gem5 y Ara |
+   | `src/check.c` | `runScalar()`, comprobación y huella | gem5 y Ara |
+   | `src/main.c` | `_start`, `write`/`exit` de Linux y m5ops | gem5 |
+   | `src/pathfinder.h` | Declaraciones comunes | — |
+
+   Cada fichero es una unidad de compilación: `kernel.o` es el mismo
+   objeto en ambos programas. Antes era un único `pathfinder.c`.
 
 El cuerpo del kernel conserva los intrinsics, su orden y la actualización
 en sitio de `dst`. Los elementos vecinos entre tiras (`aux`, `aux2`) se
@@ -70,19 +85,37 @@ make -C benchmarks/pathfinder INPUT=small check
 make -C benchmarks/pathfinder NUM_RUNS=4 check
 ```
 
-Cada combinación se construye en `build/<entrada>-runs<N>/`, ignorado por
-Git: la cabecera generada, el binario `pathfinder` y su desensamblado
-`pathfinder.disasm`. `check` falla si aparece un tipo RVV distinto de los
+Cada combinación se construye en `build/<entrada>-runs<N>[-align<A>]/`,
+ignorado por Git: la cabecera generada, los objetos, el binario
+`pathfinder` y su desensamblado `pathfinder.disasm`. `ALIGN=64` alinea
+`pathfinderWall`, `pathfinderReference` y `vectorResult` a 64 bytes; sin
+`ALIGN` quedan con el alineamiento natural (4 bytes) y su desplazamiento
+en la línea depende del resto del programa. `check` falla si aparece un tipo RVV distinto de los
 7, si falta alguno o si hay RVV fuera de `runVector`.
 
 Opciones de compilación:
 
 ```text
-clang --target=riscv64-unknown-elf -march=rv64gcv -mabi=lp64d -std=c11 -O2
+clang --target=riscv64-unknown-elf -march=rv64gcv -mabi=lp64d
+      -mcmodel=medany -mno-relax -std=c11 -O2
       -fno-vectorize -fno-slp-vectorize -Wall -Wextra -Werror
-      -ffreestanding -fno-builtin -fno-stack-protector
-      -nostdlib -static --ld-path=<ld de RISC-V> -Wl,-e,_start
+      -ffreestanding -fno-builtin -fno-stack-protector -c
+clang ... -nostdlib -static --ld-path=<ld de RISC-V> -Wl,-e,_start
 ```
+
+`-mcmodel=medany` y `-mno-relax` permiten enlazar los mismos objetos en
+el programa de Ara, cargado en `0x80000000`, sin que el enlazador
+reescriba instrucciones del kernel.
+
+**Efecto en la temporización.** Separar el fuente y usar `medany` no
+cambia el trabajo (mismas instrucciones del bucle, 2 menos en total por
+cómo se forman las direcciones) ni el resultado, pero sí las direcciones
+de código y datos. Con `small`, offload pasa de 5 995 385 000 a
+5 995 430 000 ticks y native de 3 545 065 000 a 4 216 879 000; con
+`tiny`, offload pasa de 52 083 000 a 48 943 000. El binario anterior,
+ejecutado con el gem5 actual, reproduce los ticks antiguos: la diferencia
+es de colocación (sin cachés, cada línea de 64 bytes cuenta). Por eso la
+comparación con Ara fija `ALIGN=64`.
 
 `-O2 -fno-vectorize -fno-slp-vectorize` son las opciones acordadas en el
 [plan de benchmarks][benchmarks]. Se enlaza con el `ld` de la toolchain
@@ -154,3 +187,4 @@ Si falla, devuelve 1 e indica la primera discrepancia
 [cierre]: <../../documentacion/hito2/Hito 2 - Concurrencia, FPU, anchos e interconexión.md#153-criterios-de-cierre-del-hito>
 [plan]: <../../documentacion/hito2/Plan de cierre de la fase 8.md>
 [benchmarks]: <../../documentacion/Plan de benchmarks.md>
+[ara-doc]: <../../documentacion/hito2/Pathfinder - comparación con Ara RTL.md>

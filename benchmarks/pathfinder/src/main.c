@@ -1,5 +1,5 @@
 /*
- * Pathfinder for the gem5 VPU, adapted from RiVEC.
+ * Pathfinder for the gem5 VPU, adapted from RiVEC: gem5 SE program.
  *
  * Copyright (c) 2008-2014 University of Virginia (Rodinia Pathfinder).
  * Copyright (c) 2020 Barcelona Supercomputing Center (RiVEC RISC-V
@@ -40,19 +40,16 @@
  * - NUM_RUNS is configurable (1 by default; the original uses 100).
  * - Timing with gettimeofday is removed.
  *
- * The body of runVector() keeps the original intrinsics, their order and
- * the in-place update of dst.
+ * The kernel (kernel.c), the data (data.c) and the scalar reference and
+ * checks (check.c) are shared with the Ara RTL program (../ara/); this
+ * file holds only what is specific to gem5 SE: startup, Linux write/exit
+ * and the m5ops that delimit the statistics.
  */
 
-#include <riscv_vector.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include "pathfinder_input.h"
-
-#ifndef NUM_RUNS
-#define NUM_RUNS 1
-#endif
+#include "pathfinder.h"
 
 /* 1 delimits the kernel with gem5 statistics m5ops; 0 removes them. */
 #ifndef PATHFINDER_ROI
@@ -125,7 +122,7 @@ writeText(const char *data, size_t size)
     }
 }
 
-static void
+void
 printText(const char *text)
 {
     size_t size = 0;
@@ -135,7 +132,7 @@ printText(const char *text)
 }
 
 /* Prints a signed decimal value without libc. */
-static void
+void
 printInt(long value)
 {
     char digits[24];
@@ -153,147 +150,6 @@ printInt(long value)
     if (value < 0)
         digits[--pos] = '-';
     writeText(&digits[pos], sizeof(digits) - pos);
-}
-
-/* Last row computed by the vector kernel; it is updated in place. */
-static int32_t vectorResult[PATHFINDER_COLS];
-/* Two rows for the scalar version, which alternates source/destination. */
-static int32_t scalarRows[2][PATHFINDER_COLS];
-
-/*
- * Vector kernel, as in RiVEC run_vector(). For each row t+1, each element
- * takes the minimum of itself and its two neighbours in row t and adds
- * the wall cost: dst[n] = wall[t+1][n] + min(dst[n-1], dst[n], dst[n+1]).
- *
- * dst is updated in place, one strip of gvl elements at a time. The
- * neighbours across strip boundaries come from scalar reads: aux keeps
- * the last element of the previous strip before it is overwritten, and
- * aux2 reads the first element of the next strip, still unmodified. At
- * the row ends the element itself is used, which leaves the minimum
- * unchanged. Those scalar reads after vector stores exercise the CPU/VPU
- * memory ordering.
- *
- * The initial copy is scalar: -fno-vectorize keeps it out of RVV.
- * noinline keeps the kernel in its own symbol, so check_profile.py
- * can verify that every RVV instruction belongs to it.
- */
-static __attribute__((noinline)) void
-runVector(void)
-{
-    const size_t cols = PATHFINDER_COLS;
-    const size_t rows = PATHFINDER_ROWS;
-    int32_t *dst = vectorResult;
-
-    for (int run = 0; run < NUM_RUNS; ++run) {
-        for (size_t x = 0; x < cols; ++x)
-            vectorResult[x] = pathfinderWall[x];
-        dst = vectorResult;
-
-        size_t gvl = __riscv_vsetvl_e32m1(cols);
-
-        vint32m1_t xSrc_slideup;
-        vint32m1_t xSrc_slidedown;
-        vint32m1_t xSrc;
-        vint32m1_t xNextrow;
-
-        int32_t aux;
-        int32_t aux2;
-
-        for (size_t t = 0; t < rows - 1; t++) {
-            aux = dst[0];
-            for (size_t n = 0; n < cols; n = n + gvl) {
-                gvl = __riscv_vsetvl_e32m1(cols - n);
-                xNextrow = __riscv_vle32_v_i32m1(&dst[n], gvl);
-                xSrc = xNextrow;
-                aux2 = (n + gvl >= cols) ? dst[n + gvl - 1] : dst[n + gvl];
-                xSrc_slideup = __riscv_vslide1up_vx_i32m1(xSrc, aux, gvl);
-                xSrc_slidedown =
-                    __riscv_vslide1down_vx_i32m1(xSrc, aux2, gvl);
-                xSrc = __riscv_vmin_vv_i32m1(xSrc, xSrc_slideup, gvl);
-                xSrc = __riscv_vmin_vv_i32m1(xSrc, xSrc_slidedown, gvl);
-                xNextrow = __riscv_vle32_v_i32m1(
-                    &pathfinderWall[(t + 1) * cols + n], gvl);
-                xNextrow = __riscv_vadd_vv_i32m1(xNextrow, xSrc, gvl);
-                aux = dst[n + gvl - 1];
-                __riscv_vse32_v_i32m1(&dst[n], xNextrow, gvl);
-            }
-        }
-    }
-}
-
-/*
- * Scalar version, as in RiVEC run(), used as an in-program reference.
- * Returns the row that holds the final result.
- */
-static const int32_t *
-runScalar(void)
-{
-    const size_t cols = PATHFINDER_COLS;
-    int32_t *src = scalarRows[1];
-    int32_t *dst = scalarRows[0];
-
-    for (size_t x = 0; x < cols; ++x)
-        dst[x] = pathfinderWall[x];
-
-    for (size_t t = 0; t < PATHFINDER_ROWS - 1; t++) {
-        int32_t *temp = src;
-        src = dst;
-        dst = temp;
-        for (size_t n = 0; n < cols; n++) {
-            int32_t min = src[n];
-            if (n > 0 && src[n - 1] < min)
-                min = src[n - 1];
-            if (n < cols - 1 && src[n + 1] < min)
-                min = src[n + 1];
-            dst[n] = pathfinderWall[(t + 1) * cols + n] + min;
-        }
-    }
-    return dst;
-}
-
-/*
- * Compares every element against the reference from the input file.
- * Prints the first mismatch and returns 1 on failure, 0 on success.
- */
-static int
-checkRow(const char *name, const int32_t *row)
-{
-    for (size_t i = 0; i < PATHFINDER_COLS; ++i) {
-        if (row[i] != pathfinderReference[i]) {
-            printText("[pathfinder] FAIL: ");
-            printText(name);
-            printText("[");
-            printInt((long)i);
-            printText("]=");
-            printInt(row[i]);
-            printText(", reference=");
-            printInt(pathfinderReference[i]);
-            printText("\n");
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/*
- * Prints a fingerprint of the vector result so that runs in different
- * modes can be compared beyond PASS. Elements are taken as uint32_t: the
- * sum (at most COLS * 2^32) fits in 64 bits and the xor in 32 bits.
- */
-static void
-printChecksum(const int32_t *row)
-{
-    uint64_t sum = 0;
-    uint32_t xor_value = 0;
-    for (size_t i = 0; i < PATHFINDER_COLS; ++i) {
-        sum += (uint32_t)row[i];
-        xor_value ^= (uint32_t)row[i];
-    }
-    printText("[pathfinder] checksum: sum=");
-    printInt((long)sum);
-    printText(" xor=");
-    printInt((long)xor_value);
-    printText("\n");
 }
 
 int
@@ -315,12 +171,6 @@ main(void)
     if (failures != 0)
         return 1;
 
-    printText("[pathfinder] PASS: ");
-    printInt(PATHFINDER_ROWS);
-    printText("x");
-    printInt(PATHFINDER_COLS);
-    printText(", runs=");
-    printInt(NUM_RUNS);
-    printText("\n");
+    printPass();
     return 0;
 }

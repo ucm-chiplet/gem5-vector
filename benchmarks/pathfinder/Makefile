@@ -4,6 +4,7 @@
 #   make help                # esta ayuda
 #   make                     # INPUT=tiny, NUM_RUNS=1
 #   make INPUT=small NUM_RUNS=4
+#   make ALIGN=64            # datos y resultado alineados a 64 bytes
 #   make check               # desensamblado y perfil RVV
 #   make clean
 #
@@ -12,6 +13,9 @@
 
 INPUT ?= tiny
 NUM_RUNS ?= 1
+# Alineamiento en bytes de pathfinderWall, pathfinderReference y
+# vectorResult; vacío deja el alineamiento natural (4 bytes).
+ALIGN ?=
 
 CLANG ?= clang
 OBJDUMP ?= llvm-objdump
@@ -25,28 +29,42 @@ LINKER ?= $(firstword $(wildcard /opt/riscv/bin/riscv64-unknown-linux-gnu-ld) \
 # -fno-slp-vectorize dejan escalares la copia inicial y la verificación.
 # El resto construye un ejecutable estático sin libc, como el baseline.
 TARGET_FLAGS = --target=riscv64-unknown-elf -march=rv64gcv -mabi=lp64d
-PATHFINDER_FLAGS = $(TARGET_FLAGS) -std=c11 -O2 \
+# -mcmodel=medany y -mno-relax permiten enlazar los mismos objetos en el
+# programa de gem5 (SE) y en el de Ara RTL, cargado en 0x80000000, sin que
+# el enlazador reescriba instrucciones del kernel (ara/README.md).
+PATHFINDER_FLAGS = $(TARGET_FLAGS) -mcmodel=medany -mno-relax \
+                   -std=c11 -O2 \
                    -fno-vectorize -fno-slp-vectorize \
                    -Wall -Wextra -Werror \
                    -ffreestanding -fno-builtin -fno-stack-protector
 LINK_FLAGS = -nostdlib -static --ld-path=$(LINKER) -Wl,-e,_start
 
-BUILD = build/$(INPUT)-runs$(NUM_RUNS)
+BUILD = build/$(INPUT)-runs$(NUM_RUNS)$(if $(ALIGN),-align$(ALIGN))
 BINARY = $(BUILD)/pathfinder
 HEADER = $(BUILD)/pathfinder_input.h
 DISASM = $(BINARY).disasm
+ALIGN_FLAGS = $(if $(ALIGN),-DPATHFINDER_DATA_ALIGN=$(ALIGN))
 
-.PHONY: all help disasm check clean
+# Objetos comunes a gem5 y Ara (kernel, datos, referencia escalar y
+# comprobaciones) y objeto propio del programa de gem5.
+SHARED_OBJECTS = $(BUILD)/kernel.o $(BUILD)/data.o $(BUILD)/check.o
+GEM5_OBJECTS = $(BUILD)/main.o
+
+.PHONY: all help disasm check shared clean
 
 all: $(BINARY)
+
+shared: $(SHARED_OBJECTS)
 
 $(HEADER): input/data_$(INPUT).in tools/embed_input.py
 	$(PYTHON) tools/embed_input.py $< $@
 
-$(BINARY): src/pathfinder.c $(HEADER) Makefile
-	$(CLANG) $(CPPFLAGS) $(CFLAGS) $(PATHFINDER_FLAGS) \
-	    -DNUM_RUNS=$(NUM_RUNS) -I$(BUILD) $< \
-	    $(LDFLAGS) $(LINK_FLAGS) -o $@
+$(BUILD)/%.o: src/%.c src/pathfinder.h $(HEADER) Makefile
+	$(CLANG) $(CPPFLAGS) $(CFLAGS) $(PATHFINDER_FLAGS) $(ALIGN_FLAGS) \
+	    -DNUM_RUNS=$(NUM_RUNS) -I$(BUILD) -c $< -o $@
+
+$(BINARY): $(SHARED_OBJECTS) $(GEM5_OBJECTS)
+	$(CLANG) $(TARGET_FLAGS) $^ $(LDFLAGS) $(LINK_FLAGS) -o $@
 
 $(DISASM): $(BINARY)
 	$(OBJDUMP) -d --mattr=+v $< > $@
