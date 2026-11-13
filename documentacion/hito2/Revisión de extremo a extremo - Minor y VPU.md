@@ -51,6 +51,9 @@ al interpretar métricas o ampliar la concurrencia.
 
 Los matices 3 y 4 afectan a la observabilidad y se tratan junto con las
 correcciones de métricas del [análisis de observabilidad][observabilidad].
+El matiz 4 está corregido desde el 13 de noviembre de 2026: el
+secuenciador parte sus intervalos abiertos en cada volcado y los reinicia
+en cada reset (ver [estado del cierre][cierre-estado]).
 Los demás no requieren cambios en el hito 2.
 
 [plan-f8]: <Plan de cierre de la fase 8.md>
@@ -58,3 +61,4 @@ Los demás no requieren cambios en el hito 2.
 [diseno]: <Hito 2 - Concurrencia, FPU, anchos e interconexión.md>
 [pendientes-minor]: <Pendientes de Minor - Fases 1 a 5.md>
 [observabilidad]: <Observabilidad - análisis con Pathfinder.md>
+[cierre-estado]: <Cierre del hito 2 - Estado de los criterios.md#pendientes-por-dependencia>

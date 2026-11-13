@@ -47,14 +47,14 @@ normalizado por CPU. Un rechazo de admisión llega al programa como
 | `vmul.vx` | Sí | 8/16/32/64 | ALU | Los 4 SEW, m1, escalares 0, −1 y −3: `muldiv` | LMUL ≠ m1; escalar `x0` sin ejecución registrada |
 | `vdiv.vv/.vx`, `vdivu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` sin ejecución registrada |
 | `vrem.vv/.vx`, `vremu.vv/.vx` | Sí | 8/16/32/64; signo obligatorio | ALU (divisor no segmentado) | Los 4 SEW, m1, con divisor cero y desbordamiento: `muldiv` | LMUL ≠ m1; escalar `x0` sin ejecución registrada |
-| `vmin.vv` | Sí (con signo) | 8/16/32/64 | ALU | SEW 32, m1: Pathfinder, concurrencia | Otros SEW y LMUL |
-| `vminu.vv` | No | 8/16/32/64 | ALU | No (inalcanzable desde programa) | Decode en Minor |
+| `vmin.vv` | Sí (con signo) | 8/16/32/64 | ALU | Los 4 SEW, m1 y m4: `minimum`; SEW 32, m1: Pathfinder, concurrencia, `dependencies`; SEW 32, m4, VLEN 4096: kernel de Ara en `vrf_bank_conflicts` (sólo offload) | LMUL m2 y m8 |
+| `vminu.vv` | Sí (sin signo, desde el 13 nov. 2026) | 8/16/32/64 | ALU | Los 4 SEW, m1 y m4: `minimum` | LMUL m2 y m8 |
 | `vfadd.vv` | Sí | 32 (FP32); binary16 sólo interno | FPU | FP32, m1, RNE con redondeo: ejemplo al cierre `fp32`, concurrencia `mixed`; sin flags IEEE | Flags, otros modos de redondeo, valores especiales |
 | `vfmul.vv` | Sí | 32 (FP32) | FPU | FP32, m1, RNE con redondeo: ejemplo al cierre `fp32`, concurrencia `mixed`; sin flags IEEE | Flags, otros modos de redondeo, valores especiales |
 | `vfdiv.vv` | Sí | 32 (FP32) | FPU (divisor no segmentado) | No | Todo |
-| `vle32.v`, `vse32.v` | Sí | EEW = SEW = 32 | VLSU | m1--m8 y mf2, cruzando línea y página: `widths`; m1: Pathfinder, concurrencia, baseline | Faults, `vstart` ≠ 0, elementos desalineados |
+| `vle32.v`, `vse32.v` | Sí | EEW = SEW = 32 | VLSU | m1--m8 y mf2, cruzando línea y página: `widths`, también con retries de memoria (`widths-retry`); m1: Pathfinder, concurrencia, baseline; fault de página a mitad de instrucción con `vstart` correcto: `faults` (SE, sin reanudación) | Reanudar con `vstart` ≠ 0, elementos desalineados |
 | `vle8/16/64.v`, `vse8/16/64.v` | Sí | EEW = SEW | VLSU | Todos los LMUL del perfil, cruzando línea y página: `widths`; m1: `muldiv` | Faults, `vstart` ≠ 0, elementos desalineados |
-| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes); `vslide1down` SEW 16, m1, con escalar `x0`: ejemplo al cierre `int16` | SEW 8/64, LMUL ≠ m1, `vstart` ≠ 0 |
+| `vslide1up.vx`, `vslide1down.vx` | Sí | 8/16/32/64; `vd = vs2` reservado en up | SlideUnit y red | SEW 32, m1: Pathfinder (cruzando lanes); `vslide1down` SEW 16, m1, con escalar `x0`: ejemplo al cierre `int16`; SEW 32, m4, 4 lanes, VLEN 4096: kernel de Ara en `vrf_bank_conflicts` (sólo offload) | SEW 8/64, LMUL m2 y m8, `vstart` ≠ 0 |
 | Memoria strided e indexada | No | No (`supportsMemory` exige unit-stride) | — | — | Hitos 4 y 5 |
 | Otras operaciones (`vsub`, lógicas, `.vi`, reducciones, máscaras...) | No | No (no existen en `ArithmeticOperation`) | — | — | Según el plan de evolución |
 
