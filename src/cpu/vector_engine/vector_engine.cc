@@ -34,6 +34,7 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "base/trace.hh"
 #include "cpu/thread_context.hh"
 #include "cpu/vector_engine/common/vector_support.hh"
 #include "cpu/vector_engine/frontend/ara_sequencer.hh"
@@ -45,6 +46,7 @@
 #include "cpu/vector_engine/vpu/register_file/lane_register_file.hh"
 #include "cpu/vector_engine/vpu/slide/slide_unit.hh"
 #include "cpu/vector_engine/vpu/vlsu/ara_vlsu.hh"
+#include "debug/VectorTimeline.hh"
 #include "sim/system.hh"
 
 namespace gem5::vector_engine
@@ -559,6 +561,8 @@ VectorEngine::dispatch(const GrantToken &token, const VectorCommand &command)
     }
     stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
                                               command.config.sewBits));
+    DPRINTF(VectorTimeline, "dispatch cmd=%llu pc=%#x vl=%u\n",
+            command.command.commandId, command.pc, command.config.vl);
     commandQueue->dispatch(token, command);
     sequencer->wakeup();
 }
@@ -583,6 +587,8 @@ VectorEngine::completed(const VectorCompletion &completion)
 {
     requireCpuBinding();
     stats.complete(completion.status != CompletionStatus::Success);
+    DPRINTF(VectorTimeline, "complete cmd=%llu status=%d\n",
+            completion.command.commandId, static_cast<int>(completion.status));
     cpuEndpoint->completed(completion);
 }
 

@@ -8,6 +8,8 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "base/trace.hh"
+#include "debug/VrfArbitration.hh"
 
 namespace gem5::vector_engine
 {
@@ -243,6 +245,33 @@ LaneRegisterFile::arbitrate()
                 nextInput[bank][port] = (i + 1) % candidates.size();
                 break;
             }
+        }
+    }
+    if (debug::VrfArbitration) {
+        // Una línea por candidato elegible: entrada, banco, fila, sentido,
+        // comando y si se concedió. Las entradas siguen el orden de
+        // bindRequestPort (contextos x {lhs, rhs, dst}, VLSU, slide).
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            if (!candidates[i]) {
+                continue;
+            }
+            const auto &c = *candidates[i];
+            const auto &access = vrfAccess(*c.offer.request);
+            DPRINTF(VrfArbitration,
+                    "lane=%d cycle=%llu in=%d bank=%d row=%llu %s req=%s "
+                    "cmd=%llu reg=%d granted=%d\n",
+                    (int)laneId,
+                    (unsigned long long)(curTick() / owner.clockPeriod()),
+                    (int)i,
+                    (int)c.mapping.bankId, (unsigned long long)c.mapping.row,
+                    c.write ? "W" : "R",
+                    access.key.requester.kind == VrfRequesterKind::Lane
+                        ? "lane"
+                        : access.key.requester.kind == VrfRequesterKind::Vlsu
+                              ? "vlsu"
+                              : "slide",
+                    (unsigned long long)access.key.task.command.commandId,
+                    (int)access.reg.firstReg, (int)c.granted);
         }
     }
     for (std::size_t i = 0; i < candidates.size(); ++i) {

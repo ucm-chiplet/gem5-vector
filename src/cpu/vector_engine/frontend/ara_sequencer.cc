@@ -6,7 +6,9 @@
 #include <utility>
 
 #include "base/logging.hh"
+#include "base/trace.hh"
 #include "cpu/vector_engine/common/vector_support.hh"
+#include "debug/VectorTimeline.hh"
 
 namespace gem5::vector_engine
 {
@@ -310,6 +312,13 @@ AraSequencer::start(const VectorCommand &command)
     }
     stats.accept(count, uint64_t{count} * VectorSupport::elementBytes(
                                               command.config.sewBits));
+
+    // AraSequencer no es un SimObject: se usa el logger sin name().
+    if (GEM5_UNLIKELY(TRACING_ON && ::gem5::debug::VectorTimeline)) {
+        ::gem5::trace::getDebugLogger()->dprintf_flag(
+            ::gem5::curTick(), "vectorEngine.sequencer", "VectorTimeline",
+            "start cmd=%llu\n", command.command.commandId);
+    }
 
     // La reserva se toma antes de crear la tarea: desde este punto los
     // comandos posteriores ven sus registros como ocupados.
