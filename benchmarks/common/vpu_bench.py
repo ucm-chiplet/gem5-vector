@@ -167,6 +167,14 @@ class Benchmark:
     # por ejemplo para habilitar SEW o LMUL fuera del perfil por defecto.
     # Van antes de las de --config-arg, que pueden sustituirlas.
     config_args: Tuple[str, ...] = ()
+    # Opciones de gem5 (antes del script de configuración) para offload,
+    # por ejemplo flags de depuración que leen las comprobaciones de
+    # offload_run_checks.
+    gem5_args: Tuple[str, ...] = ()
+    # Comprobaciones de offload que leen el directorio de la simulación
+    # (trazas, stats.txt...); reciben ese directorio y el binario simulado
+    # y devuelven errores.
+    offload_run_checks: Tuple[Callable, ...] = field(default_factory=tuple)
 
     @property
     def pass_prefix(self):
@@ -373,7 +381,10 @@ def run_mode(bench, args, mode, binary, run_dir):
     """Simula un modo y devuelve su informe."""
     mode_dir = run_dir / mode
     mode_dir.mkdir()
-    command = [str(args.gem5), f"--outdir={mode_dir}", str(CONFIG)]
+    command = [str(args.gem5), f"--outdir={mode_dir}"]
+    if mode == "offload":
+        command.extend(bench.gem5_args)
+    command.append(str(CONFIG))
     if mode == "native":
         command.append("--no-offload")
     else:
@@ -412,6 +423,12 @@ def run_mode(bench, args, mode, binary, run_dir):
         errors.extend(common_offload_checks(roi))
         for check in bench.offload_checks:
             errors.extend(check(roi))
+        # --require-nonzero sólo existe en run.py, no en el barrido.
+        required = getattr(args, "require_nonzero", [])
+        if required:
+            errors.extend(require_nonzero(*required)(roi))
+        for check in bench.offload_run_checks:
+            errors.extend(check(mode_dir, binary))
 
     if roi:
         write_vector_csv(roi, mode_dir / "roi-statistics.csv")
@@ -574,6 +591,15 @@ def run_main(bench, description):
         "--config-arg=--vpu-set=lane.alus_per_lane=2 (repeatable)",
     )
     parser.add_argument(
+        "--require-nonzero",
+        action="append",
+        default=[],
+        metavar="STAT",
+        help="VPU statistic of the kernel region that must be nonzero in "
+        "offload, relative to system.cpu.vectorEngine, e.g. "
+        "memory.portRetries (repeatable)",
+    )
+    parser.add_argument(
         "--results-dir",
         type=Path,
         help="Empty or new directory for this run; default: "
@@ -616,6 +642,7 @@ def run_main(bench, description):
         "commit": git_commit(),
         "fixed_config_args": list(bench.config_args),
         "config_args": args.config_arg,
+        "required_nonzero": args.require_nonzero,
         "build_command": build_command,
         "build_returncode": build_status,
         "checksum_error": None,
