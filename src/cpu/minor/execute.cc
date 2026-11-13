@@ -1652,15 +1652,30 @@ Execute::commitInst(MinorDynInstPtr inst, bool early_memory_issue,
                     break;
                 }
 
-                case vector_engine::CompletionStatus::MemoryFault:
+                case vector_engine::CompletionStatus::MemoryFault: {
                     panic_if(!vec_state->completion->fault,
                              "VPU MemoryFault completion without fault info");
-                    fault = vec_state->completion->fault->fault;
+                    const auto &info = *vec_state->completion->fault;
+                    fault = info.fault;
+                    // vstart ya se ha escrito arriba con finalVstart; se lee
+                    // de vuelta para registrar el estado arquitectónico con
+                    // el que se invoca el fault. Sin dirección o índice, la
+                    // traza muestra -1.
+                    const Addr vaddr = info.address.value_or(~Addr(0));
+                    int element = -1;
+                    if (info.elementIndex) {
+                        element = static_cast<int>(*info.elementIndex);
+                    }
+                    const auto vstart = thread->readMiscRegNoEffect(
+                        RiscvISA::MISCREG_VSTART);
                     DPRINTF(MinorExecute,
-                            "VPU Offload returned a memory fault: %s\n",
-                            fault->name());
+                            "VPU Offload returned a memory fault: %s "
+                            "vaddr=%#x element=%d vstart=%d\n",
+                            fault->name(), vaddr, element,
+                            static_cast<int>(vstart));
                     fault->invoke(thread, inst->staticInst);
                     break;
+                }
 
                 case vector_engine::CompletionStatus::IllegalInstruction: {
                     const auto *riscv_inst =
